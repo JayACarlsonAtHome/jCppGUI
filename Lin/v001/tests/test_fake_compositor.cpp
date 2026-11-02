@@ -583,6 +583,25 @@ struct PointerExtremes {
     }
 };
 
+// Events of versions this client never bound, which libwayland passes on without looking at the version. With an empty
+// entry in the listener, this ended the whole program in an abort, which fuzzing found.
+struct EventsOfLaterVersions {
+    static constexpr ClientEnd end = ends_clean;
+    void on(Session& session, const BufferCommitted& commit) {
+        session.release(commit.buffer);
+        if (session.toplevel()) {
+            session.queue(wire::MessageWriter{*session.toplevel(), 2}.i32(800).i32(600).finish());
+            session.queue(wire::MessageWriter{*session.toplevel(), 3}.array(std::span<const std::uint32_t>{}).finish());
+        }
+        if (session.pointer()) {
+            session.queue(wire::MessageWriter{*session.pointer(), 9}.u32(0).i32(120).finish());
+            session.queue(wire::MessageWriter{*session.pointer(), 10}.u32(0).u32(1).finish());
+            session.queue(wire::MessageWriter{*session.pointer(), 11}.i32(0).i32(0).finish());
+        }
+        session.close_window();
+    }
+};
+
 // More events at once than the toolkit's queue holds, if libwayland ever lets them all through in one read.
 struct EventFlood {
     static constexpr ClientEnd end = ends_clean;
@@ -832,6 +851,7 @@ constexpr auto scenarios = std::tuple{
     Named<KeymapNone>{"keymap_none"},
     Named<KeysExtreme>{"keys_extreme"},
     Named<PointerExtremes>{"pointer_extremes"},
+    Named<EventsOfLaterVersions>{"events_of_later_versions"},
     Named<EventFlood>{"event_flood"},
     Named<DisconnectAtOnce>{"disconnect_at_once"},
     Named<DisconnectAfterFrame>{"disconnect_after_frame"},

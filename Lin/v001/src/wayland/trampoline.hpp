@@ -34,13 +34,6 @@ struct OwnedListener {
 
     consteval explicit OwnedListener(const Table& entries) noexcept : table{entries} {}
 
-    // For a table that grows as its protocol does: only the entries given are set, and the rest stay empty.
-    template <class Fill>
-        requires std::invocable<Fill, Table&>
-    consteval explicit OwnedListener(Fill fill) noexcept : table{} {
-        fill(table);
-    }
-
     Table table;
 };
 

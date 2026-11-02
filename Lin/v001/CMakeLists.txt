@@ -203,7 +203,7 @@ set(JGUI_FAKE_SCENARIOS
   release_before_attach release_three_times never_release release_late pool_attack
   capabilities_flap seat_removed_while_held no_seat no_compositor no_shm no_wm_base old_compositor old_seat
   keymap_pipe keymap_directory keymap_short keymap_1mib_no_terminator keymap_size_0xffffffff keymap_format_7 keymap_none
-  keys_extreme pointer_extremes event_flood
+  keys_extreme pointer_extremes events_of_later_versions event_flood
   disconnect_at_once disconnect_after_frame
   bad_length_too_small bad_length_too_large bad_length_not_aligned unknown_opcode unknown_object
   truncated_then_gone truncated_during_connect truncated_during_first_frame

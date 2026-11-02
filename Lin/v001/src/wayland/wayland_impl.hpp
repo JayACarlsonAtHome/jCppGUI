@@ -235,6 +235,8 @@ struct BasicWaylandImpl {
     void on_surface_configure(xdg_surface* surface, std::uint32_t serial) noexcept;
     void on_toplevel_configure(xdg_toplevel*, std::int32_t width, std::int32_t height, wl_array*) noexcept;
     void on_toplevel_close(xdg_toplevel*) noexcept { record(CloseEvent{}); }
+    void on_toplevel_bounds(xdg_toplevel*, std::int32_t, std::int32_t) noexcept {}
+    void on_toplevel_capabilities(xdg_toplevel*, wl_array*) noexcept {}
     void on_seat_capabilities(wl_seat* object, std::uint32_t capabilities) noexcept;
     void on_seat_name(wl_seat*, const char*) noexcept {}
     void on_pointer_enter(wl_pointer* object, std::uint32_t serial, wl_surface*, wl_fixed_t x, wl_fixed_t y) noexcept;
@@ -247,6 +249,9 @@ struct BasicWaylandImpl {
     void on_pointer_axis_source(wl_pointer*, std::uint32_t) noexcept {}
     void on_pointer_axis_stop(wl_pointer*, std::uint32_t, std::uint32_t) noexcept {}
     void on_pointer_axis_discrete(wl_pointer*, std::uint32_t, std::int32_t) noexcept {}
+    void on_pointer_axis_value120(wl_pointer*, std::uint32_t, std::int32_t) noexcept {}
+    void on_pointer_axis_relative_direction(wl_pointer*, std::uint32_t, std::uint32_t) noexcept {}
+    void on_pointer_warp(wl_pointer*, wl_fixed_t, wl_fixed_t) noexcept {}
     void on_keymap(wl_keyboard*, std::uint32_t format, std::int32_t fd, std::uint32_t size) noexcept;
     void on_keyboard_enter(wl_keyboard*, std::uint32_t, wl_surface*, wl_array*) noexcept {}
     void on_keyboard_leave(wl_keyboard*, std::uint32_t, wl_surface*) noexcept {}
@@ -348,12 +353,15 @@ struct Listeners {
     static constexpr XdgSurface surface{{
         .configure = XdgSurface::template on<&Impl::on_surface_configure>,
     }};
-    // The two listeners below grow as the protocol does. Only the events of the versions we bind can ever
-    // arrive, so those are all that is set, and this still compiles against a later libwayland.
+    // Every entry is set, also for events of versions never bound. libwayland does not check an event's version against
+    // the object's: it aborts the whole program on an empty entry, so a compositor could end this program by
+    // sending one. If a later header adds an event, a missing initializer here is a compile error.
     using Toplevel = OwnedListener<Impl, xdg_toplevel_listener>;
-    static constexpr Toplevel toplevel{[](xdg_toplevel_listener& listener) {
-        listener.configure = Toplevel::template on<&Impl::on_toplevel_configure>;
-        listener.close = Toplevel::template on<&Impl::on_toplevel_close>;
+    static constexpr Toplevel toplevel{{
+        .configure = Toplevel::template on<&Impl::on_toplevel_configure>,
+        .close = Toplevel::template on<&Impl::on_toplevel_close>,
+        .configure_bounds = Toplevel::template on<&Impl::on_toplevel_bounds>,
+        .wm_capabilities = Toplevel::template on<&Impl::on_toplevel_capabilities>,
     }};
     using Seat = OwnedListener<Impl, wl_seat_listener>;
     static constexpr Seat seat{{
@@ -361,16 +369,19 @@ struct Listeners {
         .name = Seat::template on<&Impl::on_seat_name>,
     }};
     using Pointer = OwnedListener<Impl, wl_pointer_listener>;
-    static constexpr Pointer pointer{[](wl_pointer_listener& listener) {
-        listener.enter = Pointer::template on<&Impl::on_pointer_enter>;
-        listener.leave = Pointer::template on<&Impl::on_pointer_leave>;
-        listener.motion = Pointer::template on<&Impl::on_pointer_motion>;
-        listener.button = Pointer::template on<&Impl::on_pointer_button>;
-        listener.axis = Pointer::template on<&Impl::on_pointer_axis>;
-        listener.frame = Pointer::template on<&Impl::on_pointer_frame>;
-        listener.axis_source = Pointer::template on<&Impl::on_pointer_axis_source>;
-        listener.axis_stop = Pointer::template on<&Impl::on_pointer_axis_stop>;
-        listener.axis_discrete = Pointer::template on<&Impl::on_pointer_axis_discrete>;
+    static constexpr Pointer pointer{{
+        .enter = Pointer::template on<&Impl::on_pointer_enter>,
+        .leave = Pointer::template on<&Impl::on_pointer_leave>,
+        .motion = Pointer::template on<&Impl::on_pointer_motion>,
+        .button = Pointer::template on<&Impl::on_pointer_button>,
+        .axis = Pointer::template on<&Impl::on_pointer_axis>,
+        .frame = Pointer::template on<&Impl::on_pointer_frame>,
+        .axis_source = Pointer::template on<&Impl::on_pointer_axis_source>,
+        .axis_stop = Pointer::template on<&Impl::on_pointer_axis_stop>,
+        .axis_discrete = Pointer::template on<&Impl::on_pointer_axis_discrete>,
+        .axis_value120 = Pointer::template on<&Impl::on_pointer_axis_value120>,
+        .axis_relative_direction = Pointer::template on<&Impl::on_pointer_axis_relative_direction>,
+        .warp = Pointer::template on<&Impl::on_pointer_warp>,
     }};
     using Keyboard = OwnedListener<Impl, wl_keyboard_listener>;
     static constexpr Keyboard keyboard{{
