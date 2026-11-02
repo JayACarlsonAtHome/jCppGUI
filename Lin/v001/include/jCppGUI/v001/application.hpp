@@ -17,8 +17,10 @@
 
 namespace jgui::inline v001 {
 
-template <Backend B, class Root>
+template <class B, class Root>
 class ApplicationCore {
+    static_assert(Backend<B>, "this type is not a backend");
+
 public:
     constexpr ApplicationCore(B backend, Root root) : backend_{std::move(backend)}, root_{std::move(root)} {}
 
@@ -53,7 +55,6 @@ public:
     }
 
     [[nodiscard]] constexpr Root& ui() noexcept { return root_; }
-    [[nodiscard]] constexpr B& backend() noexcept { return backend_; }
     [[nodiscard]] constexpr bool closed() const noexcept { return closed_; }
     [[nodiscard]] constexpr std::uint64_t frames() const noexcept { return frames_; }
     [[nodiscard]] constexpr Size size() const noexcept { return root_.size(); }
@@ -94,6 +95,8 @@ public:
     constexpr void on(const KeyEvent& event) { send_to_tree(event); }
 
 private:
+    friend struct detail::TestAccess;
+
     // Delivers the event, then carries out what the widgets asked of the window system. The answer is for
     // a parent routing between its children, and nothing above the tree needs it.
     template <class E>
@@ -179,10 +182,6 @@ public:
         check_thread();
         return core_.ui();
     }
-    [[nodiscard]] B& backend() {
-        check_thread();
-        return core_.backend();
-    }
     [[nodiscard]] bool closed() const {
         check_thread();
         return core_.closed();
@@ -197,6 +196,8 @@ public:
     }
 
 private:
+    friend struct detail::TestAccess;
+
     Application(B backend, Root root, TextEngine text)
         : core_{std::move(backend), std::move(root)}, text_{std::move(text)}, owner_{std::this_thread::get_id()} {}
 

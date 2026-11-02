@@ -59,14 +59,14 @@ void test_absurd_resize(Checker& check) {
     const auto frames = app->frames();
     const std::int32_t hi = std::numeric_limits<std::int32_t>::max();
     for (const jgui::Size absurd : {jgui::Size{hi, hi}, jgui::Size{16385, 10}, jgui::Size{10, 16385}, jgui::Size{65536, 65536}}) {
-        app->backend().inject(jgui::ResizeEvent{absurd});
+        jgui_test::backend(*app).inject(jgui::ResizeEvent{absurd});
         const auto result = app->process_pending();
         check(!result.has_value() && result.error().code == jgui::ErrorCode::SizeLimit, "the size is refused with an Error");
         check(app->size() == window_size, "the window keeps its size");
-        check(app->backend().size() == window_size, "no buffer was made for it");
+        check(jgui_test::backend(*app).size() == window_size, "no buffer was made for it");
     }
     check(app->frames() == frames, "no frame was drawn");
-    app->backend().inject(jgui::ResizeEvent{jgui::Size{300, 200}});
+    jgui_test::backend(*app).inject(jgui::ResizeEvent{jgui::Size{300, 200}});
     check(app->process_pending().has_value() && app->size() == jgui::Size{300, 200}, "a good size still works afterwards");
 }
 
@@ -74,24 +74,24 @@ void test_move_and_resize_requests(Checker& check) {
     auto app = make_app();
     check(app.has_value() && app->process_pending().has_value(), "first frame");
     const auto press_with = [&](jgui::Point at, std::uint32_t serial) {
-        app->backend().inject(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Pressed, jgui::Serial{serial}});
+        jgui_test::backend(*app).inject(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Pressed, jgui::Serial{serial}});
         check(app->process_pending().has_value(), "press handled");
     };
     press_with(jgui::Point{300, 12}, 101);
-    check(app->backend().move_serial() == jgui::Serial{101}, "the title strip starts a move with the press's serial");
+    check(jgui_test::backend(*app).move_serial() == jgui::Serial{101}, "the title strip starts a move with the press's serial");
     press_with(jgui::Point{1, 240}, 102);
-    check(app->backend().resize_serial() == jgui::Serial{102} && app->backend().resize_edge() == jgui::ResizeEdge::Left, "left edge");
+    check(jgui_test::backend(*app).resize_serial() == jgui::Serial{102} && jgui_test::backend(*app).resize_edge() == jgui::ResizeEdge::Left, "left edge");
     press_with(jgui::Point{639, 240}, 103);
-    check(app->backend().resize_edge() == jgui::ResizeEdge::Right, "right edge");
+    check(jgui_test::backend(*app).resize_edge() == jgui::ResizeEdge::Right, "right edge");
     press_with(jgui::Point{320, 0}, 104);
-    check(app->backend().resize_edge() == jgui::ResizeEdge::Top, "top edge");
+    check(jgui_test::backend(*app).resize_edge() == jgui::ResizeEdge::Top, "top edge");
     press_with(jgui::Point{320, 479}, 105);
-    check(app->backend().resize_edge() == jgui::ResizeEdge::Bottom, "bottom edge");
+    check(jgui_test::backend(*app).resize_edge() == jgui::ResizeEdge::Bottom, "bottom edge");
     press_with(jgui::Point{0, 0}, 106);
-    check(app->backend().resize_edge() == jgui::ResizeEdge::TopLeft, "top-left corner");
+    check(jgui_test::backend(*app).resize_edge() == jgui::ResizeEdge::TopLeft, "top-left corner");
     press_with(jgui::Point{639, 479}, 107);
-    check(app->backend().resize_edge() == jgui::ResizeEdge::BottomRight, "bottom-right corner");
-    check(app->backend().move_serial() == jgui::Serial{101}, "edges did not start a move");
+    check(jgui_test::backend(*app).resize_edge() == jgui::ResizeEdge::BottomRight, "bottom-right corner");
+    check(jgui_test::backend(*app).move_serial() == jgui::Serial{101}, "edges did not start a move");
 }
 
 // The same rule as the static_asserts, at run time and with ASan watching: an old frame reaches nothing.
@@ -114,13 +114,13 @@ void test_content_stays_inside(Checker& check) {
     check(app.has_value() && app->process_pending().has_value(), "first frame");
     const jgui::Rect client = Frame::client_rect(window_size);
     constexpr jgui::Color content{0xFF00FF00U};
-    check(jgui_test::count_other_than(app->backend(), client, content) == 0, "the content fills the client area");
+    check(jgui_test::count_other_than(jgui_test::backend(*app), client, content) == 0, "the content fills the client area");
     int outside = 0;
     for (std::int32_t y = 0; y < window_size.height(); ++y)
         for (std::int32_t x = 0; x < window_size.width(); ++x)
-            if (!client.contains(jgui::Point{x, y}) && app->backend().pixel(jgui::Point{x, y}) == content.argb) ++outside;
+            if (!client.contains(jgui::Point{x, y}) && jgui_test::backend(*app).pixel(jgui::Point{x, y}) == content.argb) ++outside;
     check(outside == 0, "and nothing outside it");
-    check(app->backend().pixel(jgui::Point{300, 12}) == jgui::theme::frame_strip.argb, "the title strip is on top");
+    check(jgui_test::backend(*app).pixel(jgui::Point{300, 12}) == jgui::theme::frame_strip.argb, "the title strip is on top");
 }
 
 }  // namespace

@@ -45,6 +45,10 @@ report "the removed view of C-owned memory" "$(grep -nE '\bc_array\b' "${sources
 report "wire access above the backend line" \
   "$(grep -n 'WireAccess' "${sources[@]}" | grep -vE '^(src/wayland/|include/jCppGUI/v001/events\.hpp:)')"
 
+# Only tests may define or use what lets them past the public interface.
+report "test access outside tests" \
+  "$(grep -n 'TestAccess' "${sources[@]}" | grep -v '^tests/' | grep -vE '^include/jCppGUI/v001/(tree|application)\.hpp:.*(struct TestAccess;|friend struct detail::TestAccess;)')"
+
 # std::variant needs a reason on the same or the previous line. There are none today.
 report "std::variant without a comment" "$(grep -n 'std::variant' "${sources[@]}" | grep -v '//')"
 

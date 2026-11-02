@@ -27,15 +27,15 @@ void test_toggle(Checker& check) {
     const jgui::Rect below = area_below_bar(*app);
     const jgui::Point help = centre(app->ui().get<demo::HelpButton>().bounds());
 
-    check(count_other_than(app->backend(), below, jgui::theme::background) == 0, "the client area starts empty");
+    check(count_other_than(jgui_test::backend(*app), below, jgui::theme::background) == 0, "the client area starts empty");
     click(*app, help);
     check(app->ui().get<demo::HelpLine>().shown(), "the line exists");
-    check(count_other_than(app->backend(), below, jgui::theme::background) > 0, "the first click shows it in pixels");
+    check(count_other_than(jgui_test::backend(*app), below, jgui::theme::background) > 0, "the first click shows it in pixels");
     click(*app, help);
     check(!app->ui().get<demo::HelpLine>().shown(), "the line is gone");
-    check(count_other_than(app->backend(), below, jgui::theme::background) == 0, "the second click hides it in pixels");
+    check(count_other_than(jgui_test::backend(*app), below, jgui::theme::background) == 0, "the second click hides it in pixels");
     click(*app, help);
-    check(count_other_than(app->backend(), below, jgui::theme::background) > 0, "the third click shows it again");
+    check(count_other_than(jgui_test::backend(*app), below, jgui::theme::background) > 0, "the third click shows it again");
 }
 
 // The tree as the design shows it, inside a frame: the callback drives a Dynamic node directly.

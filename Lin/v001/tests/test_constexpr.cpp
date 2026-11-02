@@ -12,6 +12,7 @@
 #include "help_ui.hpp"
 #include "jCppGUI/v001/headless_backend.hpp"
 #include "jCppGUI/v001/jgui.hpp"
+#include "test_access.hpp"
 
 // Metrics the concept must refuse. Only the concept looks at them, so they are outside the anonymous
 // namespace below: a compiler rightly reports unused fields of a type with internal linkage.
@@ -407,6 +408,18 @@ static_assert(!std::copy_constructible<Frame<HeadlessBackend>> && !std::is_copy_
 static_assert(std::move_constructible<Frame<HeadlessBackend>>);
 static_assert(!std::constructible_from<Frame<HeadlessBackend>, Frame<HeadlessBackend>&>);
 
+// What a callback gets is the Window, and it cannot change the size, take the requests or reach the backend.
+template <class T>
+concept CanSetSize = requires(T& window) { window.set_size(Size{}); };
+template <class T>
+concept CanTakeRequests = requires(T& window) { window.take_requests(); };
+template <class T>
+concept CanRequest = requires(T& window) { window.request_close(); };
+template <class T>
+concept HasBackend = requires(T& application) { application.backend(); };
+static_assert(!CanSetSize<Window<>> && !CanTakeRequests<Window<>> && CanRequest<Window<>>);
+static_assert(!HasBackend<Window<>> && !HasBackend<Application<HeadlessBackend, Window<>>> && !HasBackend<ApplicationCore<HeadlessBackend, Window<>>>);
+
 // --- Frame ---
 using Frame = WindowFrame<DefaultFrameMetrics>;
 constexpr Size frame_window{200, 100};
@@ -729,12 +742,12 @@ consteval bool demo_help_toggles_in_pixels() {
         int count = 0;
         for (std::int32_t y = below.y(); y < below.bottom(); ++y)
             for (std::int32_t x = below.x(); x < below.right(); ++x)
-                if (core.backend().pixel(Point{x, y}) != theme::background.argb) ++count;
+                if (jgui_test::backend(core).pixel(Point{x, y}) != theme::background.argb) ++count;
         return count;
     };
     const auto click = [&] {
-        core.backend().inject(PointerButton{on, MouseButton::Left, ButtonState::Pressed, Serial{1}});
-        core.backend().inject(PointerButton{on, MouseButton::Left, ButtonState::Released, Serial{2}});
+        jgui_test::backend(core).inject(PointerButton{on, MouseButton::Left, ButtonState::Pressed, Serial{1}});
+        jgui_test::backend(core).inject(PointerButton{on, MouseButton::Left, ButtonState::Released, Serial{2}});
         return core.process_pending(shaper).has_value();
     };
     if (text_pixels() != 0) return false;
@@ -754,25 +767,25 @@ consteval bool frame_routing_and_refused_sizes() {
     if (!core.process_pending(shaper).has_value() || core.frames() != frames) return false;
 
     // A title press starts a move with its serial, and an edge press a resize.
-    core.backend().inject(PointerButton{Point{60, 10}, MouseButton::Left, ButtonState::Pressed, Serial{11}});
-    core.backend().inject(PointerButton{Point{0, 30}, MouseButton::Left, ButtonState::Pressed, Serial{12}});
+    jgui_test::backend(core).inject(PointerButton{Point{60, 10}, MouseButton::Left, ButtonState::Pressed, Serial{11}});
+    jgui_test::backend(core).inject(PointerButton{Point{0, 30}, MouseButton::Left, ButtonState::Pressed, Serial{12}});
     if (!core.process_pending(shaper).has_value()) return false;
-    if (core.backend().move_serial() != Serial{11} || core.backend().resize_serial() != Serial{12}) return false;
-    if (core.backend().resize_edge() != ResizeEdge::Left) return false;
+    if (jgui_test::backend(core).move_serial() != Serial{11} || jgui_test::backend(core).resize_serial() != Serial{12}) return false;
+    if (jgui_test::backend(core).resize_edge() != ResizeEdge::Left) return false;
 
     // An absurd size is refused and leaves the window as it was.
-    core.backend().inject(ResizeEvent{Size{int_max, int_max}});
+    jgui_test::backend(core).inject(ResizeEvent{Size{int_max, int_max}});
     const auto refused_result = core.process_pending(shaper);
     if (refused_result.has_value() || refused_result.error().code != ErrorCode::SizeLimit) return false;
     if (core.size() != small_window) return false;
 
     // Press on the close box, release off it: nothing. Press and release on it: closed.
     const Point close = Point{Frame::close_box(small_window).x() + 1, Frame::close_box(small_window).y() + 1};
-    core.backend().inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, Serial{13}});
-    core.backend().inject(PointerButton{Point{60, 40}, MouseButton::Left, ButtonState::Released, Serial{14}});
+    jgui_test::backend(core).inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, Serial{13}});
+    jgui_test::backend(core).inject(PointerButton{Point{60, 40}, MouseButton::Left, ButtonState::Released, Serial{14}});
     if (!core.process_pending(shaper).has_value() || core.closed()) return false;
-    core.backend().inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, Serial{15}});
-    core.backend().inject(PointerButton{close, MouseButton::Left, ButtonState::Released, Serial{16}});
+    jgui_test::backend(core).inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, Serial{15}});
+    jgui_test::backend(core).inject(PointerButton{close, MouseButton::Left, ButtonState::Released, Serial{16}});
     return core.process_pending(shaper).has_value() && core.closed();
 }
 static_assert(frame_routing_and_refused_sizes());
@@ -781,7 +794,7 @@ static_assert(frame_routing_and_refused_sizes());
 consteval bool frame_is_a_node_of_the_tree() {
     auto ui = window(window_frame<ThickMetrics>(menu_bar(button<ClickTag>("x", bump_on_click)), Counter{}));
     const Rect whole{Point{0, 0}, Size{120, 80}};
-    ui.set_size(whole.size());
+    detail::TestAccess::set_size(ui, whole.size());
     const auto left = ui.layout(whole, BlockShaper{});
     if (!left.has_value() || !left->empty()) return false;
     if (ui.get<WindowFrameTag>().bounds() != whole) return false;
@@ -789,10 +802,10 @@ consteval bool frame_is_a_node_of_the_tree() {
     if (ui.get<ClickTag>().bounds().intersect(ui.get<MenuBarTag>().bounds()).empty()) return false;
 
     auto empty = window(window_frame());
-    empty.set_size(whole.size());
+    detail::TestAccess::set_size(empty, whole.size());
     if (!empty.layout(whole, BlockShaper{}).has_value()) return false;
     empty.dispatch(PointerPress{Point{60, 10}, MouseButton::Left, Serial{9}});
-    return empty.take_requests().move == Serial{9} && !empty.take_requests().move.has_value();
+    return detail::TestAccess::take_requests(empty).move == Serial{9} && !detail::TestAccess::take_requests(empty).move.has_value();
 }
 static_assert(frame_is_a_node_of_the_tree());
 
@@ -801,12 +814,12 @@ consteval bool thick_frame_through_the_application() {
     ApplicationCore core{HeadlessBackend{small_window}, window(window_frame<ThickMetrics>(label<ClickTag>("x")))};
     const BlockShaper shaper;
     if (!core.process_pending(shaper).has_value()) return false;
-    core.backend().inject(PointerButton{Point{6, 30}, MouseButton::Left, ButtonState::Pressed, Serial{21}});
-    core.backend().inject(PointerButton{Point{60, 28}, MouseButton::Left, ButtonState::Pressed, Serial{22}});
+    jgui_test::backend(core).inject(PointerButton{Point{6, 30}, MouseButton::Left, ButtonState::Pressed, Serial{21}});
+    jgui_test::backend(core).inject(PointerButton{Point{60, 28}, MouseButton::Left, ButtonState::Pressed, Serial{22}});
     if (!core.process_pending(shaper).has_value()) return false;
-    if (core.backend().resize_serial() != Serial{21} || core.backend().resize_edge() != ResizeEdge::Left) return false;
-    if (core.backend().move_serial() != Serial{22}) return false;
-    return core.backend().pixel(Point{6, 30}) == theme::frame_strip.argb && core.backend().pixel(Point{60, 28}) == theme::frame_strip.argb;
+    if (jgui_test::backend(core).resize_serial() != Serial{21} || jgui_test::backend(core).resize_edge() != ResizeEdge::Left) return false;
+    if (jgui_test::backend(core).move_serial() != Serial{22}) return false;
+    return jgui_test::backend(core).pixel(Point{6, 30}) == theme::frame_strip.argb && jgui_test::backend(core).pixel(Point{60, 28}) == theme::frame_strip.argb;
 }
 static_assert(thick_frame_through_the_application());
 
@@ -819,7 +832,7 @@ struct FrameRig {
     [[nodiscard]] consteval bool start() { return core.process_pending(shaper).has_value(); }
     template <class E>
     [[nodiscard]] consteval bool send(const E& event) {
-        core.backend().inject(event);
+        jgui_test::backend(core).inject(event);
         return core.process_pending(shaper).has_value();
     }
     [[nodiscard]] consteval bool left(Point at, ButtonState state, std::uint32_t serial) {
@@ -842,7 +855,7 @@ consteval bool hovering_the_close_box_redraws_once() {
     if (!rig.start()) return false;
     const auto frames = rig.core.frames();
     if (!rig.send(PointerMove{on_close}) || rig.core.frames() != frames + 1 || !rig.frame().close_hovered()) return false;
-    if (rig.core.backend().pixel(Point{small_box.x() + 1, small_box.y() + 2}) != theme::close_hover.argb) return false;
+    if (jgui_test::backend(rig.core).pixel(Point{small_box.x() + 1, small_box.y() + 2}) != theme::close_hover.argb) return false;
     return rig.send(PointerMove{on_close}) && rig.core.frames() == frames + 1;
 }
 static_assert(hovering_the_close_box_redraws_once());
@@ -851,7 +864,7 @@ consteval bool close_stays_armed_over_a_widget_and_back() {
     FrameRig rig;
     if (!rig.start() || !rig.send(PointerMove{on_close})) return false;
     if (!rig.left(on_close, ButtonState::Pressed, 31) || !rig.frame().close_armed()) return false;
-    if (rig.core.backend().pixel(Point{small_box.x() + 1, small_box.y() + 2}) != theme::close_pressed.argb) return false;
+    if (jgui_test::backend(rig.core).pixel(Point{small_box.x() + 1, small_box.y() + 2}) != theme::close_pressed.argb) return false;
     if (!rig.send(PointerMove{rig.on_help()}) || !rig.frame().close_armed() || rig.frame().close_hovered()) return false;
     if (!rig.help().hovered()) return false;
     if (!rig.send(PointerMove{on_close}) || !rig.frame().close_armed() || rig.core.closed()) return false;
@@ -871,7 +884,7 @@ consteval bool only_the_left_button_acts_on_the_frame() {
     FrameRig rig;
     if (!rig.start()) return false;
     if (!rig.send(PointerButton{on_title, right_button, ButtonState::Pressed, Serial{35}})) return false;
-    if (rig.core.backend().move_serial().has_value()) return false;
+    if (jgui_test::backend(rig.core).move_serial().has_value()) return false;
     return rig.send(PointerButton{on_close, right_button, ButtonState::Pressed, Serial{36}}) && !rig.frame().close_armed();
 }
 static_assert(only_the_left_button_acts_on_the_frame());
@@ -883,7 +896,7 @@ consteval bool a_captured_drag_over_the_frame_starts_nothing() {
     if (!rig.left(help, ButtonState::Pressed, 37) || !rig.core.ui().capture_active()) return false;
     if (!rig.send(PointerMove{on_title}) || !rig.help().pressed()) return false;
     if (!rig.left(help, ButtonState::Released, 38)) return false;
-    return !rig.core.backend().move_serial().has_value() && !rig.core.backend().resize_serial().has_value();
+    return !jgui_test::backend(rig.core).move_serial().has_value() && !jgui_test::backend(rig.core).resize_serial().has_value();
 }
 static_assert(a_captured_drag_over_the_frame_starts_nothing());
 
@@ -893,7 +906,7 @@ consteval bool only_a_client_press_takes_the_focus_away() {
     const Point help = rig.on_help();
     if (!rig.left(help, ButtonState::Pressed, 39) || !rig.left(help, ButtonState::Released, 40) || !rig.help().focused()) return false;
     if (!rig.left(on_title, ButtonState::Pressed, 41) || !rig.help().focused()) return false;
-    if (rig.core.backend().move_serial() != Serial{41}) return false;
+    if (jgui_test::backend(rig.core).move_serial() != Serial{41}) return false;
     return rig.left(on_client, ButtonState::Pressed, 42) && !rig.help().focused();
 }
 static_assert(only_a_client_press_takes_the_focus_away());
@@ -909,15 +922,15 @@ static_assert(moving_off_the_client_area_is_a_leave());
 consteval bool a_press_behind_a_resize_uses_the_new_size() {
     FrameRig rig;
     if (!rig.start()) return false;
-    rig.core.backend().inject(ResizeEvent{Size{300, 200}});
+    jgui_test::backend(rig.core).inject(ResizeEvent{Size{300, 200}});
     if (!rig.left(Point{299, 100}, ButtonState::Pressed, 43)) return false;
-    return rig.core.backend().resize_serial() == Serial{43} && rig.core.backend().resize_edge() == ResizeEdge::Right;
+    return jgui_test::backend(rig.core).resize_serial() == Serial{43} && jgui_test::backend(rig.core).resize_edge() == ResizeEdge::Right;
 }
 static_assert(a_press_behind_a_resize_uses_the_new_size());
 
 consteval bool run_ends_on_close_and_empty_wait_is_an_error() {
     ApplicationCore closes{HeadlessBackend{small_window}, demo::make_ui<std::vector>()};
-    closes.backend().inject(CloseEvent{});
+    jgui_test::backend(closes).inject(CloseEvent{});
     if (!closes.run(BlockShaper{}).has_value()) return false;
     ApplicationCore waits{HeadlessBackend{small_window}, demo::make_ui<std::vector>()};
     const auto result = waits.run(BlockShaper{});

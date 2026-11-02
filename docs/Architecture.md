@@ -142,6 +142,14 @@ file is sized with `posix_fallocate`, and a file the compositor still holds is n
 keymap is read with `read_at` into a private copy. The C libraries we link may map things of their own:
 see `SECURITY.md`.
 
+## What a callback can reach
+
+A callback receives the `Window`. It cannot change the window's size, take its requests or reach the backend:
+`Window::set_size` and `Window::take_requests` are private, with `ApplicationCore` as a friend, and neither
+`Application` nor `ApplicationCore` gives out its backend. `request_move`, `request_resize` and `request_close`
+stay public, because the frame needs them. Tests get past this through `detail::TestAccess`, which the toolkit
+only declares. It is defined in `tests/test_access.hpp`, and `tests/check_source_rules.sh` keeps it there.
+
 ## Frames
 
 `acquire_frame` returns a move-only `Frame<Backend>`, and `present` takes it by value, so a frame cannot be

@@ -6,6 +6,7 @@
 
 #include "jCppGUI/v001/headless_backend.hpp"
 #include "jCppGUI/v001/jgui.hpp"
+#include "test_access.hpp"
 
 namespace jgui_test {
 
@@ -13,21 +14,21 @@ inline constexpr jgui::Serial test_serial{77};
 
 template <class App>
 void move_to(App& app, jgui::Point at) {
-    app.backend().inject(jgui::PointerMove{at});
+    jgui_test::backend(app).inject(jgui::PointerMove{at});
     static_cast<void>(app.process_pending());
 }
 
 template <class App>
 void press(App& app, jgui::Point at) {
-    app.backend().inject(jgui::PointerMove{at});
-    app.backend().inject(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Pressed, test_serial});
+    jgui_test::backend(app).inject(jgui::PointerMove{at});
+    jgui_test::backend(app).inject(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Pressed, test_serial});
     static_cast<void>(app.process_pending());
 }
 
 template <class App>
 void release(App& app, jgui::Point at) {
-    app.backend().inject(jgui::PointerMove{at});
-    app.backend().inject(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Released, test_serial});
+    jgui_test::backend(app).inject(jgui::PointerMove{at});
+    jgui_test::backend(app).inject(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Released, test_serial});
     static_cast<void>(app.process_pending());
 }
 

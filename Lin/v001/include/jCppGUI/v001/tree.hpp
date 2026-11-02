@@ -287,6 +287,14 @@ template <class Tag, class T>
     return Dynamic<Tag, T>{};
 }
 
+template <class B, class Root>
+class ApplicationCore;
+
+namespace detail {
+// Defined only in tests/test_access.hpp. Nothing in a program can use it.
+struct TestAccess;
+}  // namespace detail
+
 // What widgets asked of the window system during a dispatch. ApplicationCore carries it out through
 // the backend once the dispatch has returned.
 struct ResizeRequest {
@@ -355,16 +363,21 @@ public:
     // The window's current size. ApplicationCore sets it, after validating it, as soon as a resize
     // arrives, so events that follow are judged against it even before the next layout.
     [[nodiscard]] constexpr Size size() const noexcept { return size_; }
-    constexpr void set_size(Size size) noexcept { size_ = size; }
 
     constexpr void request_move(Serial serial) noexcept { requests_.move = serial; }
     constexpr void request_resize(Serial serial, ResizeEdge edge) noexcept {
         requests_.resize = ResizeRequest{serial, edge};
     }
     constexpr void request_close() noexcept { requests_.close = true; }
-    [[nodiscard]] constexpr WindowRequests take_requests() noexcept { return std::exchange(requests_, WindowRequests{}); }
 
 private:
+    template <class B, class Root>
+    friend class ApplicationCore;
+    friend struct detail::TestAccess;
+
+    constexpr void set_size(Size size) noexcept { size_ = size; }
+    [[nodiscard]] constexpr WindowRequests take_requests() noexcept { return std::exchange(requests_, WindowRequests{}); }
+
     class DispatchScope {
     public:
         constexpr explicit DispatchScope(Window& window) noexcept : window_{window} { ++window_.dispatch_depth_; }

@@ -50,13 +50,13 @@ void test_click_rules(Checker& check) {
     check(fired == 2, "press on, drag away and back, release on fires");
 
     // Keyboard: the button took focus from the click.
-    app->backend().inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, true});
+    jgui_test::backend(*app).inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, true});
     check(app->process_pending().has_value() && fired == 3, "Return on the focused button fires");
-    app->backend().inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, false});
+    jgui_test::backend(*app).inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, false});
     check(app->process_pending().has_value() && fired == 3, "a key release does not fire");
     press(*app, off);
     release(*app, off);
-    app->backend().inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, true});
+    jgui_test::backend(*app).inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, true});
     check(app->process_pending().has_value() && fired == 3, "a press elsewhere took the focus away");
 }
 
@@ -106,7 +106,7 @@ void test_capture_and_focus(Checker& check) {
     check(node.focused() == nullptr, "focus is inert at once");
     check(!app->ui().capture_active(), "the tree no longer reports a capture");
     release(*app, on);
-    app->backend().inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, true});
+    jgui_test::backend(*app).inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, true});
     check(app->process_pending().has_value(), "events after the death are handled");
     check(fired == 0, "neither release nor key reached the dead item");
 
@@ -126,17 +126,17 @@ void test_button_colours(Checker& check) {
     const jgui::Point sample{area.x() + 2, area.y() + 2};
     const jgui::Point on = centre(area);
 
-    const std::uint32_t normal = app->backend().pixel(sample);
+    const std::uint32_t normal = jgui_test::backend(*app).pixel(sample);
     move_to(*app, on);
-    const std::uint32_t hover = app->backend().pixel(sample);
+    const std::uint32_t hover = jgui_test::backend(*app).pixel(sample);
     press(*app, on);
-    const std::uint32_t pressed = app->backend().pixel(sample);
+    const std::uint32_t pressed = jgui_test::backend(*app).pixel(sample);
     check(normal == jgui::theme::button_normal.argb, "normal colour");
     check(hover == jgui::theme::button_hover.argb, "hover colour");
     check(pressed == jgui::theme::button_pressed.argb, "pressed colour");
     check(normal != hover && hover != pressed && normal != pressed, "all three differ");
     move_to(*app, jgui::Point{300, 300});
-    check(app->backend().pixel(sample) == jgui::theme::button_normal.argb, "dragged off, it no longer looks pressed");
+    check(jgui_test::backend(*app).pixel(sample) == jgui::theme::button_normal.argb, "dragged off, it no longer looks pressed");
 }
 
 // Test 13
@@ -146,7 +146,7 @@ void test_menu_bar(Checker& check) {
         jgui::window(jgui::window_frame(jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto&) -> void {})))));
     check(app.has_value(), "application starts");
     for (const jgui::Size size : {window_size, jgui::Size{900, 300}, jgui::Size{200, 150}, window_size}) {
-        app->backend().inject(jgui::ResizeEvent{size});
+        jgui_test::backend(*app).inject(jgui::ResizeEvent{size});
         check(app->process_pending().has_value(), "resize handled");
         const jgui::Rect client = jgui::WindowFrame<jgui::DefaultFrameMetrics>::client_rect(size);
         const jgui::Rect bar = app->ui().get<jgui::MenuBarTag>().bounds();
@@ -173,7 +173,7 @@ void test_redraw_only_when_damaged(Checker& check) {
     const auto settled = app->frames();
     click(*app, jgui::Point{300, 300});
     check(app->frames() == settled, "a click on nothing, no frame");
-    app->backend().inject(jgui::PointerLeave{});
+    jgui_test::backend(*app).inject(jgui::PointerLeave{});
     check(app->process_pending().has_value() && app->frames() == settled, "the pointer leaving nothing, no frame");
 }
 
