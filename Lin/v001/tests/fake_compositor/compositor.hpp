@@ -524,18 +524,18 @@ private:
         std::size_t used = 0;
         while (true) {
             const std::span<const std::byte> rest = std::span<const std::byte>{session_.incoming}.subspan(used);
-            const auto header = wire::read_header(rest);
-            if (!header) {
-                if (header.error() != wire::Refusal::TooShortForHeader && header.error() != wire::Refusal::Truncated) {
+            const auto [header, refusal] = wire::read_header(rest);
+            if (refusal) {
+                if (*refusal != wire::Refusal::TooShortForHeader && *refusal != wire::Refusal::Truncated) {
                     session_.violation("the client sent a malformed message");
                     session_.incoming.clear();
                     used = 0;
                 }
                 break;
             }
-            MessageReader reader{rest.subspan(wire::header_bytes, header->size - wire::header_bytes)};
-            handle(*header, reader);
-            used += header->size;
+            MessageReader reader{rest.subspan(wire::header_bytes, header.size - wire::header_bytes)};
+            handle(header, reader);
+            used += header.size;
         }
         session_.incoming.erase(session_.incoming.begin(), session_.incoming.begin() + static_cast<std::ptrdiff_t>(used));
         if (got->closed) session_.mark_gone();

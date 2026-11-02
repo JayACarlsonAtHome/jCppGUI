@@ -42,10 +42,22 @@ contain children, clear ownership, and few dependencies with fast build cycles.
 
 ## Rules that a test enforces
 
-`tests/check_source_rules.sh` runs under CTest, or by hand as `bash tests/check_source_rules.sh`. It
-fails on banned type-erasure tokens, memory mapping, positioned file I/O outside its helper, raw `new`
-and `delete`, C-style casts, absolute paths, shebangs, and display or font library headers above their
-layer.
+Three layers look for the banned things, and none of them is complete on its own.
+
+- **Text.** `tests/check_source_rules.sh` runs under CTest, or by hand as `bash tests/check_source_rules.sh`. It
+  removes comments and strings first and also looks with lines joined. It scans every file under `include`, `src`,
+  `tests` and `demo`, refuses any file type it would not scan as source, and fails outside a git checkout. It fails on
+  banned type-erasure tokens, `void*` however it is qualified, aliases of `void` and of `std`, macros with a body,
+  memory mapping, all byte I/O and raw byte copies outside their named helpers, stream file classes, raw memory,
+  C-style casts, absolute paths, shebangs, and display or font library headers above their layer. **Text matching cannot
+  be complete.** `tests/check_rules_selftest.sh` injects each known bypass and proves it is caught, which shows only
+  that those bypasses are caught.
+- **AST.** `tests/ast_rules.query`, run by `tests/check_ast_rules.sh` with `clang-query` over the compiler's own view of
+  the code, so an alias, a macro or a split token does not hide anything from it. It runs on the clang presets only,
+  because it needs a clang `compile_commands.json`, and it is skipped with a message if `clang-query` is not installed.
+- **The compiler.** The compile-fail tests prove it rejects the mistakes it is meant to catch.
+
+None of this replaces reading the code: see `docs/Review_Checklist.md`.
 
 **Paths.** Every location derives from one base directory, the script's own directory or the CMake
 source directory, plus relative paths. No absolute path is allowed anywhere in the repository, with

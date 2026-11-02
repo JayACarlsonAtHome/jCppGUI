@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -64,17 +65,28 @@ constexpr void append_u32(std::vector<std::byte>& out, std::uint32_t value) {
     for (const unsigned shift : {0U, 8U, 16U, 24U}) out.push_back(static_cast<std::byte>((value >> shift) & 0xFFU));
 }
 
-// A header from the start of what has arrived. TooShortForHeader and Truncated mean only that more must arrive.
-[[nodiscard]] constexpr std::expected<Header, Refusal> read_header(std::span<const std::byte> bytes) noexcept {
-    if (bytes.size() < header_bytes) return std::unexpected(Refusal::TooShortForHeader);
+// What is wrong with a message's size field, given how much has arrived.
+[[nodiscard]] constexpr std::optional<Refusal> size_problem(std::uint32_t size, std::size_t arrived) noexcept {
+    if (size < header_bytes) return Refusal::SizeTooSmall;
+    if (size % 4 != 0) return Refusal::SizeNotAligned;
+    if (size > max_message_bytes) return Refusal::SizeTooLarge;
+    if (size > arrived) return Refusal::Truncated;
+    return std::nullopt;
+}
+
+// What came of reading a header. TooShortForHeader and Truncated mean only that more must arrive.
+struct HeaderRead {
+    Header header{};
+    std::optional<Refusal> refusal{};
+};
+
+[[nodiscard]] constexpr HeaderRead read_header(std::span<const std::byte> bytes) noexcept {
+    if (bytes.size() < header_bytes) return HeaderRead{{}, Refusal::TooShortForHeader};
     const std::uint32_t object = load_u32(bytes.first<4>());
     const std::uint32_t both = load_u32(bytes.subspan<4, 4>());
     const std::uint32_t size = both >> 16U;
-    if (size < header_bytes) return std::unexpected(Refusal::SizeTooSmall);
-    if (size % 4 != 0) return std::unexpected(Refusal::SizeNotAligned);
-    if (size > max_message_bytes) return std::unexpected(Refusal::SizeTooLarge);
-    if (size > bytes.size()) return std::unexpected(Refusal::Truncated);
-    return Header{ObjectId{object}, static_cast<std::uint16_t>(both & 0xFFFFU), static_cast<std::uint16_t>(size)};
+    if (const std::optional<Refusal> problem = size_problem(size, bytes.size()); problem) return HeaderRead{{}, problem};
+    return HeaderRead{Header{ObjectId{object}, static_cast<std::uint16_t>(both & 0xFFFFU), static_cast<std::uint16_t>(size)}, std::nullopt};
 }
 
 // Reads one message's arguments, in order, and refuses anything past its end.
@@ -183,8 +195,7 @@ consteval std::vector<std::byte> with_size(std::uint32_t size, std::size_t actua
 }
 
 consteval bool refused_with(const std::vector<std::byte>& bytes, Refusal why) {
-    const auto header = read_header(bytes);
-    return !header && header.error() == why;
+    return read_header(bytes).refusal == why;
 }
 
 static_assert(refused_with({}, Refusal::TooShortForHeader));
@@ -198,14 +209,14 @@ static_assert(refused_with(with_size(12, 8), Refusal::Truncated));
 
 consteval bool header_reads_back() {
     const auto bytes = with_size(16, 16);
-    const auto header = read_header(bytes);
-    return header && header->object == ObjectId{7} && header->opcode == 3 && header->size == 16;
+    const auto [header, refusal] = read_header(bytes);
+    return !refusal && header.object == ObjectId{7} && header.opcode == 3 && header.size == 16;
 }
 static_assert(header_reads_back());
 
 consteval bool at_the_limit() {
     const auto bytes = with_size(4096, 4096);
-    return read_header(bytes).has_value();
+    return !read_header(bytes).refusal;
 }
 static_assert(at_the_limit());
 
@@ -213,8 +224,8 @@ consteval bool messages_round_trip() {
     const std::array<std::uint32_t, 2> values{1, 2};
     auto bytes = MessageWriter{ObjectId{9}, 2}.u32(5).i32(-1).string("abc").string("abcd").array(values).fixed(Fixed::from_int(2)).finish();
     if (bytes.size() % 4 != 0) return false;
-    const auto header = read_header(bytes);
-    if (!header || header->object != ObjectId{9} || header->opcode != 2 || header->size != bytes.size()) return false;
+    const auto [header, refusal] = read_header(bytes);
+    if (refusal || header.object != ObjectId{9} || header.opcode != 2 || header.size != bytes.size()) return false;
     MessageReader reader{std::span<const std::byte>{bytes}.subspan(header_bytes)};
     if (reader.u32() != 5U || reader.i32() != -1 || reader.string() != "abc" || reader.string() != "abcd") return false;
     return reader.u32() == 8U && reader.u32() == 1U && reader.u32() == 2U && reader.i32() == 512 && reader.at_end();

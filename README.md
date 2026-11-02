@@ -26,7 +26,8 @@ ctest --preset gcc-debug
 ```
 
 The presets are `gcc-debug`, `gcc-release`, `clang-debug`, `clang-release` and `gcc-asan`, plus `gcc-warn`, which
-is build only and never shipped, and `clang-fuzz`: see `docs/SECURITY.md`. Build one compiler at a time.
+is build only and never shipped, and `clang-fuzz`: see `docs/SECURITY.md`. Build one compiler at a time. Without a
+preset, name a build type: an unnamed one stops the configure.
 
 ## A window
 

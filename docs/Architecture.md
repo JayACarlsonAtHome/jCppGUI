@@ -8,9 +8,11 @@ banned in all our code, including tests and the demo: `std::function` and its re
 containers of widgets, `void*`, function pointers used to hide a type, and hand-written erasure under
 any name. `std::variant` is a last resort and needs a comment saying why. There are none today.
 
-**The one exception** is `src/wayland/trampoline.hpp`. libwayland hands listeners an untyped pointer
-and requires C function pointers. The helper casts straight back to the exact type registered, and
-the pointer goes no further. The exception ends when our own Wayland client replaces libwayland.
+**The one exception** is `src/wayland/trampoline.hpp`. libwayland hands listeners an untyped pointer and requires
+C function pointers, and returns a new global untyped. The helper casts each straight back, and the pointer goes no
+further. Each cast is tied by type: a listener table carries its `Owner`, every entry must be that owner's method, and
+`listen` takes only that owner, while a bound global's interface comes from the type asked for. A mismatch does not
+compile. The exception ends when our own Wayland client replaces libwayland.
 
 **Anything that is part of the window is a class template.** System-level classes with nothing to
 vary, such as the backends, may stay plain, as long as nothing is erased. `WaylandBackend` and
@@ -42,8 +44,8 @@ Non-`constexpr` code is limited to what needs the OS or a C library:
 
 | Code | Why |
 |---|---|
-| `src/wayland/wayland_backend.cpp` | libwayland, sockets, `poll`, `memfd_create`, `posix_fallocate` |
-| `load_keymap`, `UniqueFd` in `src/wayland/untrusted` | `close`, xkbcommon. The checks on values are `constexpr` |
+| `src/wayland/wayland_impl.hpp`, `wayland_backend.cpp` | libwayland, sockets, `poll`. Every C call that can fail is behind a template parameter, `Api`, so a test can make it fail, with no test branch here |
+| `load_keymap`, `create_buffer_file`, `UniqueFd` in `src/wayland/untrusted` | `close`, `fstat`, `memfd_create`, `posix_fallocate`, xkbcommon. The checks on values are `constexpr` |
 | `read_at`, `write_at` in `src/wayland/file_io.hpp` | `pread`, `pwrite`. Their loop and arithmetic are `constexpr` and tested with made-up system calls |
 | `TextEngine` in `src/text/text.cpp` | fontconfig, HarfBuzz, FreeType. Validation, rounding and glyph copying are `constexpr` |
 | `Application` | `std::this_thread::get_id`, and it owns a `TextEngine` |
@@ -70,10 +72,27 @@ HarfBuzz and fontconfig.
 
 A serial, a pointer button, a keysym and a modifier mask are each their own type: `Serial`,
 `PointerButtonCode`, `Keysym` and `ModifierMask`. There is no implicit conversion in or out, so one cannot be
-passed as another. The toolkit can make one explicitly and compare them. Only `src/wayland/` can read the
-number back, through `detail::WireAccess`, which is defined only there. `Rect` is made only from a `Point` and
-a `Size`. `Point` and `Size` still take two plain integers, so a swapped width and height is still possible at
-each place one is written.
+passed as another. Above the backend line they can be compared, and a button, a key or a mask can be named at compile
+time, because those carry no authority. A `Serial` proves that a press happened, so it cannot be made there at all,
+not even by default. Only `src/wayland/` can make one from a number at run time or read a number back, through
+`detail::WireAccess`, which is defined only there. Tests use `detail::TestAccess`.
+
+## Geometry
+
+`Left`, `Right`, `Top`, `Bottom`, `Width` and `Height` are six types, with no implicit conversion to or from an integer or
+each other. Each is made explicitly from exactly an `int32_t`. A length is never negative, and all arithmetic saturates.
+`Point{Left, Top}`, `Size{Width, Height}` and `Rect{Point, Size}` take nothing else, and their accessors give the typed
+values back.
+
+The arithmetic is only what means something: `Left + Width` is `Right`, `Right - Left` is `Width`, `Right - Width` is
+`Left`, the same for `Top`, `Bottom` and `Height`, and `Width` plus or minus `Width`, likewise `Height`. A far edge is one
+past the last pixel, so `left_after(Right)` and `top_after(Bottom)` name where the next thing starts, which is also how
+an edge moves by a length: `left_after(left + padding)`. Edges of different kinds cannot be compared or added.
+
+The number can be read only by `PixelBuffer`, `Canvas`, `TextRun` and `Rect`, which index memory or do the sums in 64 bits, and
+in `src/` through `detail::GeometryAccess`, for libwayland and the font libraries. These stay plain `int32_t`, because each
+is a bare length with no axis, or is not a window position at all: the fields of a `FrameMetrics` type, which `WindowFrame`
+turns into typed values in one place, `max_buffer_side`, a buffer's stride in bytes,.
 
 ## The typed tree
 
@@ -84,7 +103,8 @@ A window is one composite type built from `std::tuple`s, so the compiler knows i
   widget list and no dynamic dispatch.
 - `Widget` is a concept and not a base class. `handle` takes each event that has an answer, as its own
   type, and `notify` takes each notice, which has no answer and so nothing to discard. A widget with no
-  interest in some of them gives one catch-all template of each.
+  interest in some of them gives one catch-all template of each. `layout`, `paint`, `handle` and `notify` each take a
+  `const TreeKey&` first, which only the `Window` and tests can make. A widget passes the one it was given to its children.
 
 **Callbacks are generic lambdas with an explicit `-> void`.** This is required, not style. The tree's
 type contains the callback's type, so the body may only be instantiated after the tree is complete. A
@@ -144,11 +164,30 @@ see `SECURITY.md`.
 
 ## What a callback can reach
 
-A callback receives the `Window`. It cannot change the window's size, take its requests or reach the backend:
-`Window::set_size` and `Window::take_requests` are private, with `ApplicationCore` as a friend, and neither
-`Application` nor `ApplicationCore` gives out its backend. `request_move`, `request_resize` and `request_close`
-stay public, because the frame needs them. Tests get past this through `detail::TestAccess`, which the toolkit
-only declares. It is defined in `tests/test_access.hpp`, and `tests/check_source_rules.sh` keeps it there.
+A callback receives the `Window`, and can use only `get<Tag>()`, `send<Message>()`, `size()` and the three requests.
+
+- **The tree's machinery is private.** `dispatch`, `notify`, `clear_damage`, `layout`, `paint`, `damaged`, `capture_active`,
+  `set_size` and `take_requests` are private, with `ApplicationCore` as a friend, so an attempt does not compile. Neither
+  `Application` nor `ApplicationCore` gives out its backend, and `ApplicationCore::on` is reachable only from a backend's
+  `EventQueue`.
+- **A widget from `get<Tag>()` does not reach it either.** A widget's `layout`, `paint`, `handle` and `notify` need a
+  `TreeKey`, which a callback is never given and cannot make.
+- **Nothing is replaced underneath.** A `Window` and the toolkit's widgets cannot be copied or assigned, because assigning
+  over a `Dynamic` could free the item whose callback is running.
+- **What compiles but is a mistake aborts.** A callback that reaches its own `Application` through a pointer and runs
+  it would redraw in the middle of a delivery, and moving the `Window` or the `Application` would leave the tree empty
+  under the callback. Each aborts through `require`, in every build. `tests/test_callback_access.cpp` shows each.
+
+Tests get past this through `detail::TestAccess`, which the toolkit only declares. It is defined in
+`tests/test_access.hpp`, and `tests/check_source_rules.sh` keeps it there. `TestAccess`, `WireAccess` and `GeometryAccess` are
+friends declared by name, so **a program could define one of those names itself and get past all this.** C++ has no
+way to stop that. Only the rule script stops it in this repository.
+
+**What remains reachable from a callback.** The public interface of each widget it gets by tag, which is what the widget
+offers: `Dynamic::create`, `destroy`, `find`, `show`, `hide`, `captured` and `focused`, `Label::set_text`, the state getters, and
+`children()` on a `MenuBar` or `WindowFrame`, which gives only the same widgets. A pointer from `Dynamic::find` can be kept past
+the item's life, as any C++ pointer can. A callback can loop for ever, recurse through `send` until the stack runs out, or
+call `std::exit`. Through a pointer to its `Application`: `ui()`, `closed()`, `frames()` and `size()`, which are harmless.
 
 ## Frames
 
@@ -157,6 +196,11 @@ presented twice. A frame holds no pointer: only its generation, its buffer's ind
 acquire invalidates every older frame even if it then fails, and `frame_pixels` and `present` refuse anything
 but the current one with `ErrorCode::StaleFrame`. A frame moved from has generation 0, which is never current.
 Both backends use the same `detail::FrameLedger`, so the headless tests run the Wayland backend's rule.
+
+A `Canvas` and a `PixelBuffer` cannot be copied or moved, so a widget cannot store what `paint` gives it. `clipped` still
+returns a new object, which can initialize a member, so `ApplicationCore` also gives its canvas a generation from a
+`FrameLedger` of its own, and each draw call aborts unless that generation is current. Painting ends before the
+pixels can move. `docs/SECURITY.md` says exactly what remains possible.
 
 ## Hidden implementation types
 
@@ -171,6 +215,7 @@ owner approved keeping them. `WaylandImpl` gets revisited with our own Wayland c
 ```
 Lin/v001/   C++23, self-contained: bsir.sh, CMakeLists.txt, CMakePresets.json, Setup/,
             include/jCppGUI/v001/, src/, tests/, demo/
+            tests/fake_compositor/ is a scripted Wayland compositor, for tests only: see docs/Maturity.md
 ```
 
 The namespace is `jgui::inline v001`, so `jgui::Button` works for consumers. Toolkit code is header
