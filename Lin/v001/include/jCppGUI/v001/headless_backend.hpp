@@ -38,7 +38,7 @@ public:
         return {};
     }
 
-    [[nodiscard]] constexpr bool can_present() const noexcept { return true; }
+    [[nodiscard]] constexpr bool can_present(Size) const noexcept { return !display_holding_; }
 
     constexpr std::expected<Frame<HeadlessBackend>, Error> acquire_frame(Size size) {
         const std::uint64_t generation = ledger_.begin();
@@ -70,6 +70,7 @@ public:
     }
 
     // --- For tests ---
+    constexpr void set_display_holding(bool holding) noexcept { display_holding_ = holding; }
     [[nodiscard]] constexpr std::uint32_t pixel(Point p) const {
         return pixels_.at(static_cast<std::size_t>(p.y) * static_cast<std::size_t>(size_.width()) +
                           static_cast<std::size_t>(p.x));
@@ -86,6 +87,7 @@ private:
     std::vector<std::uint32_t> pixels_;
     Size size_{};
     std::size_t presented_{};
+    bool display_holding_{};
     std::optional<Serial> move_serial_;
     std::optional<Serial> resize_serial_;
     std::optional<ResizeEdge> resize_edge_;

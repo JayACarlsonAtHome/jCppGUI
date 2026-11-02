@@ -22,7 +22,7 @@ enum class ErrorCode {
     Font,           // no usable font, or the font library failed
     Keymap,         // a keymap was refused
     PoolExhausted,  // a pool has no slot left to give
-    WouldBlock,     // a headless wait with nothing queued, which would never wake
+    WouldBlock,     // a headless wait with nothing queued, or a frame the display holds too much to allow
     StaleFrame,     // a frame that a newer acquire or a present has ended
 };
 

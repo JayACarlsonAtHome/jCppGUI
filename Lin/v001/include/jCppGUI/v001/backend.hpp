@@ -94,7 +94,29 @@ private:
 
 using BackendEventQueue = EventQueue<CloseEvent, ResizeEvent, PointerMove, PointerButton, PointerLeave, KeyEvent>;
 
+// All of one window's frame buffers, and the memory a frame is drawn in, must fit in this.
+inline constexpr std::size_t window_pixel_budget = std::size_t{1} << 30U;
+
 namespace detail {
+// Whether a frame of some size can start now. Ready: it fits. Wait: not yet, because the display holds too
+// much, and releases will make room. Never: one frame alone does not fit, and no release can change that.
+enum class FrameRoom : std::uint8_t { Ready, Wait, Never };
+
+// The buffers the display holds. Nothing else counts, because any buffer it does not hold can be dropped.
+struct HeldBuffers {
+    std::size_t bytes{};
+    std::size_t count{};
+};
+
+// A frame needs one buffer and the memory it is drawn in, each of frame_bytes. Waiting is only ever the answer
+// while something is held, so it always ends if the display releases what it holds.
+[[nodiscard]] constexpr FrameRoom frame_room(std::size_t frame_bytes, HeldBuffers held, bool reuses_a_buffer,
+                                             std::size_t max_buffers, std::size_t budget) noexcept {
+    if (frame_bytes > budget / 2) return FrameRoom::Never;
+    if (!reuses_a_buffer && held.count >= max_buffers) return FrameRoom::Wait;
+    return held.bytes > budget - frame_bytes * 2 ? FrameRoom::Wait : FrameRoom::Ready;
+}
+
 // Which frame is the current one. Both backends use this one rule: a new acquire invalidates every older
 // frame, even if it then fails, and presenting ends the current one. Generation 0 is never current.
 class FrameLedger {
@@ -152,14 +174,15 @@ struct ProbeSink {
 
 // process_pending delivers what is available without sleeping. wait sleeps until something arrives
 // and delivers it. A frame is acquire_frame, frame_pixels and drawing, then present. frame_pixels and
-// present refuse a frame that is not the current one. can_present is false while every buffer is held by
-// the display, and sync waits until the display has processed all requests so far.
+// present refuse a frame that is not the current one. can_present is false while the display holds too much
+// for a frame of that size, which is the signal to wait and not an error, and sync waits until the display has
+// processed all requests so far.
 template <class B>
 concept Backend = requires(B& backend, const B& constant, detail::ProbeSink& sink, Size size, Rect damage,
                            Serial serial, ResizeEdge edge, const Frame<B>& frame, Frame<B>&& taken) {
     { backend.process_pending(sink) } -> std::same_as<std::expected<void, Error>>;
     { backend.wait(sink) } -> std::same_as<std::expected<void, Error>>;
-    { constant.can_present() } -> std::same_as<bool>;
+    { constant.can_present(size) } -> std::same_as<bool>;
     { backend.acquire_frame(size) } -> std::same_as<std::expected<Frame<B>, Error>>;
     { backend.frame_pixels(frame) } -> std::same_as<std::expected<PixelBuffer, Error>>;
     { backend.present(std::move(taken), damage) } -> std::same_as<std::expected<void, Error>>;

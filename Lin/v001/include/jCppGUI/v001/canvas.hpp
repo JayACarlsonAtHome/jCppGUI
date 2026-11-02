@@ -14,8 +14,7 @@
 
 namespace jgui::inline v001 {
 
-inline constexpr std::int32_t max_buffer_side = 16384;
-inline constexpr std::int64_t max_buffer_bytes = std::int64_t{1} << 30U;
+inline constexpr std::int32_t max_buffer_side = 8192;  // 256 MiB at most, for one buffer of this many pixels a side
 
 struct Color {
     std::uint32_t argb{};
@@ -24,14 +23,12 @@ struct Color {
 
 class PixelBuffer {
 public:
-    // The byte count for a size, after checking both limits. Every size from outside goes through
+    // The byte count for a size, after checking its limit. Every size from outside goes through
     // here before it is used in any other arithmetic.
     [[nodiscard]] static constexpr std::expected<std::size_t, Error> byte_size(Size size) {
         if (size.width() > max_buffer_side || size.height() > max_buffer_side)
-            return make_error(ErrorCode::SizeLimit, "buffer side is over the limit of 16384");
-        const std::int64_t bytes = std::int64_t{size.width()} * std::int64_t{size.height()} * 4;
-        if (bytes > max_buffer_bytes) return make_error(ErrorCode::SizeLimit, "buffer is over the limit of 1 GiB");
-        return static_cast<std::size_t>(bytes);
+            return make_error(ErrorCode::SizeLimit, "buffer side is over the limit of 8192");
+        return static_cast<std::size_t>(size.width()) * static_cast<std::size_t>(size.height()) * 4U;
     }
 
     // stride_bytes is the distance between rows: a whole number of pixels, at least one row wide.

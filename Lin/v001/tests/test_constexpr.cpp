@@ -121,8 +121,8 @@ consteval bool refused(Size size) { return !PixelBuffer::byte_size(size).has_val
 static_assert(PixelBuffer::byte_size(Size{}).value() == 0);
 static_assert(PixelBuffer::byte_size(Size{0, max_buffer_side}).value() == 0);
 static_assert(PixelBuffer::byte_size(Size{1, 1}).value() == 4);
-static_assert(std::int64_t{max_buffer_side} * max_buffer_side * 4 == max_buffer_bytes, "both limits meet exactly");
-static_assert(PixelBuffer::byte_size(Size{max_buffer_side, max_buffer_side}).value() == std::size_t{1} << 30U);
+static_assert(max_buffer_side == 8192);
+static_assert(PixelBuffer::byte_size(Size{max_buffer_side, max_buffer_side}).value() == std::size_t{1} << 28U, "256 MiB at most");
 static_assert(refused(Size{max_buffer_side + 1, 1}) && refused(Size{1, max_buffer_side + 1}));
 static_assert(refused(Size{int_max, int_max}) && refused(Size{46341, 46341}) && refused(Size{65536, 65536}));
 static_assert(max_caption_bytes == 4096 && max_run_width > 0 && max_run_area > 0);
@@ -163,7 +163,7 @@ consteval bool buffer_create_checks() {
     if (accepted(Size{3, 4}, 8)) return false;   // stride under the width
     if (accepted(Size{3, 4}, 13)) return false;  // not whole pixels
     if (accepted(Size{3, 4}, -4)) return false;
-    if (accepted(Size{1, 16384}, int_max - 3)) return false;
+    if (accepted(Size{1, max_buffer_side}, int_max - 3)) return false;
     return true;
 }
 static_assert(buffer_create_checks());
@@ -344,6 +344,37 @@ static_assert(MouseButton::Left != PointerButtonCode{0x111} && Key::Return != Ke
 static_assert((Modifier::Shift | Modifier::Ctrl).holds(Modifier::Ctrl) && !(Modifier::Shift | Modifier::Ctrl).holds(Modifier::Alt));
 static_assert((Modifier::Shift | Modifier::Ctrl) == (Modifier::Ctrl | Modifier::Shift) && ModifierMask{}.holds(ModifierMask{}));
 static_assert(!std::constructible_from<Rect, int, int, int, int> && std::constructible_from<Rect, Point, Size>);
+
+// --- The memory budget: all of a window's frame buffers, and the memory a frame is drawn in ---
+constexpr std::size_t mib = std::size_t{1} << 20U;
+constexpr std::size_t most_buffers = 4;
+consteval detail::FrameRoom room(std::size_t frame, std::size_t held, std::size_t held_count, bool reuses = false) {
+    return detail::frame_room(frame, detail::HeldBuffers{held, held_count}, reuses, most_buffers, window_pixel_budget);
+}
+static_assert(window_pixel_budget == 1024 * mib);
+// With nothing held, the largest frame fits, as must anything the size limit allows.
+static_assert(room(256 * mib, 0, 0) == detail::FrameRoom::Ready);
+// One buffer plus the memory it is drawn in, at the budget and just over. Only then is it Never.
+static_assert(room(512 * mib, 0, 0) == detail::FrameRoom::Ready);
+static_assert(room(512 * mib + 1, 0, 0) == detail::FrameRoom::Never);
+static_assert(room(std::numeric_limits<std::size_t>::max(), 0, 0) == detail::FrameRoom::Never);
+static_assert(room(512 * mib + 1, 256 * mib, 1) == detail::FrameRoom::Never, "no release can help");
+// Maximum-size frames: two held still leave room, and three do not, until one is released.
+static_assert(room(256 * mib, 256 * mib, 1) == detail::FrameRoom::Ready);
+static_assert(room(256 * mib, 512 * mib, 2) == detail::FrameRoom::Ready, "exactly at the budget");
+static_assert(room(256 * mib, 512 * mib + 1, 2) == detail::FrameRoom::Wait, "one byte over");
+static_assert(room(256 * mib, 768 * mib, 3) == detail::FrameRoom::Wait);
+// Reusing a buffer still counts it and the memory it is drawn in, so what is held can still make it wait.
+static_assert(room(256 * mib, 512 * mib, 2, true) == detail::FrameRoom::Ready);
+static_assert(room(256 * mib, 768 * mib, 3, true) == detail::FrameRoom::Wait);
+// The count limit waits for a new buffer, and does not stop one that is reused.
+static_assert(room(mib, 4 * mib, 4) == detail::FrameRoom::Wait);
+static_assert(room(mib, 4 * mib, 4, true) == detail::FrameRoom::Ready);
+static_assert(room(mib, 3 * mib, 3) == detail::FrameRoom::Ready);
+// A count that cannot be added up safely waits, and does not wrap into room.
+static_assert(room(mib, std::numeric_limits<std::size_t>::max(), 1) == detail::FrameRoom::Wait);
+// Nothing held never waits, whatever the frame's size, so a wait always has a release to end it.
+static_assert(room(mib, 0, 0) == detail::FrameRoom::Ready && room(512 * mib, 0, 0, true) == detail::FrameRoom::Ready);
 
 // --- A frame being drawn. The rule is one FrameLedger, which the Wayland backend shares. ---
 consteval bool the_current_frame_works() {
@@ -927,6 +958,18 @@ consteval bool a_press_behind_a_resize_uses_the_new_size() {
     return jgui_test::backend(rig.core).resize_serial() == Serial{43} && jgui_test::backend(rig.core).resize_edge() == ResizeEdge::Right;
 }
 static_assert(a_press_behind_a_resize_uses_the_new_size());
+
+// While the display holds too much, nothing is drawn, nothing fails, and the damage stays until it can be.
+consteval bool waiting_for_room_keeps_the_damage() {
+    ApplicationCore core{HeadlessBackend{Size{60, 40}}, window(window_frame())};
+    const BlockShaper shaper;
+    jgui_test::backend(core).set_display_holding(true);
+    if (!core.process_pending(shaper).has_value() || core.frames() != 0) return false;
+    if (!core.process_pending(shaper).has_value() || core.frames() != 0) return false;
+    jgui_test::backend(core).set_display_holding(false);
+    return core.process_pending(shaper).has_value() && core.frames() == 1;
+}
+static_assert(waiting_for_room_keeps_the_damage());
 
 consteval bool run_ends_on_close_and_empty_wait_is_an_error() {
     ApplicationCore closes{HeadlessBackend{small_window}, demo::make_ui<std::vector>()};

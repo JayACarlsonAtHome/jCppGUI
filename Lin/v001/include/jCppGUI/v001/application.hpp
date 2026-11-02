@@ -122,7 +122,7 @@ private:
         }
         if (closed_ || !have_size_) return {};
         if (!damaged_ && !root_.damaged()) return {};
-        if (!backend_.can_present()) return {};
+        if (!backend_.can_present(root_.size())) return {};
         return draw(text);
     }
 

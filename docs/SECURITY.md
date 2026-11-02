@@ -9,12 +9,13 @@ skeleton, and what follows is the design intent and what the tests cover.
 
 | Input | Treatment |
 |---|---|
-| Window sizes from the compositor | Non-positive means the client chooses, and values over 16384 are clamped. All sizes pass `PixelBuffer::byte_size` (16384 per side, 1 GiB total) before any other arithmetic. |
+| Window sizes from the compositor | Non-positive means the client chooses, and values over 8192 are clamped. All sizes pass `PixelBuffer::byte_size` (8192 per side, so 256 MiB at most) before any other arithmetic. |
 | Pointer positions and key codes | Coordinates go through saturating geometry. Key codes are checked before conversion. |
 | Keymap descriptor | xkb v1 format only, with a 1 MiB limit checked before anything is read. It compiles under an xkb context with no include path and no names from the environment, so its text cannot make xkbcommon read a file. A keyboard with the protocol's no-keymap format is treated as having no keys, and any other wrong format is refused. The bytes are read into a private copy, so the compositor cannot change them after they are checked. A file shorter than the size claimed is refused, as is one with no NUL inside that size, and only the text before the first NUL reaches xkbcommon. The descriptor is always closed. |
 | Buffer files | `memfd_create` with `MFD_CLOEXEC` and `MFD_NOEXEC_SEAL`, or `MFD_ALLOW_SEALING` on a kernel too old for that. Sized with `posix_fallocate` so that a shortage is a clean `Error`, then sealed against shrinking and growing, so nobody can truncate a file under the compositor. Closed by RAII. Frames are written with `write_at`, never while the compositor holds the file. A buffer is never resized, and it is destroyed in normal running only after `wl_buffer.release`. |
 | Wayland objects | A null result from binding a global or creating a pointer or keyboard is a clean `Error`, and no listener is added to it. Losing the seat counts as the pointer leaving, so no capture is left stale. |
 | Window title and app id | Valid UTF-8 with no NUL, and at most 4083 bytes, before they reach libwayland, which ends the connection on a message over 4096 bytes. |
+| Memory for one window | All its frame buffers, plus the memory a frame is drawn in, must fit in 1 GiB, at most four buffers. A new frame first drops every buffer the compositor does not hold. If what it holds still leaves no room, the frame waits for releases, with no error. Only a frame that could never fit alone is an `Error`. A compositor that never releases stops its own window from redrawing, and nothing more. The cursor's small buffer is not counted. |
 | Protocol errors | End `run()` with an `Error` that includes `wl_display_get_error`. |
 | Font files | **Untrusted input.** Metrics, bitmap sizes, pitch and pixel mode are checked. A shaped run over 8192 glyphs is refused before anything adds up or renders, because a font's substitution rules can expand one character into many. HarfBuzz's two glyph counts must agree. Glyph bitmaps over 512 pixels per side are refused before they are copied, a pitch is limited before it is multiplied, and every position is clipped to the run. FreeType and HarfBuzz themselves still parse the font file, and a bug there is not something our checks can stop. |
 | Text | Strict UTF-8 validation and a 4096-byte limit before shaping. A `TextRun` whose coverage does not hold one byte per pixel aborts, in every build. |
@@ -105,8 +106,6 @@ errors. It covers only the paths those tests evaluate.
 
 ## Accepted risks
 
-- A hostile compositor can make us allocate up to about 5 GiB, through maximum-size buffers: four buffer
-  files and the frame's own pixels, at up to 1 GiB each.
 - `PixelBuffer` and `Canvas` are non-owning views, and the next `acquire_frame` invalidates them. A `Frame` is
   checked every time its pixels are asked for, but a view asked for earlier can still be kept and used by
   mistake. `ApplicationCore` does not keep one, and no widget is given a way to reach a frame.

@@ -45,12 +45,12 @@ int main() {
 
     // Test 3
     const auto refused = [](Size size) { return !PixelBuffer::byte_size(size).has_value(); };
-    check(refused(Size{16385, 1}), "width over the limit");
-    check(refused(Size{1, 16385}), "height over the limit");
+    check(refused(Size{8193, 1}), "width over the limit");
+    check(refused(Size{1, 8193}), "height over the limit");
     check(refused(Size{hi, hi}), "both sides at the int32_t maximum");
     check(refused(Size{65536, 65536}), "the product wraps to zero in 32 bits");
     check(refused(Size{46341, 46341}), "the product wraps past int32_t");
-    check(PixelBuffer::byte_size(Size{16384, 16384}).value_or(0) == std::size_t{1} << 30U, "exactly at both limits");
+    check(PixelBuffer::byte_size(Size{8192, 8192}).value_or(0) == std::size_t{1} << 28U, "exactly at the limit");
     std::array<std::uint32_t, 4> few{};
     check(!PixelBuffer::create(few, Size{4, 4}, 16).has_value(), "storage smaller than the size");
     check(!PixelBuffer::create(few, Size{2, 2}, 4).has_value(), "stride under the width");

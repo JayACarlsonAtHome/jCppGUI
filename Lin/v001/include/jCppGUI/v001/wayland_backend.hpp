@@ -43,7 +43,7 @@ public:
         return result;
     }
 
-    [[nodiscard]] bool can_present() const noexcept;
+    [[nodiscard]] bool can_present(Size size) const;
     std::expected<Frame<WaylandBackend>, Error> acquire_frame(Size size);
     std::expected<PixelBuffer, Error> frame_pixels(const Frame<WaylandBackend>& frame);
     std::expected<void, Error> present(Frame<WaylandBackend> frame, Rect damage);

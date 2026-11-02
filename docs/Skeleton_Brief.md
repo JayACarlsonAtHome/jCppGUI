@@ -254,7 +254,7 @@ Just enough to draw a caption: one font, one size, one line, no editing.
 ### 4. Pixel surface and canvas (`canvas.hpp`)
 
 - `PixelBuffer` is a view of ARGB8888 pixels: `std::span<uint32_t>`, size and stride. Its creation
-  validates that width × height × 4 fits a limit (16384 per side, 1 GiB total) and fails cleanly
+  validates that each side fits a limit (8192, so 256 MiB at most) and fails cleanly
   otherwise.
 - `Canvas` has `fill_rect` and `stroke_rect`, clipped to the buffer and to a clip rect. No
   out-of-bounds write is possible for any input.

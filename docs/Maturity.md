@@ -32,6 +32,7 @@
   to the buffer file with a system call, because nothing of ours is mapped. Secure first, efficient
   second. The cost has not been measured.
 - Layout is a simple flow, not a layout manager. Overlapping widgets are possible but untested.
+- A window's side is at most 8192 pixels, and frames wait if the compositor holds too much.
 - Scale is fixed at 1, so the window is upscaled on HiDPI outputs.
 - The frame has no maximize or minimize control, and the resize edges show no resize cursor.
 - No key repeat, popups, drop-down menus, clipboard, drag and drop, themes or accessibility.

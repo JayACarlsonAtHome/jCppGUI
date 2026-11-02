@@ -45,6 +45,10 @@ constexpr std::uint32_t seat_version = 5;  // for release requests and pointer f
 constexpr std::size_t max_frame_buffers = 4;
 constexpr std::int32_t min_window_side = 120;
 
+[[nodiscard]] constexpr std::size_t sat_add_size(std::size_t a, std::size_t b) noexcept {
+    return a > std::numeric_limits<std::size_t>::max() - b ? std::numeric_limits<std::size_t>::max() : a + b;
+}
+
 using Display = detail::CResource<wl_display, wl_display_disconnect>;
 using Registry = detail::CResource<wl_registry, wl_registry_destroy>;
 using Compositor = detail::CResource<wl_compositor, wl_compositor_destroy>;
@@ -75,6 +79,7 @@ public:
     [[nodiscard]] bool busy() const noexcept { return busy_; }
     void mark_busy() noexcept { busy_ = true; }
     [[nodiscard]] wl_buffer* object() const noexcept { return buffer_.get(); }
+    [[nodiscard]] std::size_t byte_count() const noexcept { return pixel_count_ * sizeof(std::uint32_t); }
 
     // Copies one whole picture to the file. Refused while the compositor still holds the file.
     [[nodiscard]] std::expected<void, Error> write(std::span<const std::uint32_t> pixels) const {
@@ -188,6 +193,21 @@ struct WaylandImpl {
     [[nodiscard]] std::expected<void, Error> create_cursor();
     [[nodiscard]] std::optional<Error> take_failure() noexcept { return std::exchange(failure, std::nullopt); }
     [[nodiscard]] Error connection_error() const;
+
+    // Whether a frame of this size can start, given what the compositor holds now.
+    [[nodiscard]] FrameRoom room_for(std::size_t frame_bytes, Size size) const noexcept {
+        HeldBuffers held;
+        bool reuses_a_buffer = false;
+        for (const auto& buffer : buffers) {
+            if (buffer->busy()) {
+                held.bytes = sat_add_size(held.bytes, buffer->byte_count());
+                ++held.count;
+            } else if (buffer->size() == size) {
+                reuses_a_buffer = true;
+            }
+        }
+        return frame_room(frame_bytes, held, reuses_a_buffer, max_frame_buffers, window_pixel_budget);
+    }
 
     template <class E>
     void record(const E& event) noexcept {
@@ -568,9 +588,10 @@ std::expected<WaylandBackend, Error> WaylandBackend::create(const WaylandOptions
 
 std::expected<void, Error> WaylandBackend::pump(bool may_block) { return impl_->pump(may_block); }
 
-bool WaylandBackend::can_present() const noexcept {
-    if (impl_->buffers.size() < max_frame_buffers) return true;
-    return std::ranges::any_of(impl_->buffers, [](const auto& buffer) { return !buffer->busy(); });
+bool WaylandBackend::can_present(Size size) const {
+    // A size that is refused goes on to acquire_frame, which reports it.
+    const auto bytes = PixelBuffer::byte_size(size);
+    return !bytes || impl_->room_for(*bytes, size) != detail::FrameRoom::Wait;
 }
 
 std::expected<Frame<WaylandBackend>, Error> WaylandBackend::acquire_frame(Size size) {
@@ -578,24 +599,33 @@ std::expected<Frame<WaylandBackend>, Error> WaylandBackend::acquire_frame(Size s
     const std::uint64_t generation = impl_->ledger.begin();
     auto bytes = PixelBuffer::byte_size(size);
     if (!bytes) return std::unexpected(std::move(bytes.error()));
+    const detail::FrameRoom room = impl_->room_for(*bytes, size);
+    if (room == detail::FrameRoom::Never) return make_error(ErrorCode::SizeLimit, "one frame of this size is over the memory budget");
+    if (room == detail::FrameRoom::Wait) return make_error(ErrorCode::WouldBlock, "the compositor holds too much for this frame yet");
+
+    // Everything the compositor does not hold goes, except one buffer that fits.
     auto& buffers = impl_->buffers;
-    // Buffers of another size go away only once the compositor no longer holds them.
+    bool kept_one = false;
     std::erase_if(buffers, [&](const std::unique_ptr<ShmBuffer>& buffer) {
-        return !buffer->busy() && buffer->size() != size;
+        if (buffer->busy()) return false;
+        if (kept_one || buffer->size() != size) return true;
+        kept_one = true;
+        return false;
     });
+    // The old pixels go before anything new is allocated, so the budget also holds at the peak.
+    const std::size_t pixel_count = *bytes / sizeof(std::uint32_t);
+    if (impl_->frame_pixels.capacity() != pixel_count) std::vector<std::uint32_t>{}.swap(impl_->frame_pixels);
     std::size_t chosen = buffers.size();
     for (std::size_t i = 0; i < buffers.size(); ++i) {
-        if (!buffers[i]->busy() && buffers[i]->size() == size) chosen = i;
+        if (!buffers[i]->busy()) chosen = i;
     }
     if (chosen == buffers.size()) {
-        if (buffers.size() >= max_frame_buffers)
-            return make_error(ErrorCode::System, "every frame buffer is held by the compositor");
         auto created = ShmBuffer::create(impl_->shm.get(), size);
         if (!created) return std::unexpected(std::move(created.error()));
         buffers.push_back(std::move(*created));
     }
     try {
-        impl_->frame_pixels.resize(*bytes / sizeof(std::uint32_t));
+        impl_->frame_pixels.resize(pixel_count);
     } catch (const std::bad_alloc&) {
         return make_error(ErrorCode::System, "out of memory for the frame's pixels");
     }

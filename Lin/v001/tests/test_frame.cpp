@@ -58,7 +58,7 @@ void test_absurd_resize(Checker& check) {
     check(app.has_value() && app->process_pending().has_value(), "first frame");
     const auto frames = app->frames();
     const std::int32_t hi = std::numeric_limits<std::int32_t>::max();
-    for (const jgui::Size absurd : {jgui::Size{hi, hi}, jgui::Size{16385, 10}, jgui::Size{10, 16385}, jgui::Size{65536, 65536}}) {
+    for (const jgui::Size absurd : {jgui::Size{hi, hi}, jgui::Size{8193, 10}, jgui::Size{10, 8193}, jgui::Size{65536, 65536}}) {
         jgui_test::backend(*app).inject(jgui::ResizeEvent{absurd});
         const auto result = app->process_pending();
         check(!result.has_value() && result.error().code == jgui::ErrorCode::SizeLimit, "the size is refused with an Error");
