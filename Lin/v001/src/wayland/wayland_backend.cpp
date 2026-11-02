@@ -43,7 +43,9 @@ std::expected<WaylandBackend, Error> WaylandBackend::create(const WaylandOptions
     return WaylandBackend{std::move(events), std::move(impl)};
 }
 
-std::expected<void, Error> WaylandBackend::pump(bool may_block) { return impl_->core.pump(may_block); }
+std::expected<void, Error> WaylandBackend::pump(bool may_block) {
+    return impl_->core.pump(may_block ? detail::PumpWait::WhenIdle : detail::PumpWait::Never);
+}
 
 bool WaylandBackend::can_present(Size size) const {
     // A size that is refused goes on to acquire_frame, which reports it.
@@ -115,9 +117,7 @@ std::expected<void, Error> WaylandBackend::present(Frame<WaylandBackend> frame, 
 }
 
 std::expected<void, Error> WaylandBackend::sync() {
-    if (wl_display_roundtrip(impl_->core.display.get()) < 0) return std::unexpected(impl_->core.connection_error());
-    if (std::optional<Error> error = impl_->core.take_failure(); error) return std::unexpected(std::move(*error));
-    return {};
+    return impl_->core.roundtrip();
 }
 
 void WaylandBackend::begin_move(Serial serial) noexcept {

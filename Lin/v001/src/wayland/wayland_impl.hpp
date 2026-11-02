@@ -6,6 +6,7 @@
 #pragma once
 
 #include <poll.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -56,7 +57,13 @@ constexpr std::int32_t min_window_side = 120;
     return a > std::numeric_limits<std::size_t>::max() - b ? std::numeric_limits<std::size_t>::max() : a + b;
 }
 
-using Display = CResource<wl_display, wl_display_disconnect>;
+// The requests the objects' destructors just made go out first, so the compositor sees an orderly end. If they cannot,
+// nothing is lost: it cleans up after a closed connection anyway.
+inline void flush_and_disconnect(wl_display* display) noexcept {
+    static_cast<void>(wl_display_flush(display));
+    wl_display_disconnect(display);
+}
+using Display = CResource<wl_display, flush_and_disconnect>;
 using Registry = CResource<wl_registry, wl_registry_destroy>;
 using Compositor = CResource<wl_compositor, wl_compositor_destroy>;
 using Shm = CResource<wl_shm, wl_shm_destroy>;
@@ -69,6 +76,7 @@ using KeyboardObject = CResource<wl_keyboard, wl_keyboard_release>;
 using Surface = CResource<wl_surface, wl_surface_destroy>;
 using XdgSurface = CResource<xdg_surface, xdg_surface_destroy>;
 using Toplevel = CResource<xdg_toplevel, xdg_toplevel_destroy>;
+using SyncCallback = CResource<wl_callback, wl_callback_destroy>;
 
 // The calls into the C libraries that can fail by giving back nothing, or by refusing a listener. They are a template
 // parameter only so that a test can make one of them fail: production always uses this one, and nothing here
@@ -76,6 +84,7 @@ using Toplevel = CResource<xdg_toplevel, xdg_toplevel_destroy>;
 struct LibWayland {
     [[nodiscard]] static wl_display* connect() noexcept { return wl_display_connect(nullptr); }
     [[nodiscard]] static wl_registry* get_registry(wl_display* display) noexcept { return wl_display_get_registry(display); }
+    [[nodiscard]] static wl_callback* sync(wl_display* display) noexcept { return wl_display_sync(display); }
     template <class Global>
     [[nodiscard]] static Global* bind(wl_registry* registry, std::uint32_t name, std::uint32_t version) noexcept {
         return bind_global<Global>(registry, name, version);
@@ -203,6 +212,18 @@ struct GlobalInterface<wl_seat> {
     static constexpr const wl_interface* value = &wl_seat_interface;
 };
 
+// Whether reading the display may sleep: never, only while nothing is queued for the toolkit, or until something comes.
+enum class PumpWait : std::uint8_t { Never, WhenIdle, Always };
+
+// What one roundtrip waits for.
+struct SyncWait {
+    bool done{};
+    void on_done(wl_callback*, std::uint32_t) noexcept { done = true; }
+};
+
+using SyncListener = OwnedListener<SyncWait, wl_callback_listener>;
+inline constexpr SyncListener sync_listener{wl_callback_listener{.done = SyncListener::on<&SyncWait::on_done>}};
+
 template <class Api>
 struct BasicWaylandImpl {
     explicit BasicWaylandImpl(BackendEventQueue& queue, Size fallback) noexcept : events{queue}, chosen_size{fallback} {}
@@ -236,7 +257,8 @@ struct BasicWaylandImpl {
 
     // --- Used from the event loop ---
     [[nodiscard]] std::expected<void, Error> connect(const WaylandOptions& options);
-    [[nodiscard]] std::expected<void, Error> pump(bool may_block);
+    [[nodiscard]] std::expected<void, Error> pump(PumpWait wait);
+    [[nodiscard]] std::expected<void, Error> roundtrip();
     [[nodiscard]] std::expected<void, Error> create_cursor();
     [[nodiscard]] std::optional<Error> take_failure() noexcept { return std::exchange(failure, std::nullopt); }
     [[nodiscard]] Error connection_error() const;
@@ -575,9 +597,7 @@ std::expected<void, Error> BasicWaylandImpl<Api>::connect(const WaylandOptions& 
     if (!registry) return make_error(ErrorCode::Connect, "cannot get the Wayland registry");
     if (!Api::template listen<wl_registry_add_listener>(registry.get(), Listeners<Api>::registry, *this))
         return make_error(ErrorCode::System, "the registry's listener was refused");
-    if (wl_display_roundtrip(display.get()) < 0) return std::unexpected(connection_error());
-    // A failure in a handler during that roundtrip is reported here, before anything is built on what it left.
-    if (std::optional<Error> error = take_failure(); error) return std::unexpected(std::move(*error));
+    if (auto answered = roundtrip(); !answered) return std::unexpected(std::move(answered.error()));
 
     if (!compositor) return make_error(ErrorCode::MissingGlobal, "the compositor has no wl_compositor version 4");
     if (!shm) return make_error(ErrorCode::MissingGlobal, "the compositor has no wl_shm");
@@ -604,8 +624,9 @@ std::expected<void, Error> BasicWaylandImpl<Api>::connect(const WaylandOptions& 
 }
 
 template <class Api>
-std::expected<void, Error> BasicWaylandImpl<Api>::pump(bool may_block) {
+std::expected<void, Error> BasicWaylandImpl<Api>::pump(PumpWait wait) {
     wl_display* d = display.get();
+    bool hung_up = false;
     while (true) {
         while (wl_display_prepare_read(d) != 0) {
             if (wl_display_dispatch_pending(d) < 0) return std::unexpected(connection_error());
@@ -620,7 +641,8 @@ std::expected<void, Error> BasicWaylandImpl<Api>::pump(bool may_block) {
             if (errno == EAGAIN) wanted = static_cast<short>(POLLIN | POLLOUT);
         }
         pollfd watch{wl_display_get_fd(d), wanted, 0};
-        const int timeout = (may_block && events.empty() && !failure) ? -1 : 0;
+        const bool may_sleep = wait == PumpWait::Always || (wait == PumpWait::WhenIdle && events.empty());
+        const int timeout = (may_sleep && !failure) ? -1 : 0;
         const int ready = ::poll(&watch, 1, timeout);
         if (ready < 0) {
             const int poll_error = errno;
@@ -628,6 +650,7 @@ std::expected<void, Error> BasicWaylandImpl<Api>::pump(bool may_block) {
             if (poll_error == EINTR) continue;
             return make_error(ErrorCode::System, "poll on the display failed");
         }
+        hung_up = (watch.revents & (POLLERR | POLLHUP)) != 0;
         if ((watch.revents & (POLLIN | POLLERR | POLLHUP)) != 0) {
             if (wl_display_read_events(d) < 0 && errno != EAGAIN) return std::unexpected(connection_error());
         } else {
@@ -638,6 +661,28 @@ std::expected<void, Error> BasicWaylandImpl<Api>::pump(bool may_block) {
     }
     if (std::optional<Error> error = take_failure(); error) return std::unexpected(std::move(*error));
     if (wl_display_get_error(d) != 0) return std::unexpected(connection_error());
+    // libwayland reports the end of the connection only when it holds nothing. With part of a message left over, it
+    // answers every read as if more could come, and a poll that sees the hang-up would then never sleep again.
+    if (hung_up) {
+        int waiting = 0;
+        if (::ioctl(wl_display_get_fd(d), FIONREAD, &waiting) != 0 || waiting == 0)
+            return make_error(ErrorCode::Connect, "the compositor closed the connection");
+    }
+    return {};
+}
+
+// A wait for the compositor to have handled everything so far. libwayland's own version waits with no regard for a
+// hang-up, so this goes through pump, which ends on one. A failure in a handler meanwhile ends it too.
+template <class Api>
+std::expected<void, Error> BasicWaylandImpl<Api>::roundtrip() {
+    const SyncCallback callback{Api::sync(display.get())};
+    if (!callback) return make_error(ErrorCode::System, "wl_display_sync failed");
+    SyncWait wait;
+    if (!Api::template listen<wl_callback_add_listener>(callback.get(), sync_listener, wait))
+        return make_error(ErrorCode::System, "the sync callback's listener was refused");
+    while (!wait.done) {
+        if (auto pumped = pump(PumpWait::Always); !pumped) return std::unexpected(std::move(pumped.error()));
+    }
     return {};
 }
 
