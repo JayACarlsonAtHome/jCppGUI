@@ -70,10 +70,9 @@ constexpr bool transfer_of(std::size_t total, std::array<IoStep, N> steps, std::
     bool offsets_right = true;
     const auto result = transfer_all(total, [&](std::size_t done) {
         offsets_right = offsets_right && done == expected_done;
-        const IoStep step = calls < N ? steps[calls] : IoStep{-1, EIO};
-        ++calls;
-        if (step.bytes > 0) expected_done += static_cast<std::size_t>(step.bytes);
-        return step;
+        const std::size_t call = calls++;
+        if (call < N && steps[call].bytes > 0) expected_done += static_cast<std::size_t>(steps[call].bytes);
+        return call < N ? steps[call] : IoStep{-1, EIO};
     });
     return result.has_value() && calls == expected_calls && offsets_right;
 }

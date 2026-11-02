@@ -35,7 +35,7 @@ using HbBuffer = detail::CResource<hb_buffer_t, hb_buffer_destroy>;
 // fontconfig's text type is unsigned char, and FreeType wants char.
 std::string to_string(const FcChar8* text) {
     std::string out;
-    for (; *text != 0; ++text) out.push_back(static_cast<char>(*text));
+    for (const FcChar8 unit : std::basic_string_view<FcChar8>{text}) out.push_back(static_cast<char>(unit));
     return out;
 }
 
@@ -143,8 +143,8 @@ std::expected<TextRun, Error> TextEngine::shape(std::string_view text) const {
     unsigned int glyph_count = 0;
     const hb_glyph_info_t* info_data = hb_buffer_get_glyph_infos(buffer, &glyph_count);
     const hb_glyph_position_t* position_data = hb_buffer_get_glyph_positions(buffer, &glyph_count);
-    const std::span infos{info_data, glyph_count};
-    const std::span positions{position_data, glyph_count};
+    const std::span infos = detail::c_array(info_data, glyph_count);
+    const std::span positions = detail::c_array(position_data, glyph_count);
 
     // At most 4096 advances of 32 bits each, so the sum cannot overflow 64 bits.
     std::int64_t advance_sum = 0;
@@ -178,8 +178,8 @@ std::expected<TextRun, Error> TextEngine::shape(std::string_view text) const {
                 return make_error(ErrorCode::Font, "a glyph bitmap has an unsupported layout");
             const std::int64_t left = (pen + position.x_offset) / 64 + slot->bitmap_left;
             const std::int64_t top = std::int64_t{impl_->ascent} - position.y_offset / 64 - slot->bitmap_top;
-            const std::span<const std::uint8_t> rows{
-                bitmap.buffer, static_cast<std::size_t>(bitmap.rows) * static_cast<std::size_t>(bitmap.pitch)};
+            const std::span<const std::uint8_t> rows = detail::c_array<const std::uint8_t>(
+                bitmap.buffer, static_cast<std::size_t>(bitmap.rows) * static_cast<std::size_t>(bitmap.pitch));
             detail::blit_glyph(detail::GlyphBitmap{rows, std::int64_t{bitmap.rows}, std::int64_t{bitmap.width}, bitmap.pitch},
                                left, top, size, coverage);
         }

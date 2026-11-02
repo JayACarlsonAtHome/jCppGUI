@@ -1,14 +1,25 @@
 // File: tests/test_messages.cpp
 // Purpose: Test 16a at run time: no values, a string, and a string plus a vector reach every listed
 //          receiver, responses arrive in receiver order, and void handlers give NoReply.
+#include <array>
 #include <concepts>
+#include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
 #include "check.hpp"
 #include "jCppGUI/v001/jgui.hpp"
+
+// Outside the anonymous namespace because only the TextShaper concept reads it: these widgets shape no
+// text, and a compiler rightly reports a member nobody calls on a type with internal linkage.
+struct NoText {
+    [[nodiscard]] std::expected<jgui::TextRun, jgui::Error> shape(std::string_view) const { return jgui::TextRun{}; }
+    [[nodiscard]] std::int32_t line_height() const noexcept { return 0; }
+};
 
 namespace {
 
@@ -88,10 +99,28 @@ struct QuietWidget {
     void on(Hush) { ++calls; }
 };
 
+// Receivers are whole widgets, which the tree lays out and paints like any other.
+void test_receivers_are_widgets(jgui_test::Checker& check) {
+    auto ui = jgui::window(HelpLineWidget{}, StatusBarWidget{}, QuietWidget{});
+    const jgui::Rect area{0, 0, 2, 2};
+    const auto left = ui.layout(area, NoText{});
+    check(left.has_value() && *left == area, "layout passes through them");
+    std::array<std::uint32_t, 4> pixels{};
+    auto buffer = jgui::PixelBuffer::create(pixels, area.size(), 8);
+    check(buffer.has_value(), "a small buffer");
+    if (buffer) {
+        jgui::Canvas canvas{*buffer};
+        ui.paint(canvas);
+    }
+    check(pixels == std::array<std::uint32_t, 4>{}, "they paint nothing");
+    check(ui.get<HelpLine>().bounds().empty() && ui.get<StatusBar>().bounds().empty() && ui.get<Quiet>().bounds().empty(), "and have no bounds");
+}
+
 }  // namespace
 
 int main() {
     jgui_test::Checker check;
+    test_receivers_are_widgets(check);
     auto ui = jgui::window(HelpLineWidget{}, StatusBarWidget{}, QuietWidget{});
 
     auto [shown, count] = ui.send<ToggleHelp>();

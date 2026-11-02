@@ -14,6 +14,19 @@ using jgui_test::click;
 using jgui_test::press;
 using jgui_test::release;
 
+// Outside the anonymous namespace because only the Widget concept reads bounds, and a compiler rightly
+// reports a member nobody calls on a type with internal linkage.
+// Paints past its bounds on purpose: the frame's clip and paint order must keep it off the frame.
+struct Overflowing {
+    using tag = Overflowing;
+    [[nodiscard]] constexpr jgui::Rect bounds() const noexcept { return jgui::Rect{}; }
+    constexpr void paint(jgui::Canvas& canvas) { canvas.fill_rect(jgui::Rect{-100, -100, 10000, 10000}, jgui::Color{0xFF00FF00U}); }
+    template <class Shaper>
+    constexpr std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper&) { return area; }
+    template <class U, class E>
+    constexpr bool handle(U&, const E&) { return false; }
+};
+
 namespace {
 
 struct Unused;
@@ -77,17 +90,6 @@ void test_move_and_resize_requests(Checker& check) {
     check(app->backend().resize_edge() == jgui::ResizeEdge::BottomRight, "bottom-right corner");
     check(app->backend().move_serial() == 101U, "edges did not start a move");
 }
-
-// Paints past its bounds on purpose: the frame's clip and paint order must keep it off the frame.
-struct Overflowing {
-    using tag = Unused;
-    [[nodiscard]] constexpr jgui::Rect bounds() const noexcept { return jgui::Rect{}; }
-    constexpr void paint(jgui::Canvas& canvas) { canvas.fill_rect(jgui::Rect{-100, -100, 10000, 10000}, jgui::Color{0xFF00FF00U}); }
-    template <class Shaper>
-    constexpr std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper&) { return area; }
-    template <class U, class E>
-    constexpr bool handle(U&, const E&) { return false; }
-};
 
 void test_content_stays_inside(Checker& check) {
     auto app = jgui::make_application(jgui::HeadlessBackend{window_size}, jgui::window(jgui::window_frame(Overflowing{})));

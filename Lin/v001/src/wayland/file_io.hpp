@@ -15,6 +15,7 @@
 #include <optional>
 #include <span>
 #include <type_traits>
+#include <utility>
 
 #include "jCppGUI/v001/error.hpp"
 #include "jCppGUI/v001/geometry.hpp"
@@ -33,16 +34,15 @@ struct IoStep {
 // The byte count of that many elements. Empty when it would not fit a file offset.
 template <FileElement T>
 [[nodiscard]] constexpr std::optional<std::size_t> checked_byte_count(std::size_t count) noexcept {
-    constexpr auto most = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-    if (static_cast<std::uint64_t>(count) > most / sizeof(T)) return std::nullopt;
+    if (std::cmp_greater(count, std::numeric_limits<std::int64_t>::max() / saturate_to<std::int64_t>(sizeof(T))))
+        return std::nullopt;
     return count * sizeof(T);
 }
 
 // True when every byte of the range has a valid file offset.
 [[nodiscard]] constexpr bool file_range_fits(std::int64_t offset, std::size_t bytes) noexcept {
     if (offset < 0) return false;
-    const auto most = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-    return static_cast<std::uint64_t>(bytes) <= most - static_cast<std::uint64_t>(offset);
+    return std::cmp_less_equal(bytes, std::numeric_limits<std::int64_t>::max() - offset);
 }
 
 // Repeats step(done) until the total has moved. An interrupted call is repeated, a short one goes on
@@ -57,10 +57,9 @@ template <class Step>
             return make_error(ErrorCode::System, "file transfer failed");
         }
         if (moved.bytes == 0) return make_error(ErrorCode::System, "file transfer ended early");
-        const auto count = static_cast<std::uint64_t>(moved.bytes);
-        if (count > static_cast<std::uint64_t>(total - done))
+        if (std::cmp_greater(moved.bytes, total - done))
             return make_error(ErrorCode::System, "file transfer moved more than was asked");
-        done += static_cast<std::size_t>(count);
+        done += saturate_to<std::size_t>(moved.bytes);
     }
     return {};
 }

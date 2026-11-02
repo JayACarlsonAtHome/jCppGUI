@@ -1,8 +1,10 @@
 // File: demo/demo.cpp
 // Purpose: Opens a 640x480 window with a menu bar holding a Help button. --smoke waits for the first
 //          configure, presents one frame and exits 0, for testing against a live compositor.
-#include <cstdio>
 #include <cstdlib>
+#include <iostream>
+#include <ranges>
+#include <span>
 #include <string_view>
 #include <utility>
 
@@ -16,22 +18,24 @@ constexpr int exit_usage = 2;
 constexpr int exit_ctest_skip = 77;
 
 int report(const jgui::Error& error) {
-    std::fprintf(stderr, "jcppgui-demo: %s\n", error.message.c_str());
+    std::cerr << "jcppgui-demo: " << error.message << '\n';
     return exit_failure;
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
+    // The one place the program's arguments, a C pointer and count, become a span.
+    const std::span arguments = std::views::counted(argv, argc);
     bool smoke = false;
-    if (argc == 2 && std::string_view{argv[1]} == "--smoke") {
+    if (arguments.size() == 2 && std::string_view{arguments[1]} == "--smoke") {
         smoke = true;
-    } else if (argc != 1) {
-        std::fputs("usage: jcppgui-demo [--smoke]\n", stderr);
+    } else if (arguments.size() != 1) {
+        std::cerr << "usage: jcppgui-demo [--smoke]\n";
         return exit_usage;
     }
     if (smoke && std::getenv("WAYLAND_DISPLAY") == nullptr) {
-        std::fputs("jcppgui-demo: WAYLAND_DISPLAY is not set; skipping\n", stderr);
+        std::cerr << "jcppgui-demo: WAYLAND_DISPLAY is not set; skipping\n";
         return exit_ctest_skip;
     }
 

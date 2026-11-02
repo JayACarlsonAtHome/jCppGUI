@@ -113,8 +113,8 @@ public:
     template <TextShaper Shaper>
     constexpr std::expected<Rect, Error> layout(Rect area, const Shaper& text) {
         bounds_ = area;
-        auto used = detail::layout_in_order(children_, client_rect(area.size()), text);
-        if (!used) return used;
+        if (auto used = detail::layout_in_order(children_, client_rect(area.size()), text); !used)
+            return std::unexpected(std::move(used.error()));
         return Rect{area.x(), area.bottom(), area.width(), 0};
     }
 
@@ -145,9 +145,9 @@ public:
                 return true;
             case FrameRegion::Outside:
             case FrameRegion::Client:
-                break;
+            default:
+                return false;
         }
-        return false;
     }
 
     template <class U>

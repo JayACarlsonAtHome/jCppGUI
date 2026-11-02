@@ -141,6 +141,9 @@ private:
 };
 
 template <Backend B, class Root>
+ApplicationCore(B, Root) -> ApplicationCore<B, Root>;
+
+template <Backend B, class Root>
 class Application {
 public:
     [[nodiscard]] static std::expected<Application, Error> create(B backend, Root root) {

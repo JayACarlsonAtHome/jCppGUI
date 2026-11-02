@@ -19,6 +19,9 @@ struct MessageName {
     consteval MessageName(const char (&name)[N]) { std::copy_n(name, N, text); }
 };
 
+template <std::size_t N>
+MessageName(const char (&)[N]) -> MessageName<N>;
+
 template <class... Receivers>
 struct To {};
 

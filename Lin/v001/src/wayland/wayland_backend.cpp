@@ -149,8 +149,8 @@ static_assert(cursor_colour('X') == 0xFF000000U && cursor_colour('.') == 0xFFFFF
         case ResizeEdge::TopRight: return XDG_TOPLEVEL_RESIZE_EDGE_TOP_RIGHT;
         case ResizeEdge::BottomLeft: return XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM_LEFT;
         case ResizeEdge::BottomRight: return XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM_RIGHT;
+        default: return XDG_TOPLEVEL_RESIZE_EDGE_NONE;
     }
-    return XDG_TOPLEVEL_RESIZE_EDGE_NONE;
 }
 
 }  // namespace

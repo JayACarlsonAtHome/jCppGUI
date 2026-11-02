@@ -31,8 +31,8 @@ public:
         const std::int32_t inner = sat_add(text.line_height(), sat_mul(theme::button_pad_y, 2));
         const std::int32_t strip = sat_add(inner, sat_mul(theme::bar_pad, 2));
         bounds_ = area.intersect(Rect{area.origin(), Size{area.width(), strip}});
-        auto used = detail::layout_in_order(children_, bounds_.inset(theme::bar_pad), text);
-        if (!used) return used;
+        if (auto used = detail::layout_in_order(children_, bounds_.inset(theme::bar_pad), text); !used)
+            return std::unexpected(std::move(used.error()));
         return Rect{area.x(), bounds_.bottom(), area.width(), sat_sub(area.height(), bounds_.height())};
     }
 

@@ -128,13 +128,16 @@ static_assert(max_caption_bytes == 4096 && max_run_width > 0 && max_run_area > 0
 
 constexpr bool buffer_create_checks() {
     std::array<std::uint32_t, 12> storage{};
-    if (!PixelBuffer::create(storage, Size{3, 4}, 12).has_value()) return false;
-    if (!PixelBuffer::create(storage, Size{2, 3}, 16).has_value()) return false;
-    if (PixelBuffer::create(storage, Size{3, 5}, 12).has_value()) return false;  // too little storage
-    if (PixelBuffer::create(storage, Size{3, 4}, 8).has_value()) return false;   // stride under the width
-    if (PixelBuffer::create(storage, Size{3, 4}, 13).has_value()) return false;  // not whole pixels
-    if (PixelBuffer::create(storage, Size{3, 4}, -4).has_value()) return false;
-    if (PixelBuffer::create(storage, Size{1, 16384}, int_max - 3).has_value()) return false;
+    const auto accepted = [&storage](Size size, std::int32_t stride) {
+        return PixelBuffer::create(storage, size, stride).has_value();
+    };
+    if (!accepted(Size{3, 4}, 12)) return false;
+    if (!accepted(Size{2, 3}, 16)) return false;
+    if (accepted(Size{3, 5}, 12)) return false;  // too little storage
+    if (accepted(Size{3, 4}, 8)) return false;   // stride under the width
+    if (accepted(Size{3, 4}, 13)) return false;  // not whole pixels
+    if (accepted(Size{3, 4}, -4)) return false;
+    if (accepted(Size{1, 16384}, int_max - 3)) return false;
     return true;
 }
 static_assert(buffer_create_checks());
@@ -146,7 +149,7 @@ constexpr bool canvas_stays_inside() {
     std::array<std::uint32_t, total> storage{};
     storage.fill(guard);
     // A 4x4 buffer in the middle of the storage, with rows 8 pixels apart.
-    const std::span<std::uint32_t> inner{storage.data() + 18, total - 18};
+    const std::span<std::uint32_t> inner = std::span{storage}.subspan(18);
     const Canvas canvas{PixelBuffer::create(inner, Size{4, 4}, 32).value()};
     const std::array<Rect, 12> shapes{Rect{int_min, int_min, int_max, int_max}, Rect{int_max, int_max, int_max, int_max},
                                       Rect{-100, -100, 100, 100},               Rect{4, 0, 10, 10},
@@ -415,6 +418,20 @@ constexpr bool messages_reach_receivers_in_order() {
 }
 static_assert(messages_reach_receivers_in_order());
 
+// Receivers are whole widgets, which the tree lays out and paints like any other.
+constexpr bool receivers_are_widgets() {
+    auto ui = window(Counter{}, Silent{});
+    const Rect area{0, 0, 2, 2};
+    const auto left = ui.layout(area, BlockShaper{});
+    const bool passed_through = left.has_value() && *left == area;
+    std::array<std::uint32_t, 4> pixels{};
+    Canvas canvas{PixelBuffer::create(pixels, area.size(), 8).value()};
+    ui.paint(canvas);
+    return passed_through && ui.get<CountTag>().bounds().empty() && ui.get<SilentTag>().bounds().empty() &&
+           pixels == std::array<std::uint32_t, 4>{};
+}
+static_assert(receivers_are_widgets());
+
 constexpr std::string_view caption = "OK";
 
 constexpr auto bump_on_click = [](auto& u) -> void { u.template send<Bump>(); };
@@ -532,6 +549,10 @@ constexpr bool dynamic_routes_to_the_holder_only() {
     const Handle<Recorder> upper = node.create().value();
     const Handle<Recorder> lower = node.create().value();
     static_cast<void>(ui.layout(Rect{0, 0, 50, 40}, BlockShaper{}));
+    if (node.find(upper)->bounds() != Rect{0, 0, 50, 10} || node.find(lower)->bounds() != Rect{0, 10, 50, 10}) return false;
+    std::array<std::uint32_t, 1> pixel{};
+    Canvas canvas{PixelBuffer::create(pixel, Size{1, 1}, 4).value()};
+    ui.paint(canvas);
     const Point on_upper{5, 5};
     const Point on_lower{5, 15};
 

@@ -2,9 +2,9 @@
 // Purpose: The error type returned through std::expected, and the always-on check that aborts.
 #pragma once
 
-#include <cstdio>
 #include <cstdlib>
 #include <expected>
+#include <iostream>
 #include <string>
 #include <utility>
 
@@ -38,9 +38,7 @@ struct Error {
 // evaluation a violation reaches the non-constexpr calls below, which is a compile error.
 constexpr void require(bool condition, const char* what) noexcept {
     if (!condition) {
-        std::fputs("jCppGUI contract violation: ", stderr);
-        std::fputs(what, stderr);
-        std::fputc('\n', stderr);
+        std::cerr << "jCppGUI contract violation: " << what << '\n';
         std::abort();
     }
 }

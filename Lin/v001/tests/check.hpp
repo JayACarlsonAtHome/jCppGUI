@@ -2,7 +2,7 @@
 // Purpose: The small test helper: counts checks, prints failures with their line, gives the exit code.
 #pragma once
 
-#include <cstdio>
+#include <iostream>
 #include <source_location>
 
 namespace jgui_test {
@@ -13,12 +13,12 @@ public:
         ++checks_;
         if (!condition) {
             ++failures_;
-            std::fprintf(stderr, "FAILED %s:%u: %s\n", where.file_name(), where.line(), what);
+            std::cerr << "FAILED " << where.file_name() << ':' << where.line() << ": " << what << '\n';
         }
     }
 
     [[nodiscard]] int finish() const {
-        std::printf("%d checks, %d failures\n", checks_, failures_);
+        std::cout << checks_ << " checks, " << failures_ << " failures\n";
         return failures_ == 0 ? 0 : 1;
     }
 

@@ -36,7 +36,35 @@ if(JGUI_SANITIZE)
 endif()
 
 # --- Warnings: our code only. A warning is a failure. ---
-set(JGUI_WARNING_FLAGS -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wold-style-cast -Werror)
+set(JGUI_WARNING_FLAGS
+  -Werror -pedantic-errors
+  -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wold-style-cast
+  -Wcast-qual -Wcast-align -Wformat=2 -Wnull-dereference -Wdouble-promotion -Wfloat-equal -Wfloat-conversion
+  -Wundef -Wredundant-decls -Wextra-semi -Wimplicit-fallthrough -Wswitch-enum -Wswitch-default
+  -Wzero-as-null-pointer-constant -Wnon-virtual-dtor -Woverloaded-virtual -Wunused -Wmissing-declarations)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  list(APPEND JGUI_WARNING_FLAGS
+    -Wuseless-cast -Wduplicated-cond -Wduplicated-branches -Wlogical-op -Warith-conversion -Wstrict-overflow=2
+    -Wctor-dtor-privacy -Wsign-promo -Wstrict-null-sentinel -Wnoexcept -Wcomma-subscript -Wvolatile
+    -Walloc-zero -Walloca -Warray-bounds=2 -Wattribute-alias=2 -Wcast-align=strict -Wcatch-value=3
+    -Wconditionally-supported -Wdate-time -Wdeprecated-copy-dtor -Wdisabled-optimization
+    -Wformat-overflow=2 -Wformat-signedness -Wformat-truncation=2 -Wimplicit-fallthrough=5 -Winvalid-pch
+    -Wmismatched-tags -Wmissing-include-dirs -Wmissing-requires -Wmissing-template-keyword -Wpacked
+    -Wplacement-new=2 -Wpointer-arith -Wredundant-tags -Wshift-overflow=2 -Wstrict-aliasing=3
+    -Wstringop-overflow=4 -Wsuggest-override -Wtrampolines -Wunused-const-variable=2 -Wunused-macros
+    -Wvector-operation-performance -Wvirtual-inheritance -Wvla -Wwrite-strings)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  list(APPEND JGUI_WARNING_FLAGS
+    -Weverything
+    # This code is C++23 only, so warnings about older standards contradict the language in use. This
+    # one group also covers c++98-compat and the pre-c++14, 17, 20 and 23 compat families.
+    -Wno-c++98-compat-pedantic
+    # Warns about the normal, unavoidable alignment gaps in a struct. We do not lay fields out by hand.
+    -Wno-padded
+    # Contradicts -Wswitch-default, which the owner requires: a switch over an enum names every value,
+    # checked by -Wswitch-enum, and also has a default, because a value from outside can be out of range.
+    -Wno-covered-switch-default)
+endif()
 add_library(jgui_warnings INTERFACE)
 target_compile_options(jgui_warnings INTERFACE ${JGUI_WARNING_FLAGS})
 
@@ -139,6 +167,9 @@ jgui_compile_fail(wrong_value_type "message value has the wrong type")
 jgui_compile_fail(missing_value "wrong number of values")
 jgui_compile_fail(empty_receivers "constraints? not satisfied|not satisfied")
 jgui_compile_fail(frame_metrics_missing_field "FrameMetrics")
+jgui_compile_fail(warn_narrowing "conversion\\]")
+jgui_compile_fail(warn_sign_conversion "sign-conversion\\]")
+jgui_compile_fail(warn_shadow "shadow[-a-z]*\\]")
 
 # --- Source rules: banned type-erasure tokens, casts, paths and layering ---
 find_program(JGUI_BASH bash REQUIRED)
