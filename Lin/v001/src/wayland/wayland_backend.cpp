@@ -390,6 +390,8 @@ void WaylandImpl::on_global_remove(wl_registry*, std::uint32_t name) noexcept {
     if (seat && name == seat_name) {
         pointer.reset();
         keyboard.reset();
+        xkb_state_object.reset();
+        xkb_keymap_object.reset();
         seat.reset();
         record(PointerLeave{});
     }
@@ -546,6 +548,8 @@ std::expected<void, Error> WaylandImpl::connect(const WaylandOptions& options) {
     if (!listen<wl_registry_add_listener>(registry.get(), registry_listener, *this))
         return make_error(ErrorCode::System, "the registry's listener was refused");
     if (wl_display_roundtrip(display.get()) < 0) return std::unexpected(connection_error());
+    // A failure in a handler during that roundtrip is reported here, before anything is built on what it left.
+    if (std::optional<Error> error = take_failure(); error) return std::unexpected(std::move(*error));
 
     if (!compositor) return make_error(ErrorCode::MissingGlobal, "the compositor has no wl_compositor version 4");
     if (!shm) return make_error(ErrorCode::MissingGlobal, "the compositor has no wl_shm");
