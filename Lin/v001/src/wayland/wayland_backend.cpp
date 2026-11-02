@@ -110,7 +110,8 @@ std::expected<std::unique_ptr<ShmBuffer>, Error> ShmBuffer::create(wl_shm* shm, 
     if (!object) return make_error(ErrorCode::System, "wl_shm_pool_create_buffer failed");
 
     auto buffer = std::make_unique<ShmBuffer>(std::move(*file), std::move(object), size, *bytes / sizeof(std::uint32_t));
-    detail::listen<wl_buffer_add_listener>(buffer->object(), buffer_listener, *buffer);
+    if (!detail::listen<wl_buffer_add_listener>(buffer->object(), buffer_listener, *buffer))
+        return make_error(ErrorCode::System, "the buffer's listener was refused");
     return buffer;
 }
 
@@ -311,7 +312,8 @@ void WaylandImpl::on_global(wl_registry* object, std::uint32_t name, const char*
             fail(ErrorCode::System, "xdg_wm_base could not be bound");
             return;
         }
-        listen<xdg_wm_base_add_listener>(wm_base.get(), wm_base_listener, *this);
+        if (!listen<xdg_wm_base_add_listener>(wm_base.get(), wm_base_listener, *this))
+            fail(ErrorCode::System, "the xdg_wm_base listener was refused");
     } else if (kind == wl_seat_interface.name && !seat && version >= seat_version) {
         seat.reset(bind_global<wl_seat>(object, name, &wl_seat_interface, seat_version));
         if (!seat) {
@@ -319,7 +321,8 @@ void WaylandImpl::on_global(wl_registry* object, std::uint32_t name, const char*
             return;
         }
         seat_name = name;
-        listen<wl_seat_add_listener>(seat.get(), seat_listener, *this);
+        if (!listen<wl_seat_add_listener>(seat.get(), seat_listener, *this))
+            fail(ErrorCode::System, "the wl_seat listener was refused");
     }
 }
 
@@ -348,10 +351,10 @@ void WaylandImpl::on_seat_capabilities(wl_seat* object, std::uint32_t capabiliti
     const bool has_keyboard = (capabilities & WL_SEAT_CAPABILITY_KEYBOARD) != 0;
     if (has_pointer && !pointer) {
         pointer.reset(wl_seat_get_pointer(object));
-        if (pointer) {
-            listen<wl_pointer_add_listener>(pointer.get(), pointer_listener, *this);
-        } else {
+        if (!pointer) {
             fail(ErrorCode::System, "wl_pointer could not be created");
+        } else if (!listen<wl_pointer_add_listener>(pointer.get(), pointer_listener, *this)) {
+            fail(ErrorCode::System, "the wl_pointer listener was refused");
         }
     } else if (!has_pointer && pointer) {
         pointer.reset();
@@ -359,10 +362,10 @@ void WaylandImpl::on_seat_capabilities(wl_seat* object, std::uint32_t capabiliti
     }
     if (has_keyboard && !keyboard) {
         keyboard.reset(wl_seat_get_keyboard(object));
-        if (keyboard) {
-            listen<wl_keyboard_add_listener>(keyboard.get(), keyboard_listener, *this);
-        } else {
+        if (!keyboard) {
             fail(ErrorCode::System, "wl_keyboard could not be created");
+        } else if (!listen<wl_keyboard_add_listener>(keyboard.get(), keyboard_listener, *this)) {
+            fail(ErrorCode::System, "the wl_keyboard listener was refused");
         }
     } else if (!has_keyboard && keyboard) {
         keyboard.reset();
@@ -479,7 +482,8 @@ std::expected<void, Error> WaylandImpl::connect(const WaylandOptions& options) {
 
     registry.reset(wl_display_get_registry(display.get()));
     if (!registry) return make_error(ErrorCode::Connect, "cannot get the Wayland registry");
-    listen<wl_registry_add_listener>(registry.get(), registry_listener, *this);
+    if (!listen<wl_registry_add_listener>(registry.get(), registry_listener, *this))
+        return make_error(ErrorCode::System, "the registry's listener was refused");
     if (wl_display_roundtrip(display.get()) < 0) return std::unexpected(connection_error());
 
     if (!compositor) return make_error(ErrorCode::MissingGlobal, "the compositor has no wl_compositor version 4");
@@ -493,10 +497,12 @@ std::expected<void, Error> WaylandImpl::connect(const WaylandOptions& options) {
     if (!surface) return make_error(ErrorCode::System, "the window surface could not be created");
     xdg.reset(xdg_wm_base_get_xdg_surface(wm_base.get(), surface.get()));
     if (!xdg) return make_error(ErrorCode::System, "the xdg surface could not be created");
-    listen<xdg_surface_add_listener>(xdg.get(), surface_listener, *this);
+    if (!listen<xdg_surface_add_listener>(xdg.get(), surface_listener, *this))
+        return make_error(ErrorCode::System, "the xdg surface's listener was refused");
     toplevel.reset(xdg_surface_get_toplevel(xdg.get()));
     if (!toplevel) return make_error(ErrorCode::System, "the toplevel could not be created");
-    listen<xdg_toplevel_add_listener>(toplevel.get(), toplevel_listener, *this);
+    if (!listen<xdg_toplevel_add_listener>(toplevel.get(), toplevel_listener, *this))
+        return make_error(ErrorCode::System, "the toplevel's listener was refused");
     xdg_toplevel_set_title(toplevel.get(), options.title.c_str());
     xdg_toplevel_set_app_id(toplevel.get(), options.app_id.c_str());
     xdg_toplevel_set_min_size(toplevel.get(), min_window_side, min_window_side);

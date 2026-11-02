@@ -25,6 +25,8 @@ struct Overflowing {
     constexpr std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper&) { return area; }
     template <class U, class E>
     constexpr bool handle(U&, const E&) { return false; }
+    template <class U, class E>
+    constexpr void notify(U&, const E&) {}
 };
 
 namespace {

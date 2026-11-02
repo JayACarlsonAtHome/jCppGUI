@@ -21,6 +21,7 @@ template <auto Release>
 struct CallRelease {
     template <class T>
     void operator()(T* object) const noexcept {
+        // Some C release functions return a status. A destructor has nowhere to report it, and the object is gone.
         static_cast<void>(Release(object));
     }
 };

@@ -413,6 +413,8 @@ struct Counter {
     constexpr std::expected<Rect, Error> layout(Rect area, const Shaper&) { return area; }
     template <class U, class E>
     constexpr bool handle(U&, const E&) { return false; }
+    template <class U, class E>
+    constexpr void notify(U&, const E&) {}
 };
 
 struct Silent {
@@ -426,6 +428,8 @@ struct Silent {
     constexpr std::expected<Rect, Error> layout(Rect area, const Shaper&) { return area; }
     template <class U, class E>
     constexpr bool handle(U&, const E&) { return false; }
+    template <class U, class E>
+    constexpr void notify(U&, const E&) {}
 };
 
 static_assert(Widget<Counter> && Widget<Silent>);
@@ -452,7 +456,7 @@ constexpr bool receivers_are_widgets() {
     std::array<std::uint32_t, 4> pixels{};
     Canvas canvas{PixelBuffer::create(pixels, area.size(), 8).value()};
     ui.paint(canvas);
-    return passed_through && ui.get<CountTag>().bounds().empty() && ui.get<SilentTag>().bounds().empty() &&
+    return passed_through && !ui.capture_active() && !ui.damaged() && ui.get<CountTag>().bounds().empty() && ui.get<SilentTag>().bounds().empty() &&
            pixels == std::array<std::uint32_t, 4>{};
 }
 static_assert(receivers_are_widgets());
@@ -565,6 +569,8 @@ struct Recorder {
     }
     template <class U, class E>
     constexpr bool handle(U&, const E&) { return false; }
+    template <class U, class E>
+    constexpr void notify(U&, const E&) {}
 };
 static_assert(Widget<Recorder>);
 
@@ -578,6 +584,8 @@ constexpr bool dynamic_routes_to_the_holder_only() {
     std::array<std::uint32_t, 1> pixel{};
     Canvas canvas{PixelBuffer::create(pixel, Size{1, 1}, 4).value()};
     ui.paint(canvas);
+    ui.clear_damage();
+    if (ui.damaged()) return false;
     const Point on_upper{5, 5};
     const Point on_lower{5, 15};
 
@@ -601,7 +609,7 @@ constexpr bool dynamic_routes_to_the_holder_only() {
     // Keys go only to the focused item, and to nobody once the focus is cleared.
     ui.dispatch(KeyEvent{Keysym::Return, 0, true});
     if (node.find(lower)->keys != 1 || node.find(upper)->keys != 0) return false;
-    ui.dispatch(ClearFocus{});
+    ui.notify(ClearFocus{});
     ui.dispatch(KeyEvent{Keysym::Return, 0, true});
     if (node.find(lower)->keys != 1 || node.find(upper)->keys != 0) return false;
 

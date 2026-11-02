@@ -44,6 +44,8 @@ struct Passive {
     std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper&) { return area; }
     template <class U, class E>
     bool handle(U&, const E&) { return false; }
+    template <class U, class E>
+    void notify(U&, const E&) {}
 };
 
 struct HelpLineWidget {
@@ -58,6 +60,8 @@ struct HelpLineWidget {
     std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper& s) { return passive.layout(area, s); }
     template <class U, class E>
     bool handle(U& u, const E& e) { return passive.handle(u, e); }
+    template <class U, class E>
+    void notify(U& u, const E& e) { passive.notify(u, e); }
 
     bool on(ToggleHelp) { return shown = !shown; }
     std::string on(OtherToggle) { return "other"; }
@@ -79,6 +83,8 @@ struct StatusBarWidget {
     std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper& s) { return passive.layout(area, s); }
     template <class U, class E>
     bool handle(U& u, const E& e) { return passive.handle(u, e); }
+    template <class U, class E>
+    void notify(U& u, const E& e) { passive.notify(u, e); }
 
     int on(ToggleHelp) { return ++count; }
     int on(OtherToggle) { return count += 100; }
@@ -95,6 +101,8 @@ struct QuietWidget {
     std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper& s) { return passive.layout(area, s); }
     template <class U, class E>
     bool handle(U& u, const E& e) { return passive.handle(u, e); }
+    template <class U, class E>
+    void notify(U& u, const E& e) { passive.notify(u, e); }
 
     void on(Hush) { ++calls; }
 };
@@ -113,6 +121,7 @@ void test_receivers_are_widgets(jgui_test::Checker& check) {
         ui.paint(canvas);
     }
     check(pixels == std::array<std::uint32_t, 4>{}, "they paint nothing");
+    check(!ui.capture_active() && !ui.damaged(), "they hold nothing and ask for nothing");
     check(ui.get<HelpLine>().bounds().empty() && ui.get<StatusBar>().bounds().empty() && ui.get<Quiet>().bounds().empty(), "and have no bounds");
 }
 

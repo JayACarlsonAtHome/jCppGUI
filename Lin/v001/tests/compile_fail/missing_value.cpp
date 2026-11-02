@@ -15,6 +15,8 @@ struct Answers {
     constexpr std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper& s) { return plain.layout(area, s); }
     template <class U, class E>
     constexpr bool handle(U& u, const E& e) { return plain.handle(u, e); }
+    template <class U, class E>
+    constexpr void notify(U& u, const E& e) { plain.notify(u, e); }
     int on(SetText, const std::string& text) { return static_cast<int>(text.size()); }
 };
 

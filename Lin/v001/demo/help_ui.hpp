@@ -47,6 +47,11 @@ public:
         return line_.handle(ui, event);
     }
 
+    template <class U, class E>
+    constexpr void notify(U& ui, const E& event) {
+        line_.notify(ui, event);
+    }
+
 private:
     jgui::Dynamic<Tag, jgui::Label<Tag>, Slots> line_;
 };

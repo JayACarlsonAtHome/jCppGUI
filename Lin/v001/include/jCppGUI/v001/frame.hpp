@@ -129,7 +129,7 @@ public:
     constexpr bool handle(U& ui, const PointerPress& event) {
         const FrameHit where = hit(event.position, ui.size());
         if (where.region == FrameRegion::Client || event.button != MouseButton::Left) {
-            static_cast<void>(detail::broadcast(children_, ui, ClearFocus{}));
+            detail::notify_all(children_, ui, ClearFocus{});
             return detail::deliver(children_, ui, event);
         }
         switch (where.region) {
@@ -165,16 +165,16 @@ public:
         set_close_hover(hit(event.position, ui.size()).region == FrameRegion::Close);
         if (event.captured || client_rect(ui.size()).contains(event.position))
             return detail::deliver(children_, ui, event);
-        static_cast<void>(detail::broadcast(children_, ui, PointerLeave{}));
+        detail::notify_all(children_, ui, PointerLeave{});
         return false;
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const PointerLeave& event) {
+    constexpr void notify(U& ui, const PointerLeave& event) {
         if (close_armed_) damaged_ = true;
         close_armed_ = false;
         set_close_hover(false);
-        return detail::deliver(children_, ui, event);
+        detail::notify_all(children_, ui, event);
     }
 
     template <class U>
@@ -183,14 +183,19 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const ClearDamage& event) {
+    constexpr void notify(U& ui, const ClearDamage& event) {
         damaged_ = false;
-        return detail::deliver(children_, ui, event);
+        detail::notify_all(children_, ui, event);
     }
 
     template <class U, class E>
     constexpr bool handle(U& ui, const E& event) {
         return detail::deliver(children_, ui, event);
+    }
+
+    template <class U, class E>
+    constexpr void notify(U& ui, const E& event) {
+        detail::notify_all(children_, ui, event);
     }
 
 private:

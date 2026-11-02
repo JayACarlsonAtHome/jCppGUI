@@ -22,6 +22,8 @@ struct Plain {
     constexpr bool handle(U&, const E&) {
         return false;
     }
+    template <class U, class E>
+    constexpr void notify(U&, const E&) {}
 };
 
 struct First;

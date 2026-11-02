@@ -72,10 +72,13 @@ struct PointerRelease {
     std::uint32_t button{};
 };
 
-struct ClearFocus {};    // every widget gives up focus
+// Questions, with an answer: see the Widget concept.
 struct HoldsCapture {};  // a widget answers true when it holds the pointer
 struct QueryDamage {};   // a widget answers true when it must be painted again
-struct ClearDamage {};   // a frame was painted
-struct CollectDead {};   // the outermost dispatch ended: free what was marked for destruction
+
+// Notices, with no answer: see the Widget concept. PointerLeave, above, is one too.
+struct ClearFocus {};   // every widget gives up focus
+struct ClearDamage {};  // a frame was painted
+struct CollectDead {};  // the outermost dispatch ended: free what was marked for destruction
 
 }  // namespace jgui::inline v001

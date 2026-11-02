@@ -86,15 +86,23 @@ public:
         }
     }
 
-    constexpr void on(const PointerLeave& event) { send_to_tree(event); }
+    constexpr void on(const PointerLeave& event) {
+        root_.notify(event);
+        carry_out_requests();
+    }
 
     constexpr void on(const KeyEvent& event) { send_to_tree(event); }
 
 private:
-    // Delivers the event, then carries out what the widgets asked of the window system.
+    // Delivers the event, then carries out what the widgets asked of the window system. The answer is for
+    // a parent routing between its children, and nothing above the tree needs it.
     template <class E>
     constexpr void send_to_tree(const E& event) {
         root_.dispatch(event);
+        carry_out_requests();
+    }
+
+    constexpr void carry_out_requests() {
         const WindowRequests asked = root_.take_requests();
         if (asked.move) backend_.begin_move(*asked.move);
         if (asked.resize) backend_.begin_resize(asked.resize->serial, asked.resize->edge);

@@ -87,11 +87,10 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U&, const PointerLeave&) {
+    constexpr void notify(U&, const PointerLeave&) {
         if (hovered_ || pressed_) damaged_ = true;
         hovered_ = false;
         pressed_ = false;
-        return false;
     }
 
     template <class U>
@@ -103,10 +102,9 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U&, const ClearFocus&) {
+    constexpr void notify(U&, const ClearFocus&) {
         if (focused_) damaged_ = true;
         focused_ = false;
-        return false;
     }
 
     template <class U>
@@ -120,15 +118,12 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U&, const ClearDamage&) {
+    constexpr void notify(U&, const ClearDamage&) {
         damaged_ = false;
-        return false;
     }
 
     template <class U>
-    constexpr bool handle(U&, const CollectDead&) {
-        return false;
-    }
+    constexpr void notify(U&, const CollectDead&) {}
 
 private:
     std::string caption_;

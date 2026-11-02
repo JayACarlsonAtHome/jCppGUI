@@ -46,6 +46,7 @@ public:
 
 private:
     void reset() noexcept {
+        // A failed close leaves nothing to do: the descriptor must not be closed again, and no write depends on it.
         if (fd_ >= 0) static_cast<void>(::close(fd_));
         fd_ = -1;
     }

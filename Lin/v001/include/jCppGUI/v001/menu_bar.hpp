@@ -49,6 +49,11 @@ public:
         return detail::deliver(children_, ui, event);
     }
 
+    template <class U, class E>
+    constexpr void notify(U& ui, const E& event) {
+        detail::notify_all(children_, ui, event);
+    }
+
 private:
     children_type children_;
     Rect bounds_{};

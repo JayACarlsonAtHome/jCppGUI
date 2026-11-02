@@ -184,7 +184,7 @@ public:
         bool hit = false;
         for_each_live_reversed([&](T& item, Handle<T>) {
             if (hit) {
-                static_cast<void>(item.handle(ui, PointerLeave{}));
+                item.notify(ui, PointerLeave{});
             } else {
                 hit = item.handle(ui, event);
             }
@@ -194,9 +194,9 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const PointerLeave& event) {
+    constexpr void notify(U& ui, const PointerLeave& event) {
         capture_.reset();
-        return handle_all(ui, event);
+        notify_each(ui, event);
     }
 
     template <class U>
@@ -206,9 +206,9 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const ClearFocus& event) {
+    constexpr void notify(U& ui, const ClearFocus& event) {
         focus_.reset();
-        return handle_all(ui, event);
+        notify_each(ui, event);
     }
 
     template <class U>
@@ -223,17 +223,16 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const ClearDamage& event) {
+    constexpr void notify(U& ui, const ClearDamage& event) {
         damaged_ = false;
-        return handle_all(ui, event);
+        notify_each(ui, event);
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const CollectDead& event) {
-        handle_all(ui, event);
+    constexpr void notify(U& ui, const CollectDead& event) {
+        notify_each(ui, event);
         pool_.collect();
         std::erase_if(live_, [&](const Handle<T>& handle) { return pool_.find(handle) == nullptr; });
-        return false;
     }
 
 private:
@@ -265,6 +264,14 @@ private:
             return false;
         });
         return any;
+    }
+
+    template <class U, class E>
+    constexpr void notify_each(U& ui, const E& event) {
+        for_each_live([&](T& item, Handle<T>) {
+            item.notify(ui, event);
+            return false;
+        });
     }
 
     Pool<T, Slots> pool_;
@@ -328,9 +335,16 @@ public:
         return detail::deliver(children_, *this, event);
     }
 
+    // Delivers a notice to the tree, with the same rule for what a callback destroys.
+    template <class E>
+    constexpr void notify(const E& event) {
+        const DispatchScope scope{*this};
+        detail::notify_all(children_, *this, event);
+    }
+
     [[nodiscard]] constexpr bool capture_active() { return detail::broadcast(children_, *this, HoldsCapture{}); }
     [[nodiscard]] constexpr bool damaged() { return detail::broadcast(children_, *this, QueryDamage{}); }
-    constexpr void clear_damage() { static_cast<void>(detail::broadcast(children_, *this, ClearDamage{})); }
+    constexpr void clear_damage() { detail::notify_all(children_, *this, ClearDamage{}); }
 
     template <TextShaper Shaper>
     constexpr std::expected<Rect, Error> layout(Rect area, const Shaper& text) {
@@ -358,8 +372,7 @@ private:
         DispatchScope(const DispatchScope&) = delete;
         DispatchScope& operator=(const DispatchScope&) = delete;
         constexpr ~DispatchScope() {
-            if (--window_.dispatch_depth_ == 0)
-                static_cast<void>(detail::broadcast(window_.children_, window_, CollectDead{}));
+            if (--window_.dispatch_depth_ == 0) detail::notify_all(window_.children_, window_, CollectDead{});
         }
 
     private:

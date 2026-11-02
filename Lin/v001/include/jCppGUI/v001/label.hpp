@@ -54,15 +54,17 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U&, const ClearDamage&) {
+    constexpr void notify(U&, const ClearDamage&) {
         damaged_ = false;
-        return false;
     }
 
     template <class U, class E>
     constexpr bool handle(U&, const E&) {
         return false;
     }
+
+    template <class U, class E>
+    constexpr void notify(U&, const E&) {}
 
 private:
     std::string text_;

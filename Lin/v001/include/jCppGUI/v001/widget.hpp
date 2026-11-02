@@ -52,8 +52,8 @@ struct ProbeShaper {
 }  // namespace detail
 
 // tag names the widget in the tree. layout places it inside the rectangle offered and returns what
-// is left over for whatever comes next. handle takes each event type; a widget that has no interest
-// in an event answers false.
+// is left over for whatever comes next. handle takes each event that has an answer; a widget with no
+// interest in one answers false. notify takes each notice, which has no answer and so nothing to discard.
 template <class W>
 concept Widget = requires(W& widget, const W& constant, Canvas& canvas, Rect area, const detail::ProbeShaper& text,
                           detail::ProbeUi& ui) {
@@ -64,13 +64,13 @@ concept Widget = requires(W& widget, const W& constant, Canvas& canvas, Rect are
     { widget.handle(ui, PointerPress{}) } -> std::same_as<bool>;
     { widget.handle(ui, PointerRelease{}) } -> std::same_as<bool>;
     { widget.handle(ui, PointerMove{}) } -> std::same_as<bool>;
-    { widget.handle(ui, PointerLeave{}) } -> std::same_as<bool>;
     { widget.handle(ui, KeyEvent{}) } -> std::same_as<bool>;
-    { widget.handle(ui, ClearFocus{}) } -> std::same_as<bool>;
     { widget.handle(ui, HoldsCapture{}) } -> std::same_as<bool>;
     { widget.handle(ui, QueryDamage{}) } -> std::same_as<bool>;
-    { widget.handle(ui, ClearDamage{}) } -> std::same_as<bool>;
-    { widget.handle(ui, CollectDead{}) } -> std::same_as<bool>;
+    { widget.notify(ui, PointerLeave{}) } -> std::same_as<void>;
+    { widget.notify(ui, ClearFocus{}) } -> std::same_as<void>;
+    { widget.notify(ui, ClearDamage{}) } -> std::same_as<void>;
+    { widget.notify(ui, CollectDead{}) } -> std::same_as<void>;
 };
 
 namespace detail {
@@ -81,6 +81,12 @@ constexpr bool broadcast(Children& children, U& ui, const E& event) {
     bool any = false;
     std::apply([&](auto&... child) { ((any = child.handle(ui, event) || any), ...); }, children);
     return any;
+}
+
+// Every widget gets the notice.
+template <class Children, class U, class E>
+constexpr void notify_all(Children& children, U& ui, const E& event) {
+    std::apply([&](auto&... child) { (child.notify(ui, event), ...); }, children);
 }
 
 // Default delivery: a broadcast.
@@ -108,7 +114,7 @@ constexpr bool deliver(Children& children, U& ui, const PointerMove& event) {
         bool hit = false;
         const auto visit = [&](auto& child) {
             if (hit) {
-                static_cast<void>(child.handle(ui, PointerLeave{}));
+                child.notify(ui, PointerLeave{});
             } else {
                 hit = child.handle(ui, event);
             }
@@ -122,11 +128,10 @@ constexpr bool deliver(Children& children, U& ui, const PointerMove& event) {
 template <class Children, class Shaper>
 constexpr std::expected<Rect, Error> layout_in_order(Children& children, Rect area, const Shaper& text) {
     std::expected<Rect, Error> remaining{area};
-    std::apply(
-        [&](auto&... child) {
-            static_cast<void>((((remaining = child.layout(*remaining, text)), remaining.has_value()) && ...));
-        },
-        children);
+    const auto place = [&](auto& child) {
+        if (remaining) remaining = child.layout(*remaining, text);
+    };
+    std::apply([&](auto&... child) { (place(child), ...); }, children);
     return remaining;
 }
 

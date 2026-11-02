@@ -69,8 +69,9 @@ A window is one composite type built from `std::tuple`s, so the compiler knows i
 - `u.get<Tag>()` is resolved at compile time. An unknown tag and a duplicate tag are compile errors.
 - Paint, hit testing and event delivery are fold expressions over the tuple. There is no run-time
   widget list and no dynamic dispatch.
-- `Widget` is a concept and not a base class. `handle` takes each event as its own type, and a widget
-  with no interest in some events gives one catch-all template that answers false.
+- `Widget` is a concept and not a base class. `handle` takes each event that has an answer, as its own
+  type, and `notify` takes each notice, which has no answer and so nothing to discard. A widget with no
+  interest in some of them gives one catch-all template of each.
 
 **Callbacks are generic lambdas with an explicit `-> void`.** This is required, not style. The tree's
 type contains the callback's type, so the body may only be instantiated after the tree is complete. A

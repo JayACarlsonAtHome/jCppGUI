@@ -23,9 +23,10 @@ struct Trampoline<Method> {
 
 // Registers a listener with the owner it will be cast back to. Add is the generated
 // <interface>_add_listener function, so the proxy and listener types are checked by the compiler.
+// False when libwayland refused it, which leaves the object deaf to its events.
 template <auto Add, class Proxy, class Listener, class Owner>
-void listen(Proxy* proxy, const Listener& listener, Owner& owner) noexcept {
-    static_cast<void>(Add(proxy, &listener, &owner));
+[[nodiscard]] bool listen(Proxy* proxy, const Listener& listener, Owner& owner) noexcept {
+    return Add(proxy, &listener, &owner) == 0;
 }
 
 // wl_registry_bind returns the new object untyped. The interface argument decides its real type.
