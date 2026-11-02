@@ -39,7 +39,7 @@ if(NOT JGUI_WARNINGS_ONLY)
     -fno-delete-null-pointer-checks
     $<$<CONFIG:Release>:-fno-strict-overflow -fno-strict-aliasing>)
 endif()
-target_link_options(jgui_hardening INTERFACE -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack -Wl,-z,nodlopen)
+target_link_options(jgui_hardening INTERFACE -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack)
 if(JGUI_SANITIZE)
   target_compile_options(jgui_hardening INTERFACE -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
   target_link_options(jgui_hardening INTERFACE -fsanitize=address,undefined -fno-sanitize-recover=all)

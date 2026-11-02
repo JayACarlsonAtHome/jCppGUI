@@ -51,12 +51,9 @@ queue. It should go away if our own Wayland client delivers events directly.
 
 In every configuration: `-D_GLIBCXX_ASSERTIONS`, `-fstack-protector-strong`,
 `-fstack-clash-protection`, `-fcf-protection`, `-fPIE -pie`, `-Wl,-z,relro,-z,now`, `-ftrivial-auto-var-init=zero`,
-`-fstrict-flex-arrays=3`, `-fno-delete-null-pointer-checks`, `-Wl,-z,noexecstack`, `-Wl,-z,nodlopen`. Release
+`-fstrict-flex-arrays=3`, `-fno-delete-null-pointer-checks`, `-Wl,-z,noexecstack`. Release
 adds `-O2 -D_FORTIFY_SOURCE=3 -fno-strict-overflow -fno-strict-aliasing`. The `gcc-asan` preset adds ASan and
 UBSan with `-fno-sanitize-recover=all`.
-
-`-z nodlopen` has no effect yet. The linker sets its mark only on shared objects, and everything we build
-today is an executable or a static library, so `readelf` shows no `NOOPEN` on the demo.
 
 ### Warnings
 
