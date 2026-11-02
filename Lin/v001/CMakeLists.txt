@@ -12,6 +12,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 option(JGUI_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(JGUI_WARNINGS_ONLY "Optimize, without the hardening flags that stop warnings firing. Never ship this." OFF)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WAYLAND_CLIENT REQUIRED IMPORTED_TARGET wayland-client)
@@ -28,8 +29,16 @@ add_library(jgui_hardening INTERFACE)
 target_compile_definitions(jgui_hardening INTERFACE _GLIBCXX_ASSERTIONS)
 target_compile_options(jgui_hardening INTERFACE
   -fstack-protector-strong -fstack-clash-protection -fcf-protection -fPIE
-  -ftrivial-auto-var-init=zero -fstrict-flex-arrays=3 -fno-delete-null-pointer-checks
-  $<$<CONFIG:Release>:-O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fno-strict-overflow -fno-strict-aliasing>)
+  -ftrivial-auto-var-init=zero -fstrict-flex-arrays=3
+  $<$<CONFIG:Release>:-O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3>)
+# These three change what the language promises, which is hardening. They also stop g++'s warnings about the
+# same promises: -Wnull-dereference, -Wstrict-aliasing and -Wstrict-overflow. The gcc-warn preset leaves them
+# out so that those warnings can report. A build that is shipped always has them.
+if(NOT JGUI_WARNINGS_ONLY)
+  target_compile_options(jgui_hardening INTERFACE
+    -fno-delete-null-pointer-checks
+    $<$<CONFIG:Release>:-fno-strict-overflow -fno-strict-aliasing>)
+endif()
 target_link_options(jgui_hardening INTERFACE -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack -Wl,-z,nodlopen)
 if(JGUI_SANITIZE)
   target_compile_options(jgui_hardening INTERFACE -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)

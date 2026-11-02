@@ -124,6 +124,12 @@ for preset in gcc-debug clang-debug; do
   ctest --preset "$preset"
 done
 
+# Build only: optimized, without the flags that stop some warnings firing. See docs/SECURITY.md.
+echo
+echo "=== gcc-warn ==="
+cmake --preset gcc-warn
+cmake --build --preset gcc-warn
+
 # --- 6. the window ---
 DEMO="$ROOT/build/gcc-debug/jcppgui-demo"
 echo

@@ -27,6 +27,11 @@
       "name": "gcc-asan",
       "inherits": "gcc",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "JGUI_SANITIZE": "ON" }
+    },
+    {
+      "name": "gcc-warn",
+      "inherits": "gcc",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "JGUI_WARNINGS_ONLY": "ON" }
     }
   ],
   "buildPresets": [
@@ -34,7 +39,8 @@
     { "name": "gcc-release", "configurePreset": "gcc-release" },
     { "name": "clang-debug", "configurePreset": "clang-debug" },
     { "name": "clang-release", "configurePreset": "clang-release" },
-    { "name": "gcc-asan", "configurePreset": "gcc-asan" }
+    { "name": "gcc-asan", "configurePreset": "gcc-asan" },
+    { "name": "gcc-warn", "configurePreset": "gcc-warn" }
   ],
   "testPresets": [
     { "name": "gcc-debug", "configurePreset": "gcc-debug", "output": { "outputOnFailure": true } },

@@ -95,11 +95,12 @@ clang++ adds `-Weverything`, except:
 `copy_from_c`, through `std::views::counted`, so the compiler does not report that line. It is the one place
 a reviewer must read by hand.
 
-**A gap in g++'s warnings.** `-Wstrict-aliasing` and `-Wnull-dereference` report only when optimizing. The
-Release flags `-fno-strict-aliasing` and `-fno-delete-null-pointer-checks` switch them off there, and the
-other presets do not optimize, so neither reports in any g++ preset. `-Wstrict-overflow` is documented to
-depend on `-fstrict-overflow` in the same way. A simple test confirmed the first two, and a test of the third
-was inconclusive. The flags stay in the list. Clang's `-Wstrict-aliasing` does not depend on the flag.
+**The `gcc-warn` preset.** `-fno-strict-aliasing`, `-fno-strict-overflow` and `-fno-delete-null-pointer-checks`
+stop g++'s `-Wstrict-aliasing`, `-Wstrict-overflow` and `-Wnull-dereference`, and the first and last of those
+report only when optimizing. So `gcc-warn` builds everything at `-O2` without those three flags, with the same
+warnings and `-Werror`, and is never shipped. Each warning was shown firing under its flags, and silent under
+`gcc-release`'s. `-ftrivial-auto-var-init=zero` was tested too and does not stop `-Wuninitialized` or
+`-Wmaybe-uninitialized`, so it stays.
 
 Constant evaluation is used as a further check: `tests/test_constexpr.cpp` runs the core logic in
 `static_assert`, where overflow, out-of-bounds access, use after destruction and leaks are compile
