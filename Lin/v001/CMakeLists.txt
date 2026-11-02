@@ -158,10 +158,14 @@ target_link_libraries(jcppgui-demo PRIVATE jgui_wayland jgui_text jgui_program j
 # --- Tests ---
 enable_testing()
 
-function(jgui_test name)
+function(jgui_test_program name)
   add_executable(${name} tests/${name}.cpp)
   target_include_directories(${name} PRIVATE tests demo)
   target_link_libraries(${name} PRIVATE jgui_text jgui_warnings)
+endfunction()
+
+function(jgui_test name)
+  jgui_test_program(${name})
   add_test(NAME ${name} COMMAND ${name})
   set_tests_properties(${name} PROPERTIES TIMEOUT 60)
 endfunction()
@@ -188,6 +192,33 @@ jgui_test(test_callback_access)
 jgui_test(test_untrusted)
 target_include_directories(test_untrusted PRIVATE src/wayland)
 target_link_libraries(test_untrusted PRIVATE jgui_wayland jgui_program)
+
+# The real WaylandBackend against a scripted compositor, with no screen. Each scenario is one test.
+jgui_test_program(test_fake_compositor)
+target_include_directories(test_fake_compositor PRIVATE src src/wayland)
+target_link_libraries(test_fake_compositor PRIVATE jgui_wayland jgui_program)
+set(JGUI_FAKE_SCENARIOS
+  happy_path keyboard_path
+  configure_1x1 configure_0x0 configure_negative configure_int32_max configure_8192x1 configure_1x8192 configure_119x119 configure_flood
+  release_before_attach release_three_times never_release release_late pool_attack
+  capabilities_flap seat_removed_while_held no_seat no_compositor no_shm no_wm_base old_compositor old_seat
+  keymap_pipe keymap_directory keymap_short keymap_1mib_no_terminator keymap_size_0xffffffff keymap_format_7 keymap_none
+  keys_extreme pointer_extremes event_flood
+  disconnect_at_once disconnect_after_frame
+  bad_length_too_small bad_length_too_large bad_length_not_aligned unknown_opcode unknown_object
+  truncated_then_gone truncated_during_connect truncated_during_first_frame
+  arguments_too_short string_not_terminated keymap_with_no_descriptor
+  protocol_error_on_surface protocol_error_on_display protocol_error_on_nothing signal_storm)
+foreach(scenario ${JGUI_FAKE_SCENARIOS})
+  add_test(NAME fake_${scenario} COMMAND test_fake_compositor ${scenario})
+  set_tests_properties(fake_${scenario} PROPERTIES TIMEOUT 300
+    ENVIRONMENT "JGUI_TEST_KEYMAP=${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/seeds/keymap/minimal.xkb")
+endforeach()
+jgui_test(test_fake_compositor_rules)
+target_include_directories(test_fake_compositor_rules PRIVATE src src/wayland)
+target_link_libraries(test_fake_compositor_rules PRIVATE jgui_wayland)
+list(LENGTH JGUI_FAKE_SCENARIOS JGUI_FAKE_SCENARIO_COUNT)
+add_test(NAME fake_compositor_lists_match COMMAND test_fake_compositor --expect-count ${JGUI_FAKE_SCENARIO_COUNT})
 
 add_test(NAME demo_smoke COMMAND jcppgui-demo --smoke)
 set_tests_properties(demo_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)

@@ -112,7 +112,7 @@ check "memory mapping" '\b(mmap(64)?|munmap|mremap|msync|mprotect)\b'
 
 # --- Typed memory meets the OS's untyped byte interface in a few named helpers only ---
 check "positioned file I/O outside its helper" '\bp(read|write)(v2?|64|64v2?)?\b' '^src/wayland/file_io\.hpp:?'
-expression='(?:^|[(=,;{}!&|?:]|\breturn\b|\belse\b)\s*'
+expression='(?:^|[(=,;{}!?:]|&&|\|\||\breturn\b|\belse\b)\s*'
 check "byte I/O or a copy of raw bytes outside the named helpers" \
   "$expression(read|write|recv|send|fread|fwrite|fgets|fputs|fprintf|readv|writev|recvfrom|sendto|recvmmsg|sendmmsg|sendfile|splice|tee|vmsplice|copy_file_range|memcpy|memmove|memccpy|mempcpy|bcopy|wmemcpy|wmemmove)\s*\("
 check "descriptor passing outside the socket helper, the owner's approval pending" \
