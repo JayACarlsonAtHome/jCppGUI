@@ -70,7 +70,9 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     -Wmismatched-tags -Wmissing-include-dirs -Wmissing-requires -Wmissing-template-keyword -Wpacked
     -Wplacement-new=2 -Wpointer-arith -Wredundant-tags -Wshift-overflow=2 -Wstrict-aliasing=3
     -Wstringop-overflow=4 -Wsuggest-override -Wtrampolines -Wunused-const-variable=2 -Wunused-macros
-    -Wvector-operation-performance -Wvirtual-inheritance -Wvla -Wwrite-strings)
+    -Wvector-operation-performance -Wvirtual-inheritance -Wvla -Wwrite-strings
+    -Weffc++ -Wnrvo -Wstack-protector -Wsuggest-attribute=const -Wsuggest-attribute=noreturn
+    -Wsuggest-final-methods -Wsuggest-final-types -Wunsafe-loop-optimizations)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   list(APPEND JGUI_WARNING_FLAGS
     -Weverything

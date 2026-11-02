@@ -76,7 +76,18 @@ g++ adds:
 -Wmissing-requires -Wmissing-template-keyword -Wpacked -Wplacement-new=2 -Wpointer-arith -Wredundant-tags
 -Wshift-overflow=2 -Wstrict-aliasing=3 -Wstringop-overflow=4 -Wsuggest-override -Wtrampolines
 -Wunused-const-variable=2 -Wunused-macros -Wvector-operation-performance -Wvirtual-inheritance -Wvla
--Wwrite-strings`
+-Wwrite-strings -Weffc++ -Wnrvo -Wstack-protector -Wsuggest-attribute=const -Wsuggest-attribute=noreturn
+-Wsuggest-final-methods -Wsuggest-final-types -Wunsafe-loop-optimizations`
+
+Three g++ warnings were run on this code and left out:
+
+- `-Waggregate-return` reports every call that returns a class. Returning `std::expected` by value is how this
+  code reports every failure, so no change short of abandoning that design would make it clean.
+- `-Winline` reports when the optimizer declines to inline a function. Every header template is implicitly
+  inline, so it follows optimizer heuristics and not any defect in the code, and only forcing inlining would quiet it.
+- `-Wsuggest-attribute=pure` would have us add `[[gnu::pure]]` to about 30 functions. That is a promise the optimizer
+  relies on with no check, so a wrong one miscompiles silently, and some are flagged only "if known to return
+  normally", when this code can abort. Adding unchecked promises is less safe than leaving the warning off.
 
 clang++ adds `-Weverything`, except:
 

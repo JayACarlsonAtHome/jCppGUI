@@ -228,32 +228,32 @@ struct WaylandImpl {
     }
 
     BackendEventQueue& events;
-    std::optional<Error> failure;
+    std::optional<Error> failure{};
 
     // Declared first, so it is disconnected after every object below it has been destroyed.
-    Display display;
-    Registry registry;
-    Compositor compositor;
-    Shm shm;
-    WmBase wm_base;
-    Seat seat;
+    Display display{};
+    Registry registry{};
+    Compositor compositor{};
+    Shm shm{};
+    WmBase wm_base{};
+    Seat seat{};
     std::uint32_t seat_name{};
-    PointerObject pointer;
-    KeyboardObject keyboard;
-    Surface surface;
-    XdgSurface xdg;
-    Toplevel toplevel;
+    PointerObject pointer{};
+    KeyboardObject keyboard{};
+    Surface surface{};
+    XdgSurface xdg{};
+    Toplevel toplevel{};
 
-    Surface cursor_surface;
-    std::unique_ptr<ShmBuffer> cursor_buffer;
+    Surface cursor_surface{};
+    std::unique_ptr<ShmBuffer> cursor_buffer{};
 
-    std::vector<std::unique_ptr<ShmBuffer>> buffers;
-    FrameLedger ledger;
-    std::vector<std::uint32_t> frame_pixels;  // the picture being drawn, one for all the buffers
+    std::vector<std::unique_ptr<ShmBuffer>> buffers{};
+    FrameLedger ledger{};
+    std::vector<std::uint32_t> frame_pixels{};  // the picture being drawn, one for all the buffers
 
-    XkbContext xkb_context_object;
-    XkbKeymap xkb_keymap_object;
-    XkbState xkb_state_object;
+    XkbContext xkb_context_object{};
+    XkbKeymap xkb_keymap_object{};
+    XkbState xkb_state_object{};
 
     Point pointer_position{};
     Size chosen_size;
@@ -484,7 +484,7 @@ std::expected<void, Error> WaylandImpl::create_cursor() {
     for (const std::string_view row : cursor_shape) {
         for (const char cell : row) pixels.push_back(cursor_colour(cell));
     }
-    if (auto written = cursor_buffer->write(pixels); !written) return written;
+    if (auto written = cursor_buffer->write(pixels); !written) return std::unexpected(std::move(written.error()));
 
     cursor_surface.reset(wl_compositor_create_surface(compositor.get()));
     if (!cursor_surface) return make_error(ErrorCode::System, "the cursor surface could not be created");
@@ -512,7 +512,7 @@ std::expected<void, Error> WaylandImpl::connect(const WaylandOptions& options) {
     if (!wm_base) return make_error(ErrorCode::MissingGlobal, "the compositor has no xdg_wm_base");
     if (!seat) return make_error(ErrorCode::MissingGlobal, "the compositor has no wl_seat version 5");
 
-    if (auto cursor = create_cursor(); !cursor) return cursor;
+    if (auto cursor = create_cursor(); !cursor) return std::unexpected(std::move(cursor.error()));
 
     surface.reset(wl_compositor_create_surface(compositor.get()));
     if (!surface) return make_error(ErrorCode::System, "the window surface could not be created");
@@ -642,7 +642,7 @@ std::expected<void, Error> WaylandBackend::present(Frame<WaylandBackend> frame, 
     impl_->ledger.finish();
     // A current frame's buffer is still in the list, because only a new acquire removes any.
     ShmBuffer& buffer = *impl_->buffers.at(frame.buffer_);
-    if (auto written = buffer.write(impl_->frame_pixels); !written) return written;
+    if (auto written = buffer.write(impl_->frame_pixels); !written) return std::unexpected(std::move(written.error()));
     wl_surface* surface = impl_->surface.get();
     if (impl_->geometry != buffer.size()) {
         impl_->geometry = buffer.size();

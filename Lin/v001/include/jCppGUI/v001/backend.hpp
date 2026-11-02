@@ -64,7 +64,7 @@ private:
     // One type's events. The storage is reused once a queue has been read to its end.
     template <class T>
     struct Queue {
-        std::vector<Stamped<T>> items;
+        std::vector<Stamped<T>> items{};
         std::size_t head{};
 
         [[nodiscard]] constexpr bool has_next() const noexcept { return head < items.size(); }
@@ -87,7 +87,7 @@ private:
         return true;
     }
 
-    std::tuple<Queue<E>...> queues_;
+    std::tuple<Queue<E>...> queues_{};
     std::uint64_t next_sequence_{};
     std::size_t count_{};
 };

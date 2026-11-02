@@ -109,7 +109,7 @@ public:
 
 private:
     struct Slot {
-        std::optional<T> value;
+        std::optional<T> value{};
         std::uint32_t generation{};
         bool dying{};
     };
@@ -143,9 +143,9 @@ private:
         return slot;
     }
 
-    Slots<Slot> slots_;
-    std::vector<std::uint32_t> free_;
-    std::vector<std::uint32_t> dying_;
+    Slots<Slot> slots_{};
+    std::vector<std::uint32_t> free_{};
+    std::vector<std::uint32_t> dying_{};
     std::uint32_t max_generation_{default_max_generation};
     std::size_t retired_{};
 };

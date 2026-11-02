@@ -82,15 +82,15 @@ public:
     [[nodiscard]] constexpr std::optional<ResizeEdge> resize_edge() const noexcept { return resize_edge_; }
 
 private:
-    BackendEventQueue events_;
-    detail::FrameLedger ledger_;
-    std::vector<std::uint32_t> pixels_;
+    BackendEventQueue events_{};
+    detail::FrameLedger ledger_{};
+    std::vector<std::uint32_t> pixels_{};
     Size size_{};
     std::size_t presented_{};
     bool display_holding_{};
-    std::optional<Serial> move_serial_;
-    std::optional<Serial> resize_serial_;
-    std::optional<ResizeEdge> resize_edge_;
+    std::optional<Serial> move_serial_{};
+    std::optional<Serial> resize_serial_{};
+    std::optional<ResizeEdge> resize_edge_{};
 };
 
 static_assert(Backend<HeadlessBackend>);

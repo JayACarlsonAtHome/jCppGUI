@@ -4,6 +4,7 @@
 //          evaluates. So these run edge cases through the real code: this file compiling is the test.
 #include <array>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -983,4 +984,6 @@ static_assert(run_ends_on_close_and_empty_wait_is_an_error());
 
 }  // namespace
 
-int main() { return 0; }
+int main() {
+    std::cout << "everything was checked during compilation\n";
+}

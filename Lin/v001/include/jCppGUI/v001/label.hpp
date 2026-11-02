@@ -68,7 +68,7 @@ public:
 
 private:
     std::string text_;
-    std::optional<TextRun> run_;
+    std::optional<TextRun> run_{};
     Rect bounds_{};
     bool damaged_{};
 };

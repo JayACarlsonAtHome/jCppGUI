@@ -53,7 +53,7 @@ public:
     }
 
 private:
-    jgui::Dynamic<Tag, jgui::Label<Tag>, Slots> line_;
+    jgui::Dynamic<Tag, jgui::Label<Tag>, Slots> line_{};
 };
 
 // What Help does. A generic lambda works in a real window. This is a named type because the compile-time

@@ -128,7 +128,7 @@ public:
 private:
     std::string caption_;
     OnClick on_click_;
-    std::optional<TextRun> run_;
+    std::optional<TextRun> run_{};
     Rect bounds_{};
     bool hovered_{};
     bool pressed_{};

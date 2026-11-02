@@ -145,13 +145,13 @@ public:
 
     template <TextShaper Shaper>
     constexpr std::expected<Rect, Error> layout(Rect area, const Shaper& text) {
+        std::expected<Rect, Error> remaining{area};
         if (deferred_error_) {
-            Error error = std::move(*deferred_error_);
+            remaining = std::unexpected(std::move(*deferred_error_));
             deferred_error_.reset();
-            return std::unexpected(std::move(error));
+            return remaining;
         }
         bounds_ = area;
-        std::expected<Rect, Error> remaining{area};
         for_each_live([&](T& item, Handle<T>) {
             remaining = item.layout(*remaining, text);
             return !remaining.has_value();
@@ -273,11 +273,11 @@ private:
         });
     }
 
-    Pool<T, Slots> pool_;
-    std::vector<Handle<T>> live_;
-    std::optional<Handle<T>> capture_;
-    std::optional<Handle<T>> focus_;
-    std::optional<Error> deferred_error_;
+    Pool<T, Slots> pool_{};
+    std::vector<Handle<T>> live_{};
+    std::optional<Handle<T>> capture_{};
+    std::optional<Handle<T>> focus_{};
+    std::optional<Error> deferred_error_{};
     Rect bounds_{};
     bool damaged_{};
 };

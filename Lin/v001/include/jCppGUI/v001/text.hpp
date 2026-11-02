@@ -107,7 +107,7 @@ public:
 
 private:
     Size size_{};
-    std::vector<std::uint8_t> coverage_;
+    std::vector<std::uint8_t> coverage_{};
 };
 
 // What layout needs from text. TextEngine is the real model. A small constexpr model lets the static_assert

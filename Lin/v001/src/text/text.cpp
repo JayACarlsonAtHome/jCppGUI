@@ -74,12 +74,12 @@ std::expected<FontFile, Error> find_default_font(FcConfig* config) {
 namespace detail {
 
 struct TextEngineImpl {
-    FontConfig config;
-    std::vector<std::uint8_t> font_bytes;  // what a face made from memory reads, so it must outlive the face
-    FtLibrary library;
-    FtFace face;
-    HbFont font;
-    HbBuffer buffer;
+    FontConfig config{};
+    std::vector<std::uint8_t> font_bytes{};  // what a face made from memory reads, so it must outlive the face
+    FtLibrary library{};
+    FtFace face{};
+    HbFont font{};
+    HbBuffer buffer{};
     std::int32_t ascent{};
     std::int32_t line_height{};
 };

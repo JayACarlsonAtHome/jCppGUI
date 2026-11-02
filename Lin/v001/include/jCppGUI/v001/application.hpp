@@ -28,9 +28,9 @@ public:
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> run(const Shaper& text) {
         while (!closed_) {
-            if (auto result = settle(text); !result) return result;
+            if (auto result = settle(text); !result) return std::unexpected(std::move(result.error()));
             if (closed_) break;
-            if (auto result = backend_.wait(*this); !result) return result;
+            if (auto result = backend_.wait(*this); !result) return std::unexpected(std::move(result.error()));
         }
         return {};
     }
@@ -38,7 +38,7 @@ public:
     // Handles what is already queued, and draws if that caused damage. Never sleeps.
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> process_pending(const Shaper& text) {
-        if (auto result = backend_.process_pending(*this); !result) return result;
+        if (auto result = backend_.process_pending(*this); !result) return std::unexpected(std::move(result.error()));
         return settle(text);
     }
 
@@ -46,10 +46,10 @@ public:
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> present_first_frame(const Shaper& text) {
         while (frames_ == 0) {
-            if (auto result = settle(text); !result) return result;
+            if (auto result = settle(text); !result) return std::unexpected(std::move(result.error()));
             if (frames_ != 0) break;
             if (closed_) return make_error(ErrorCode::Protocol, "the window closed before its first frame");
-            if (auto result = backend_.wait(*this); !result) return result;
+            if (auto result = backend_.wait(*this); !result) return std::unexpected(std::move(result.error()));
         }
         return backend_.sync();
     }
@@ -137,7 +137,7 @@ private:
         Canvas canvas{*pixels};
         canvas.fill_rect(whole, theme::background);
         root_.paint(canvas);
-        if (auto presented = backend_.present(std::move(*frame), whole); !presented) return presented;
+        if (auto presented = backend_.present(std::move(*frame), whole); !presented) return std::unexpected(std::move(presented.error()));
         root_.clear_damage();
         damaged_ = false;
         ++frames_;
@@ -146,7 +146,7 @@ private:
 
     B backend_;
     Root root_;
-    std::optional<Error> failure_;
+    std::optional<Error> failure_{};
     std::uint64_t frames_{};
     bool have_size_{};
     bool closed_{};
