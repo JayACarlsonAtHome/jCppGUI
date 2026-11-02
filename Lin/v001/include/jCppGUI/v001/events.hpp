@@ -3,6 +3,7 @@
 //          through the widget tree.
 #pragma once
 
+#include <concepts>
 #include <cstdint>
 
 #include "geometry.hpp"
@@ -10,8 +11,8 @@
 namespace jgui::inline v001 {
 
 namespace detail {
-// Reads the number inside a wire value. It is defined only in src/wayland/, so nothing above the backend
-// line can turn one of these types back into a number.
+// Makes a wire value from a number and reads the number back. It is defined only in src/wayland/, so nothing above
+// the backend line can do either at run time.
 struct WireAccess;
 
 struct SerialTag;
@@ -20,18 +21,27 @@ struct KeysymTag;
 }  // namespace detail
 
 // A number that belongs to the display protocol. Each meaning is its own type, with no implicit conversion
-// in or out, so a serial cannot be passed as a button. The toolkit can only compare them.
+// in or out, so a serial cannot be passed as a button. Above the backend line these can be compared and, for
+// the kinds that carry no authority, named at compile time: a button or a key has a fixed meaning. Only a backend
+// or a test can make one from a number at run time, and only a backend can read one.
 template <class Tag>
 class WireValue {
 public:
-    constexpr WireValue() noexcept = default;
-    constexpr explicit WireValue(std::uint32_t value) noexcept : value_{value} {}
+    // A serial is the proof that a press really happened, so it can never be named: it only comes from a backend.
+    consteval explicit WireValue(std::uint32_t value) noexcept
+        requires(!std::same_as<Tag, detail::SerialTag>)
+        : value_{value} {}
 
     friend constexpr bool operator==(const WireValue&, const WireValue&) = default;
 
 private:
     friend struct detail::WireAccess;
-    std::uint32_t value_{};
+    friend struct detail::TestAccess;
+
+    struct FromWire {};
+    constexpr WireValue(FromWire, std::uint32_t value) noexcept : value_{value} {}
+
+    std::uint32_t value_;
 };
 
 using Serial = WireValue<detail::SerialTag>;             // needed to start a compositor move or resize
@@ -42,11 +52,13 @@ using Keysym = WireValue<detail::KeysymTag>;
 class ModifierMask {
 public:
     constexpr ModifierMask() noexcept = default;
-    constexpr explicit ModifierMask(std::uint32_t bits) noexcept : bits_{bits} {}
+    consteval explicit ModifierMask(std::uint32_t bits) noexcept : bits_{bits} {}
 
     friend constexpr bool operator==(const ModifierMask&, const ModifierMask&) = default;
     [[nodiscard]] friend constexpr ModifierMask operator|(ModifierMask a, ModifierMask b) noexcept {
-        return ModifierMask{a.bits_ | b.bits_};
+        ModifierMask both;
+        both.bits_ = a.bits_ | b.bits_;
+        return both;
     }
     [[nodiscard]] constexpr bool holds(ModifierMask other) const noexcept { return (bits_ & other.bits_) == other.bits_; }
 
@@ -74,15 +86,15 @@ enum class ButtonState : std::uint8_t { Pressed, Released };
 
 struct PointerButton {
     Point position;
-    PointerButtonCode button{};
-    ButtonState state{ButtonState::Released};
-    Serial serial{};
+    PointerButtonCode button;
+    ButtonState state;
+    Serial serial;
 };
 
 struct PointerLeave {};
 
 struct KeyEvent {
-    Keysym keysym{};
+    Keysym keysym;
     ModifierMask modifiers{};
     bool pressed{};
 };
@@ -108,13 +120,13 @@ inline constexpr Keysym Return{0xff0d};
 
 struct PointerPress {
     Point position;
-    PointerButtonCode button{};
-    Serial serial{};  // the backend's serial for this press, for a compositor move or resize
+    PointerButtonCode button;
+    Serial serial;  // the backend's serial for this press, for a compositor move or resize
 };
 
 struct PointerRelease {
     Point position;
-    PointerButtonCode button{};
+    PointerButtonCode button;
 };
 
 // Questions, with an answer: see the Widget concept.

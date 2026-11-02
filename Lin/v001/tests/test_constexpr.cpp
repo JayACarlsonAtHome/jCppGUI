@@ -376,7 +376,7 @@ struct OrderSink {
 
 consteval bool queue_keeps_arrival_order() {
     BackendEventQueue queue;
-    if (!queue.push(PointerMove{}) || !queue.push(KeyEvent{}) || !queue.push(PointerMove{}) || !queue.push(CloseEvent{}))
+    if (!queue.push(PointerMove{}) || !queue.push(KeyEvent{Key::Space}) || !queue.push(PointerMove{}) || !queue.push(CloseEvent{}))
         return false;
     OrderSink sink;
     queue.drain(sink);
@@ -395,7 +395,16 @@ static_assert(!std::convertible_to<std::uint32_t, PointerButtonCode> && !std::co
 static_assert(!std::convertible_to<std::uint32_t, Keysym> && !std::convertible_to<Keysym, std::uint32_t>);
 static_assert(!std::convertible_to<std::uint32_t, ModifierMask> && !std::convertible_to<ModifierMask, std::uint32_t>);
 static_assert(!std::constructible_from<std::uint32_t, Serial> && !std::constructible_from<Serial, PointerButtonCode>);
-static_assert(Serial{5} == Serial{5} && Serial{5} != Serial{6} && Serial{} == Serial{0});
+static_assert(jgui_test::serial(5) == jgui_test::serial(5) && jgui_test::serial(5) != jgui_test::serial(6));
+// A serial proves that a press happened, so a callback cannot make one, not even a default one.
+static_assert(!std::default_initializable<Serial> && !std::constructible_from<Serial, std::uint32_t> && std::copy_constructible<Serial>);
+// A button or a key can be named at compile time, but there is no way to turn a run-time number into one.
+template <std::uint32_t N>
+concept NamesAKey = requires { Keysym{N}; };
+static_assert(NamesAKey<0x41> && Keysym{0x41} != Key::Space);
+template <class T>
+concept RunTimeWire = requires(std::uint32_t number) { T::make(number); };
+static_assert(!RunTimeWire<Serial> && !RunTimeWire<Keysym> && !std::default_initializable<Keysym> && !std::default_initializable<PointerButtonCode>);
 static_assert(MouseButton::Left != PointerButtonCode{0x111} && Key::Return != Key::Space);
 static_assert((Modifier::Shift | Modifier::Ctrl).holds(Modifier::Ctrl) && !(Modifier::Shift | Modifier::Ctrl).holds(Modifier::Alt));
 static_assert((Modifier::Shift | Modifier::Ctrl) == (Modifier::Ctrl | Modifier::Shift) && ModifierMask{}.holds(ModifierMask{}));
@@ -670,20 +679,20 @@ consteval bool button_click_rules() {
     const Point off{Left{99}, Top{39}};
     const auto count = [&] { return ui.get<CountTag>().value; };
 
-    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left, jgui_test::serial(1)});
     if (!target.pressed() || !jgui_test::capture_active(ui)) return false;
     jgui_test::dispatch(ui, PointerRelease{on, MouseButton::Left});
     if (count() != 1 || target.pressed() || jgui_test::capture_active(ui)) return false;
 
-    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left, jgui_test::serial(1)});
     jgui_test::dispatch(ui, PointerRelease{off, MouseButton::Left});
     if (count() != 1) return false;
 
-    jgui_test::dispatch(ui, PointerPress{off, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerPress{off, MouseButton::Left, jgui_test::serial(1)});
     jgui_test::dispatch(ui, PointerRelease{on, MouseButton::Left});
     if (count() != 1) return false;
 
-    jgui_test::dispatch(ui, PointerPress{on, PointerButtonCode{0x111}});  // another mouse button
+    jgui_test::dispatch(ui, PointerPress{on, PointerButtonCode{0x111}, jgui_test::serial(1)});  // another mouse button
     jgui_test::dispatch(ui, PointerRelease{on, PointerButtonCode{0x111}});
     return count() == 1;
 }
@@ -703,11 +712,11 @@ consteval bool self_destruction_is_deferred() {
     const Handle<KillButton> handle = node.create("x", kill).value();
     static_cast<void>(jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{20}}}, BlockShaper{}));
     const Point on{Left{1}, Top{1}};
-    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left, jgui_test::serial(1)});
     jgui_test::dispatch(ui, PointerRelease{on, MouseButton::Left});
     if (observed != 40 || node.find(handle) != nullptr || node.shown()) return false;
     // A late event finds nothing, and a new item in the old slot is not reached by the old handle.
-    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left, jgui_test::serial(1)});
     jgui_test::dispatch(ui, PointerRelease{on, MouseButton::Left});
     const Handle<KillButton> next = node.create("y", kill).value();
     return node.find(handle) == nullptr && node.find(next) != nullptr;
@@ -723,7 +732,7 @@ consteval bool capture_and_focus_go_inert() {
     const Handle<FireButton> handle = node.create("x", fire).value();
     static_cast<void>(jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{20}}}, BlockShaper{}));
     const Point on{Left{1}, Top{1}};
-    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left, jgui_test::serial(1)});
     if (node.captured() == nullptr || node.focused() == nullptr || !jgui_test::capture_active(ui)) return false;
     node.destroy(handle);
     if (node.captured() != nullptr || node.focused() != nullptr || jgui_test::capture_active(ui)) return false;
@@ -787,7 +796,7 @@ consteval bool dynamic_routes_to_the_holder_only() {
     const Point on_lower{Left{5}, Top{15}};
 
     // Pressing the lower item gives it the pointer and the focus.
-    jgui_test::dispatch(ui, PointerPress{on_lower, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerPress{on_lower, MouseButton::Left, jgui_test::serial(1)});
     if (node.captured() != node.find(lower) || node.focused() != node.find(lower)) return false;
 
     // While it holds the pointer, motion over the other item goes only to the holder.
@@ -854,8 +863,8 @@ consteval bool demo_help_toggles_in_pixels() {
         return count;
     };
     const auto click = [&] {
-        jgui_test::backend(core).inject(PointerButton{on, MouseButton::Left, ButtonState::Pressed, Serial{1}});
-        jgui_test::backend(core).inject(PointerButton{on, MouseButton::Left, ButtonState::Released, Serial{2}});
+        jgui_test::backend(core).inject(PointerButton{on, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(1)});
+        jgui_test::backend(core).inject(PointerButton{on, MouseButton::Left, ButtonState::Released, jgui_test::serial(2)});
         return core.process_pending(shaper).has_value();
     };
     if (text_pixels() != 0) return false;
@@ -875,10 +884,10 @@ consteval bool frame_routing_and_refused_sizes() {
     if (!core.process_pending(shaper).has_value() || core.frames() != frames) return false;
 
     // A title press starts a move with its serial, and an edge press a resize.
-    jgui_test::backend(core).inject(PointerButton{Point{Left{60}, Top{10}}, MouseButton::Left, ButtonState::Pressed, Serial{11}});
-    jgui_test::backend(core).inject(PointerButton{Point{Left{0}, Top{30}}, MouseButton::Left, ButtonState::Pressed, Serial{12}});
+    jgui_test::backend(core).inject(PointerButton{Point{Left{60}, Top{10}}, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(11)});
+    jgui_test::backend(core).inject(PointerButton{Point{Left{0}, Top{30}}, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(12)});
     if (!core.process_pending(shaper).has_value()) return false;
-    if (jgui_test::backend(core).move_serial() != Serial{11} || jgui_test::backend(core).resize_serial() != Serial{12}) return false;
+    if (jgui_test::backend(core).move_serial() != jgui_test::serial(11) || jgui_test::backend(core).resize_serial() != jgui_test::serial(12)) return false;
     if (jgui_test::backend(core).resize_edge() != ResizeEdge::LeftSide) return false;
 
     // An absurd size is refused and leaves the window as it was.
@@ -889,11 +898,11 @@ consteval bool frame_routing_and_refused_sizes() {
 
     // Press on the close box, release off it: nothing. Press and release on it: closed.
     const Point close = jgui_test::inside(Frame::close_box(small_window), 1, 1);
-    jgui_test::backend(core).inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, Serial{13}});
-    jgui_test::backend(core).inject(PointerButton{Point{Left{60}, Top{40}}, MouseButton::Left, ButtonState::Released, Serial{14}});
+    jgui_test::backend(core).inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(13)});
+    jgui_test::backend(core).inject(PointerButton{Point{Left{60}, Top{40}}, MouseButton::Left, ButtonState::Released, jgui_test::serial(14)});
     if (!core.process_pending(shaper).has_value() || core.closed()) return false;
-    jgui_test::backend(core).inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, Serial{15}});
-    jgui_test::backend(core).inject(PointerButton{close, MouseButton::Left, ButtonState::Released, Serial{16}});
+    jgui_test::backend(core).inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(15)});
+    jgui_test::backend(core).inject(PointerButton{close, MouseButton::Left, ButtonState::Released, jgui_test::serial(16)});
     return core.process_pending(shaper).has_value() && core.closed();
 }
 static_assert(frame_routing_and_refused_sizes());
@@ -912,8 +921,8 @@ consteval bool frame_is_a_node_of_the_tree() {
     auto empty = window(window_frame());
     detail::TestAccess::set_size(empty, whole.size());
     if (!jgui_test::layout(empty, whole, BlockShaper{}).has_value()) return false;
-    jgui_test::dispatch(empty, PointerPress{Point{Left{60}, Top{10}}, MouseButton::Left, Serial{9}});
-    return detail::TestAccess::take_requests(empty).move == Serial{9} && !detail::TestAccess::take_requests(empty).move.has_value();
+    jgui_test::dispatch(empty, PointerPress{Point{Left{60}, Top{10}}, MouseButton::Left, jgui_test::serial(9)});
+    return detail::TestAccess::take_requests(empty).move == jgui_test::serial(9) && !detail::TestAccess::take_requests(empty).move.has_value();
 }
 static_assert(frame_is_a_node_of_the_tree());
 
@@ -922,11 +931,11 @@ consteval bool thick_frame_through_the_application() {
     ApplicationCore core{HeadlessBackend{small_window}, window(window_frame<ThickMetrics>(label<ClickTag>("x")))};
     const BlockShaper shaper;
     if (!core.process_pending(shaper).has_value()) return false;
-    jgui_test::backend(core).inject(PointerButton{Point{Left{6}, Top{30}}, MouseButton::Left, ButtonState::Pressed, Serial{21}});
-    jgui_test::backend(core).inject(PointerButton{Point{Left{60}, Top{28}}, MouseButton::Left, ButtonState::Pressed, Serial{22}});
+    jgui_test::backend(core).inject(PointerButton{Point{Left{6}, Top{30}}, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(21)});
+    jgui_test::backend(core).inject(PointerButton{Point{Left{60}, Top{28}}, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(22)});
     if (!core.process_pending(shaper).has_value()) return false;
-    if (jgui_test::backend(core).resize_serial() != Serial{21} || jgui_test::backend(core).resize_edge() != ResizeEdge::LeftSide) return false;
-    if (jgui_test::backend(core).move_serial() != Serial{22}) return false;
+    if (jgui_test::backend(core).resize_serial() != jgui_test::serial(21) || jgui_test::backend(core).resize_edge() != ResizeEdge::LeftSide) return false;
+    if (jgui_test::backend(core).move_serial() != jgui_test::serial(22)) return false;
     return jgui_test::backend(core).pixel(Point{Left{6}, Top{30}}) == theme::frame_strip.argb && jgui_test::backend(core).pixel(Point{Left{60}, Top{28}}) == theme::frame_strip.argb;
 }
 static_assert(thick_frame_through_the_application());
@@ -944,7 +953,7 @@ struct FrameRig {
         return core.process_pending(shaper).has_value();
     }
     [[nodiscard]] consteval bool left(Point at, ButtonState state, std::uint32_t serial) {
-        return send(PointerButton{at, MouseButton::Left, state, Serial{serial}});
+        return send(PointerButton{at, MouseButton::Left, state, jgui_test::serial(serial)});
     }
     [[nodiscard]] constexpr auto& frame() { return core.ui().get<WindowFrameTag>(); }
     [[nodiscard]] constexpr auto& help() { return core.ui().get<demo::HelpButton>(); }
@@ -991,9 +1000,9 @@ static_assert(leaving_the_window_disarms_close());
 consteval bool only_the_left_button_acts_on_the_frame() {
     FrameRig rig;
     if (!rig.start()) return false;
-    if (!rig.send(PointerButton{on_title, right_button, ButtonState::Pressed, Serial{35}})) return false;
+    if (!rig.send(PointerButton{on_title, right_button, ButtonState::Pressed, jgui_test::serial(35)})) return false;
     if (jgui_test::backend(rig.core).move_serial().has_value()) return false;
-    return rig.send(PointerButton{on_close, right_button, ButtonState::Pressed, Serial{36}}) && !rig.frame().close_armed();
+    return rig.send(PointerButton{on_close, right_button, ButtonState::Pressed, jgui_test::serial(36)}) && !rig.frame().close_armed();
 }
 static_assert(only_the_left_button_acts_on_the_frame());
 
@@ -1014,7 +1023,7 @@ consteval bool only_a_client_press_takes_the_focus_away() {
     const Point help = rig.on_help();
     if (!rig.left(help, ButtonState::Pressed, 39) || !rig.left(help, ButtonState::Released, 40) || !rig.help().focused()) return false;
     if (!rig.left(on_title, ButtonState::Pressed, 41) || !rig.help().focused()) return false;
-    if (jgui_test::backend(rig.core).move_serial() != Serial{41}) return false;
+    if (jgui_test::backend(rig.core).move_serial() != jgui_test::serial(41)) return false;
     return rig.left(on_client, ButtonState::Pressed, 42) && !rig.help().focused();
 }
 static_assert(only_a_client_press_takes_the_focus_away());
@@ -1032,7 +1041,7 @@ consteval bool a_press_behind_a_resize_uses_the_new_size() {
     if (!rig.start()) return false;
     jgui_test::backend(rig.core).inject(ResizeEvent{Size{Width{300}, Height{200}}});
     if (!rig.left(Point{Left{299}, Top{100}}, ButtonState::Pressed, 43)) return false;
-    return jgui_test::backend(rig.core).resize_serial() == Serial{43} && jgui_test::backend(rig.core).resize_edge() == ResizeEdge::RightSide;
+    return jgui_test::backend(rig.core).resize_serial() == jgui_test::serial(43) && jgui_test::backend(rig.core).resize_edge() == ResizeEdge::RightSide;
 }
 static_assert(a_press_behind_a_resize_uses_the_new_size());
 

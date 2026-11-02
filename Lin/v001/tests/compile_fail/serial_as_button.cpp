@@ -2,12 +2,14 @@
 // Purpose: A serial passed where a pointer button belongs must not compile.
 #include "common.hpp"
 
-int main() {
-    const jgui::Serial serial{1};
+// A serial cannot be made here, so this takes one from an event.
+[[maybe_unused]] static jgui::PointerPress again(const jgui::PointerPress& event) {
+    const jgui::Serial serial = event.serial;
 #ifdef JGUI_BREAK
-    const jgui::PointerPress press{jgui::Point{}, serial, serial};
+    return jgui::PointerPress{jgui::Point{}, serial, serial};
 #else
-    const jgui::PointerPress press{jgui::Point{}, jgui::MouseButton::Left, serial};
+    return jgui::PointerPress{jgui::Point{}, jgui::MouseButton::Left, serial};
 #endif
-    static_cast<void>(press);
 }
+
+int main() {}

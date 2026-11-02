@@ -31,6 +31,10 @@ struct TestAccess {
         application.check_thread();
         return backend(application.core_);
     }
+    template <class Value>
+    [[nodiscard]] static constexpr Value wire(std::uint32_t value) noexcept {
+        return Value{typename Value::FromWire{}, value};
+    }
     template <class... C, class E>
     static constexpr bool dispatch(Window<C...>& window, const E& event) {
         return window.dispatch(event);
@@ -107,6 +111,11 @@ constexpr auto layout(W& window, jgui::Rect area, const Shaper& text) {
 template <class W>
 constexpr void paint(W& window, jgui::Canvas& canvas) {
     jgui::detail::TestAccess::paint(window, canvas);
+}
+
+// A serial, as a backend would hand one over. Nothing else can make one.
+[[nodiscard]] constexpr jgui::Serial serial(std::uint32_t value) noexcept {
+    return jgui::detail::TestAccess::wire<jgui::Serial>(value);
 }
 
 // A point that many pixels in from a rectangle's corner.

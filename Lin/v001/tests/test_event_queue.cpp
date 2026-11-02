@@ -30,7 +30,7 @@ int main() {
     jgui_test::Checker check;
 
     BackendEventQueue queue;
-    check(queue.push(KeyEvent{}) && queue.push(PointerMove{}) && queue.push(KeyEvent{}), "events are kept");
+    check(queue.push(KeyEvent{Key::Space}) && queue.push(PointerMove{}) && queue.push(KeyEvent{Key::Space}), "events are kept");
     Sink ordered;
     queue.drain(ordered);
     check(ordered.count == 3 && ordered.seen == std::array{6, 3, 6}, "delivered in arrival order");

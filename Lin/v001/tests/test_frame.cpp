@@ -74,13 +74,13 @@ void test_move_and_resize_requests(Checker& check) {
     auto app = make_app();
     check(app.has_value() && app->process_pending().has_value(), "first frame");
     const auto press_with = [&](jgui::Point at, std::uint32_t serial) {
-        jgui_test::backend(*app).inject(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Pressed, jgui::Serial{serial}});
+        jgui_test::backend(*app).inject(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Pressed, jgui_test::serial(serial)});
         check(app->process_pending().has_value(), "press handled");
     };
     press_with(jgui::Point{jgui::Left{300}, jgui::Top{12}}, 101);
-    check(jgui_test::backend(*app).move_serial() == jgui::Serial{101}, "the title strip starts a move with the press's serial");
+    check(jgui_test::backend(*app).move_serial() == jgui_test::serial(101), "the title strip starts a move with the press's serial");
     press_with(jgui::Point{jgui::Left{1}, jgui::Top{240}}, 102);
-    check(jgui_test::backend(*app).resize_serial() == jgui::Serial{102} && jgui_test::backend(*app).resize_edge() == jgui::ResizeEdge::LeftSide, "left edge");
+    check(jgui_test::backend(*app).resize_serial() == jgui_test::serial(102) && jgui_test::backend(*app).resize_edge() == jgui::ResizeEdge::LeftSide, "left edge");
     press_with(jgui::Point{jgui::Left{639}, jgui::Top{240}}, 103);
     check(jgui_test::backend(*app).resize_edge() == jgui::ResizeEdge::RightSide, "right edge");
     press_with(jgui::Point{jgui::Left{320}, jgui::Top{0}}, 104);
@@ -91,7 +91,7 @@ void test_move_and_resize_requests(Checker& check) {
     check(jgui_test::backend(*app).resize_edge() == jgui::ResizeEdge::TopLeft, "top-left corner");
     press_with(jgui::Point{jgui::Left{639}, jgui::Top{479}}, 107);
     check(jgui_test::backend(*app).resize_edge() == jgui::ResizeEdge::BottomRight, "bottom-right corner");
-    check(jgui_test::backend(*app).move_serial() == jgui::Serial{101}, "edges did not start a move");
+    check(jgui_test::backend(*app).move_serial() == jgui_test::serial(101), "edges did not start a move");
 }
 
 // The same rule as the static_asserts, at run time and with ASan watching: an old frame reaches nothing.

@@ -450,7 +450,7 @@ void WaylandImpl::on_pointer_button(wl_pointer*, std::uint32_t serial, std::uint
                                     std::uint32_t state) noexcept {
     const ButtonState mapped =
         state == WL_POINTER_BUTTON_STATE_PRESSED ? ButtonState::Pressed : ButtonState::Released;
-    record(PointerButton{pointer_position, PointerButtonCode{button}, mapped, Serial{serial}});
+    record(PointerButton{pointer_position, WireAccess::make<PointerButtonCode>(button), mapped, WireAccess::make<Serial>(serial)});
 }
 
 void WaylandImpl::on_keymap(wl_keyboard*, std::uint32_t format, std::int32_t raw_fd, std::uint32_t size) noexcept {
@@ -489,7 +489,7 @@ void WaylandImpl::on_key(wl_keyboard*, std::uint32_t, std::uint32_t, std::uint32
     add(XKB_MOD_NAME_CTRL, Modifier::Ctrl);
     add(XKB_MOD_NAME_ALT, Modifier::Alt);
     add(XKB_MOD_NAME_LOGO, Modifier::Super);
-    record(KeyEvent{Keysym{keysym}, modifiers, state == WL_KEYBOARD_KEY_STATE_PRESSED});
+    record(KeyEvent{WireAccess::make<Keysym>(keysym), modifiers, state == WL_KEYBOARD_KEY_STATE_PRESSED});
 }
 
 void WaylandImpl::on_modifiers(wl_keyboard*, std::uint32_t, std::uint32_t depressed, std::uint32_t latched,

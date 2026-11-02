@@ -51,7 +51,7 @@ report "geometry access above the backend line" \
 
 # Only tests may define or use what lets them past the public interface.
 report "test access outside tests" \
-  "$(grep -n 'TestAccess' "${sources[@]}" | grep -v '^tests/' | grep -vE '^include/jCppGUI/v001/(tree|application|geometry|widget)\.hpp:.*(struct TestAccess;|friend struct detail::TestAccess;)')"
+  "$(grep -n 'TestAccess' "${sources[@]}" | grep -v '^tests/' | grep -vE '^include/jCppGUI/v001/(tree|application|geometry|widget|events)\.hpp:.*(struct TestAccess;|friend struct detail::TestAccess;)')"
 
 # std::variant needs a reason on the same or the previous line. There are none today.
 report "std::variant without a comment" "$(grep -n 'std::variant' "${sources[@]}" | grep -v '//')"

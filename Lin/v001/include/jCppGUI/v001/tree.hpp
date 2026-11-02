@@ -299,8 +299,8 @@ class ApplicationCore;
 // What widgets asked of the window system during a dispatch. ApplicationCore carries it out through
 // the backend once the dispatch has returned.
 struct ResizeRequest {
-    Serial serial{};
-    ResizeEdge edge{ResizeEdge::TopSide};
+    Serial serial;
+    ResizeEdge edge;
 };
 
 struct WindowRequests {
