@@ -128,6 +128,14 @@ file is sized with `posix_fallocate`, and a file the compositor still holds is n
 keymap is read with `read_at` into a private copy. The C libraries we link may map things of their own:
 see `SECURITY.md`.
 
+## Hidden implementation types
+
+`WaylandImpl` and `TextEngineImpl` stay out of the public headers, each behind a `std::unique_ptr` of its
+one concrete type with a stateless deleter. They exist so that no libwayland, xkbcommon, FreeType, HarfBuzz
+or fontconfig type appears above the backend line, and so that a program using the toolkit is not recompiled
+when those details change. Nothing is erased: each has exactly one implementation, known at link time. The
+owner approved keeping them. `WaylandImpl` gets revisited with our own Wayland client.
+
 ## OS and version layout
 
 ```
