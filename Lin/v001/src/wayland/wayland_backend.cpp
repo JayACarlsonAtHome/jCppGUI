@@ -191,7 +191,7 @@ struct WaylandImpl {
     void record(const E& event) noexcept {
         try {
             if (!events.push(event)) fail(ErrorCode::SizeLimit, "the display sent more events than the queue limit");
-        } catch (...) {
+        } catch (const std::bad_alloc&) {
             fail(ErrorCode::System, "out of memory while queueing a display event");
         }
     }
@@ -200,7 +200,7 @@ struct WaylandImpl {
         if (failure) return;
         try {
             failure = Error{code, what};
-        } catch (...) {
+        } catch (const std::bad_alloc&) {
             failure = Error{code, {}};
         }
     }
@@ -404,7 +404,7 @@ void WaylandImpl::on_keymap(wl_keyboard*, std::uint32_t format, std::int32_t raw
             return;
         }
         xkb_keymap_object = std::move(*keymap);
-    } catch (...) {
+    } catch (const std::bad_alloc&) {
         fail(ErrorCode::System, "out of memory while loading the keymap");
         return;
     }
