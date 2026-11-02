@@ -1,0 +1,129 @@
+# Architecture
+
+## The type rule
+
+Objects come from templates, each item is its own type, and there is no type erasure. These are
+banned in all our code, including tests and the demo: `std::function` and its relatives, `std::any`,
+`std::shared_ptr`, `dynamic_cast`, `typeid`, `virtual`, abstract base classes, base-class pointers or
+containers of widgets, `void*`, function pointers used to hide a type, and hand-written erasure under
+any name. `std::variant` is a last resort and needs a comment saying why. There are none today.
+
+**The one exception** is `src/wayland/trampoline.hpp`. libwayland hands listeners an untyped pointer
+and requires C function pointers. The helper casts straight back to the exact type registered, and
+the pointer goes no further. The exception ends when our own Wayland client replaces libwayland.
+
+## The constexpr rule
+
+`constexpr` wherever possible, and `consteval` where a value must be known at compile time. Constant
+evaluation rejects undefined behaviour, but only on paths it actually evaluates, so
+`tests/test_constexpr.cpp` runs edge cases through the real code in `static_assert`. That includes
+the whole demo tree, from injected events to rendered pixels.
+
+Three design choices exist to make this possible:
+
+- `ApplicationCore` holds all the event and drawing logic and is `constexpr`. `Application` adds only
+  the real font engine and the UI-thread check.
+- Layout takes any `TextShaper`. `TextEngine` needs C libraries, so the compile-time tests use a small
+  `constexpr` model that makes the same refusals.
+- `Pool` and `Dynamic` take a `Slots` template parameter. It is always `std::deque` in real use, for
+  stable references, but `std::deque` cannot be used in constant evaluation. The tests pass
+  `std::vector` to run the same logic. A vector-backed pool aborts if used at run time.
+
+Non-`constexpr` code is limited to what needs the OS or a C library:
+
+| Code | Why |
+|---|---|
+| `src/wayland/wayland_backend.cpp` | libwayland, sockets, `poll`, `memfd_create`, `mmap` |
+| `load_keymap`, `UniqueFd`, `Mapped` in `src/wayland/untrusted` | `fstat`, `mmap`, `close`, xkbcommon. The checks on values are `constexpr` |
+| `TextEngine` in `src/text/text.cpp` | fontconfig, HarfBuzz, FreeType. Validation, rounding and glyph copying are `constexpr` |
+| `Application` | `std::this_thread::get_id`, and it owns a `TextEngine` |
+
+## Layers
+
+```
+demo, or your program
+  Application                  the real font engine and the thread check
+  ApplicationCore              event routing, frame, damage and drawing
+  Window, MenuBar, Button,     the typed tree, messages and pools
+  Label, Dynamic, Pool
+  Canvas, PixelBuffer, Geometry
+---------------- Backend concept: nothing above this line includes a display header ----------------
+  HeadlessBackend              tests inject events and read pixels back
+  WaylandBackend               src/wayland/ only: libwayland and xkbcommon
+```
+
+The backend is a template parameter chosen at compile time. There are exactly two models, and a
+`static_assert` checks each against the concept. `src/text/` is the only place that uses FreeType,
+HarfBuzz and fontconfig.
+
+## The typed tree
+
+A window is one composite type built from `std::tuple`s, so the compiler knows its whole shape.
+
+- `u.get<Tag>()` is resolved at compile time. An unknown tag and a duplicate tag are compile errors.
+- Paint, hit testing and event delivery are fold expressions over the tuple. There is no run-time
+  widget list and no dynamic dispatch.
+- `Widget` is a concept and not a base class. `handle` takes each event as its own type, and a widget
+  with no interest in some events gives one catch-all template that answers false.
+
+**Callbacks are generic lambdas with an explicit `-> void`.** This is required, not style. The tree's
+type contains the callback's type, so the body may only be instantiated after the tree is complete. A
+deduced return type would force it too early. For the same reason, do not constrain callbacks with
+`std::invocable` on the tree type. The `Widget` concept is checked against an empty probe type, and
+declared return types keep that from instantiating any handler body.
+
+## Typed handles and deferred destruction
+
+Items that come and go live in `Pool<T>`, one pool per concrete type, inside a `Dynamic<Tag, T>` tree
+node. Several kinds of item use several nodes.
+
+- `Handle<T>` can only be made by its pool, has no default value, and cannot be passed to another
+  type's pool.
+- A stale or out-of-range handle finds nothing. Each slot has a generation, and a slot at the maximum
+  generation is retired and never reused.
+- **Destruction is deferred.** A callback may destroy its own widget. The slot is marked at once, so
+  lookups fail immediately, and it is freed when the outermost dispatch ends. A running callback's
+  storage therefore stays valid.
+- Pointer capture and focus in a `Dynamic` are typed handles, so they go inert when the item dies.
+
+## Messages
+
+A message is a name, the tags of the widgets that accept it, and any number of ordinary typed values:
+
+```cpp
+using SetHelp = jgui::Message<"set_help", jgui::To<HelpLine>, std::string>;
+auto [length] = ui.send<SetHelp>(std::string{"Help text"});
+```
+
+- Each receiver has an ordinary overload per message: `int on(SetHelp, const std::string& text)`.
+- There is one typed response per receiver, in receiver order. A `void` handler gives `jgui::NoReply`.
+- A receiver not in the tree, a receiver with no handler, a wrong value type, a missing value and an
+  empty `To<>` are all compile errors. Value types must match exactly, with no implicit conversion.
+- **Values are passed by `const&` and are valid only during the handler. A handler that keeps a value
+  must copy it.**
+- Delivery is immediate. There is no run-time queue, subscription list or message ID.
+
+## Backend events
+
+A Wayland event arrives inside a C callback. The toolkit's templates cannot be reached from there
+without Wayland headers above the line, and user code must not run under libwayland. So handlers
+only record the event in `EventQueue`, a tuple of per-type queues with arrival stamps, and it is
+delivered to `sink.on(...)` in order after dispatch returns. This is input buffering at the system
+boundary and has nothing to do with messages, which never pass through it.
+
+## OS and version layout
+
+```
+Lin/v001/   C++23, self-contained: bsir.sh, CMakeLists.txt, CMakePresets.json, Setup/,
+            include/jCppGUI/v001/, src/, tests/, demo/
+```
+
+The namespace is `jgui::inline v001`, so `jgui::Button` works for consumers. Toolkit code is header
+templates, and the parts that need C libraries stay in `src/` to limit compile time. All paths are
+found relative to the script or to `CMakeLists.txt`.
+
+## The window frame
+
+GNOME does not draw title bars for Wayland clients, so the toolkit draws a minimal frame: a title
+strip with no text, a close box, and resize edges and corners. It also draws its own pointer arrow,
+because the protocol leaves the pointer's look undefined until a client sets one.

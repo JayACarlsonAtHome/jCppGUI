@@ -122,6 +122,11 @@ Both g++ and clang++ must build and pass. Build one compiler at a time; `-j` wit
 - No raw `new` or `delete`, and no owning raw pointers. Wrap every Wayland and xkb object in an
   RAII type.
 - No C-style casts. `reinterpret_cast` only inside `src/wayland/`, each with a one-line reason.
+- **`constexpr` wherever possible, `consteval` where a value must be known at compile time** (the
+  owner's rule). Constant evaluation rejects undefined behaviour, but only on the paths actually
+  evaluated at compile time. So geometry, checked arithmetic, UTF-8 validation, limits, pool logic
+  and similar code also get `static_assert` tests, including the edge cases. Non-`constexpr` code
+  should be limited to what really needs the OS or a C library.
 - No mutable global or static state. Two independent `Application` objects must be possible.
 - Fallible operations return `std::expected<T, Error>`. Exceptions must never cross a C callback:
   every Wayland listener trampoline is `noexcept`, and it records any failure for the event loop to

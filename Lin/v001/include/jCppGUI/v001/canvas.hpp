@@ -1,0 +1,127 @@
+// File: include/jCppGUI/v001/canvas.hpp
+// Purpose: PixelBuffer, a validated view of ARGB8888 pixels, and Canvas, whose drawing calls are
+//          clipped so that no input can write outside the buffer. Physical pixels, scale 1.
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <expected>
+#include <span>
+
+#include "error.hpp"
+#include "geometry.hpp"
+#include "text.hpp"
+
+namespace jgui::inline v001 {
+
+inline constexpr std::int32_t max_buffer_side = 16384;
+inline constexpr std::int64_t max_buffer_bytes = std::int64_t{1} << 30U;
+
+struct Color {
+    std::uint32_t argb{};
+    friend constexpr bool operator==(const Color&, const Color&) = default;
+};
+
+class PixelBuffer {
+public:
+    // The byte count for a size, after checking both limits. Every size from outside goes through
+    // here before it is used in any other arithmetic.
+    [[nodiscard]] static constexpr std::expected<std::size_t, Error> byte_size(Size size) {
+        if (size.width() > max_buffer_side || size.height() > max_buffer_side)
+            return make_error(ErrorCode::SizeLimit, "buffer side is over the limit of 16384");
+        const std::int64_t bytes = std::int64_t{size.width()} * std::int64_t{size.height()} * 4;
+        if (bytes > max_buffer_bytes) return make_error(ErrorCode::SizeLimit, "buffer is over the limit of 1 GiB");
+        return static_cast<std::size_t>(bytes);
+    }
+
+    // stride_bytes is the distance between rows: a whole number of pixels, at least one row wide.
+    [[nodiscard]] static constexpr std::expected<PixelBuffer, Error> create(std::span<std::uint32_t> pixels, Size size,
+                                                                  std::int32_t stride_bytes) {
+        if (auto bytes = byte_size(size); !bytes) return std::unexpected(std::move(bytes.error()));
+        if (stride_bytes % 4 != 0 || stride_bytes / 4 < size.width())
+            return make_error(ErrorCode::SizeLimit, "buffer stride does not fit the width");
+        const auto stride_pixels = static_cast<std::size_t>(stride_bytes / 4);
+        const auto rows = static_cast<std::size_t>(size.height());
+        if (rows != 0 && stride_pixels > (std::size_t{1} << 40U) / rows)
+            return make_error(ErrorCode::SizeLimit, "buffer stride is over the limit");
+        if (pixels.size() < stride_pixels * rows)
+            return make_error(ErrorCode::SizeLimit, "buffer storage is smaller than its size");
+        return PixelBuffer{pixels, size, stride_bytes};
+    }
+
+    [[nodiscard]] constexpr Size size() const noexcept { return size_; }
+    [[nodiscard]] constexpr std::int32_t stride_bytes() const noexcept { return stride_bytes_; }
+    [[nodiscard]] constexpr std::span<std::uint32_t> pixels() const noexcept { return pixels_; }
+
+    // One pixel, at a position the caller has clipped to size().
+    [[nodiscard]] constexpr std::uint32_t& at(std::int32_t x, std::int32_t y) const {
+        const auto row = static_cast<std::size_t>(y) * static_cast<std::size_t>(stride_bytes_ / 4);
+        return pixels_[row + static_cast<std::size_t>(x)];
+    }
+
+private:
+    constexpr PixelBuffer(std::span<std::uint32_t> pixels, Size size, std::int32_t stride_bytes) noexcept
+        : pixels_{pixels}, size_{size}, stride_bytes_{stride_bytes} {}
+
+    std::span<std::uint32_t> pixels_;
+    Size size_;
+    std::int32_t stride_bytes_;
+};
+
+class Canvas {
+public:
+    constexpr explicit Canvas(PixelBuffer buffer) noexcept : buffer_{buffer}, clip_{Point{}, buffer.size()} {}
+
+    // A canvas on the same pixels with a clip that can only be narrower than this one's.
+    [[nodiscard]] constexpr Canvas clipped(const Rect& area) const noexcept {
+        Canvas narrower{*this};
+        narrower.clip_ = clip_.intersect(area);
+        return narrower;
+    }
+
+    constexpr void fill_rect(const Rect& area, Color color) const {
+        const Rect visible = clip_.intersect(area);
+        if (visible.empty()) return;
+        for (std::int32_t y = visible.y(); y < visible.bottom(); ++y)
+            for (std::int32_t x = visible.x(); x < visible.right(); ++x)
+                buffer_.at(x, y) = color.argb;
+    }
+
+    // A one-pixel outline just inside the rectangle.
+    constexpr void stroke_rect(const Rect& area, Color color) const {
+        if (area.empty()) return;
+        fill_rect(Rect{area.x(), area.y(), area.width(), 1}, color);
+        fill_rect(Rect{area.x(), sat_sub(area.bottom(), 1), area.width(), 1}, color);
+        fill_rect(Rect{area.x(), area.y(), 1, area.height()}, color);
+        fill_rect(Rect{sat_sub(area.right(), 1), area.y(), 1, area.height()}, color);
+    }
+
+    // Blends a shaped line of text with its top-left corner at the given point.
+    constexpr void draw_text(Point at, const TextRun& run, Color color) const {
+        const Rect visible = clip_.intersect(Rect{at, run.size()});
+        if (visible.empty()) return;
+        for (std::int32_t y = visible.y(); y < visible.bottom(); ++y) {
+            for (std::int32_t x = visible.x(); x < visible.right(); ++x) {
+                const std::uint8_t coverage = run.coverage_at(sat_sub(x, at.x), sat_sub(y, at.y));
+                if (coverage != 0) buffer_.at(x, y) = blend(buffer_.at(x, y), color.argb, coverage);
+            }
+        }
+    }
+
+private:
+    [[nodiscard]] static constexpr std::uint32_t blend(std::uint32_t under, std::uint32_t over,
+                                                       std::uint32_t coverage) noexcept {
+        std::uint32_t mixed = 0xFF000000U;
+        for (const unsigned shift : {0U, 8U, 16U}) {
+            const std::uint32_t a = (under >> shift) & 0xFFU;
+            const std::uint32_t b = (over >> shift) & 0xFFU;
+            mixed |= ((a * (255U - coverage) + b * coverage + 127U) / 255U) << shift;
+        }
+        return mixed;
+    }
+
+    PixelBuffer buffer_;
+    Rect clip_;
+};
+
+}  // namespace jgui::inline v001
