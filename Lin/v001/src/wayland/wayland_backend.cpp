@@ -228,7 +228,7 @@ struct WaylandImpl {
     std::unique_ptr<ShmBuffer> cursor_buffer;
 
     std::vector<std::unique_ptr<ShmBuffer>> buffers;
-    ShmBuffer* current{};
+    FrameLedger ledger;
     std::vector<std::uint32_t> frame_pixels;  // the picture being drawn, one for all the buffers
 
     XkbContext xkb_context_object;
@@ -573,9 +573,9 @@ bool WaylandBackend::can_present() const noexcept {
     return std::ranges::any_of(impl_->buffers, [](const auto& buffer) { return !buffer->busy(); });
 }
 
-std::expected<PixelBuffer, Error> WaylandBackend::acquire_frame(Size size) {
-    // Cleared first: what follows may free the buffer an earlier acquire chose, and may then fail.
-    impl_->current = nullptr;
+std::expected<Frame<WaylandBackend>, Error> WaylandBackend::acquire_frame(Size size) {
+    // First: what follows may free the buffer an earlier frame chose, and may then fail.
+    const std::uint64_t generation = impl_->ledger.begin();
     auto bytes = PixelBuffer::byte_size(size);
     if (!bytes) return std::unexpected(std::move(bytes.error()));
     auto& buffers = impl_->buffers;
@@ -583,16 +583,15 @@ std::expected<PixelBuffer, Error> WaylandBackend::acquire_frame(Size size) {
     std::erase_if(buffers, [&](const std::unique_ptr<ShmBuffer>& buffer) {
         return !buffer->busy() && buffer->size() != size;
     });
-    ShmBuffer* chosen = nullptr;
-    for (const auto& buffer : buffers) {
-        if (!buffer->busy() && buffer->size() == size) chosen = buffer.get();
+    std::size_t chosen = buffers.size();
+    for (std::size_t i = 0; i < buffers.size(); ++i) {
+        if (!buffers[i]->busy() && buffers[i]->size() == size) chosen = i;
     }
-    if (chosen == nullptr) {
+    if (chosen == buffers.size()) {
         if (buffers.size() >= max_frame_buffers)
             return make_error(ErrorCode::System, "every frame buffer is held by the compositor");
         auto created = ShmBuffer::create(impl_->shm.get(), size);
         if (!created) return std::unexpected(std::move(created.error()));
-        chosen = created->get();
         buffers.push_back(std::move(*created));
     }
     try {
@@ -600,22 +599,27 @@ std::expected<PixelBuffer, Error> WaylandBackend::acquire_frame(Size size) {
     } catch (const std::bad_alloc&) {
         return make_error(ErrorCode::System, "out of memory for the frame's pixels");
     }
-    impl_->current = chosen;
-    return PixelBuffer::create(impl_->frame_pixels, size, sat_mul(size.width(), 4));
+    return Frame<WaylandBackend>{generation, chosen, size};
 }
 
-std::expected<void, Error> WaylandBackend::present(Rect damage) {
-    ShmBuffer* buffer = impl_->current;
-    if (buffer == nullptr) return make_error(ErrorCode::System, "present without an acquired frame");
-    impl_->current = nullptr;
-    if (auto written = buffer->write(impl_->frame_pixels); !written) return written;
+std::expected<PixelBuffer, Error> WaylandBackend::frame_pixels(const Frame<WaylandBackend>& frame) {
+    if (!impl_->ledger.current(frame.generation_)) return make_error(ErrorCode::StaleFrame, "this frame is no longer the current one");
+    return PixelBuffer::create(impl_->frame_pixels, frame.size_, sat_mul(frame.size_.width(), 4));
+}
+
+std::expected<void, Error> WaylandBackend::present(Frame<WaylandBackend> frame, Rect damage) {
+    if (!impl_->ledger.current(frame.generation_)) return make_error(ErrorCode::StaleFrame, "this frame is no longer the current one");
+    impl_->ledger.finish();
+    // A current frame's buffer is still in the list, because only a new acquire removes any.
+    ShmBuffer& buffer = *impl_->buffers.at(frame.buffer_);
+    if (auto written = buffer.write(impl_->frame_pixels); !written) return written;
     wl_surface* surface = impl_->surface.get();
-    if (impl_->geometry != buffer->size()) {
-        impl_->geometry = buffer->size();
+    if (impl_->geometry != buffer.size()) {
+        impl_->geometry = buffer.size();
         xdg_surface_set_window_geometry(impl_->xdg.get(), 0, 0, impl_->geometry.width(), impl_->geometry.height());
     }
-    buffer->mark_busy();
-    wl_surface_attach(surface, buffer->object(), 0, 0);
+    buffer.mark_busy();
+    wl_surface_attach(surface, buffer.object(), 0, 0);
     wl_surface_damage_buffer(surface, damage.x(), damage.y(), damage.width(), damage.height());
     wl_surface_commit(surface);
     return {};

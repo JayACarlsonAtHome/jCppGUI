@@ -11,6 +11,7 @@
 #include <limits>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "canvas.hpp"
@@ -94,6 +95,50 @@ private:
 using BackendEventQueue = EventQueue<CloseEvent, ResizeEvent, PointerMove, PointerButton, PointerLeave, KeyEvent>;
 
 namespace detail {
+// Which frame is the current one. Both backends use this one rule: a new acquire invalidates every older
+// frame, even if it then fails, and presenting ends the current one. Generation 0 is never current.
+class FrameLedger {
+public:
+    [[nodiscard]] constexpr std::uint64_t begin() noexcept { return ++latest_; }
+    [[nodiscard]] constexpr bool current(std::uint64_t generation) const noexcept {
+        return generation != 0 && generation == latest_;
+    }
+    constexpr void finish() noexcept { ++latest_; }
+
+private:
+    std::uint64_t latest_{};
+};
+}  // namespace detail
+
+// One frame being drawn, which only its own backend type can make or read. It holds no pointer, only which
+// buffer and which generation it is, so an old one can do nothing but be refused. It cannot be copied, and
+// presenting takes it by value, so it cannot be presented twice. A frame moved from has generation 0.
+template <class Owner>
+class Frame {
+public:
+    Frame(const Frame&) = delete;
+    Frame& operator=(const Frame&) = delete;
+    constexpr Frame(Frame&& other) noexcept
+        : generation_{std::exchange(other.generation_, 0)}, buffer_{other.buffer_}, size_{other.size_} {}
+    constexpr Frame& operator=(Frame&& other) noexcept {
+        generation_ = std::exchange(other.generation_, 0);
+        buffer_ = other.buffer_;
+        size_ = other.size_;
+        return *this;
+    }
+    constexpr ~Frame() = default;
+
+private:
+    friend Owner;
+    constexpr Frame(std::uint64_t generation, std::size_t buffer, Size size) noexcept
+        : generation_{generation}, buffer_{buffer}, size_{size} {}
+
+    std::uint64_t generation_;
+    std::size_t buffer_;
+    Size size_;
+};
+
+namespace detail {
 // Stands in for a real sink when a backend is checked against the concept.
 struct ProbeSink {
     constexpr void on(const CloseEvent&) {}
@@ -106,16 +151,18 @@ struct ProbeSink {
 }  // namespace detail
 
 // process_pending delivers what is available without sleeping. wait sleeps until something arrives
-// and delivers it. A frame is acquire_frame, drawing, then present. can_present is false while every
-// buffer is held by the display, and sync waits until the display has processed all requests so far.
+// and delivers it. A frame is acquire_frame, frame_pixels and drawing, then present. frame_pixels and
+// present refuse a frame that is not the current one. can_present is false while every buffer is held by
+// the display, and sync waits until the display has processed all requests so far.
 template <class B>
 concept Backend = requires(B& backend, const B& constant, detail::ProbeSink& sink, Size size, Rect damage,
-                           Serial serial, ResizeEdge edge) {
+                           Serial serial, ResizeEdge edge, const Frame<B>& frame, Frame<B>&& taken) {
     { backend.process_pending(sink) } -> std::same_as<std::expected<void, Error>>;
     { backend.wait(sink) } -> std::same_as<std::expected<void, Error>>;
     { constant.can_present() } -> std::same_as<bool>;
-    { backend.acquire_frame(size) } -> std::same_as<std::expected<PixelBuffer, Error>>;
-    { backend.present(damage) } -> std::same_as<std::expected<void, Error>>;
+    { backend.acquire_frame(size) } -> std::same_as<std::expected<Frame<B>, Error>>;
+    { backend.frame_pixels(frame) } -> std::same_as<std::expected<PixelBuffer, Error>>;
+    { backend.present(std::move(taken), damage) } -> std::same_as<std::expected<void, Error>>;
     { backend.sync() } -> std::same_as<std::expected<void, Error>>;
     { backend.begin_move(serial) } -> std::same_as<void>;
     { backend.begin_resize(serial, edge) } -> std::same_as<void>;

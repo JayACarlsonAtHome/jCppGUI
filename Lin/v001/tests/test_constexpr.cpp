@@ -344,6 +344,69 @@ static_assert((Modifier::Shift | Modifier::Ctrl).holds(Modifier::Ctrl) && !(Modi
 static_assert((Modifier::Shift | Modifier::Ctrl) == (Modifier::Ctrl | Modifier::Shift) && ModifierMask{}.holds(ModifierMask{}));
 static_assert(!std::constructible_from<Rect, int, int, int, int> && std::constructible_from<Rect, Point, Size>);
 
+// --- A frame being drawn. The rule is one FrameLedger, which the Wayland backend shares. ---
+constexpr bool the_current_frame_works() {
+    HeadlessBackend backend{Size{2, 2}};
+    auto frame = backend.acquire_frame(Size{2, 2});
+    if (!frame.has_value() || !backend.frame_pixels(*frame).has_value()) return false;
+    if (!backend.present(std::move(*frame), Rect{}).has_value()) return false;
+    return backend.presented() == 1;
+}
+static_assert(the_current_frame_works());
+
+constexpr bool a_newer_acquire_invalidates_a_frame() {
+    HeadlessBackend backend{Size{2, 2}};
+    auto older = backend.acquire_frame(Size{2, 2});
+    auto newer = backend.acquire_frame(Size{3, 3});
+    if (!older.has_value() || !newer.has_value()) return false;
+    if (backend.frame_pixels(*older).error().code != ErrorCode::StaleFrame) return false;
+    if (backend.present(std::move(*older), Rect{}).error().code != ErrorCode::StaleFrame) return false;
+    if (backend.presented() != 0) return false;
+    if (!backend.frame_pixels(*newer).has_value()) return false;
+    return backend.present(std::move(*newer), Rect{}).has_value() && backend.presented() == 1;
+}
+static_assert(a_newer_acquire_invalidates_a_frame());
+
+// The old dangling-buffer path: acquire one size, then fail to acquire another, then use the first.
+constexpr bool a_failed_acquire_still_invalidates() {
+    HeadlessBackend backend{Size{2, 2}};
+    auto older = backend.acquire_frame(Size{2, 2});
+    if (!older.has_value() || backend.acquire_frame(Size{int_max, int_max}).has_value()) return false;
+    if (backend.frame_pixels(*older).error().code != ErrorCode::StaleFrame) return false;
+    return backend.present(std::move(*older), Rect{}).error().code == ErrorCode::StaleFrame && backend.presented() == 0;
+}
+static_assert(a_failed_acquire_still_invalidates());
+
+constexpr bool a_frame_moved_from_is_refused() {
+    HeadlessBackend backend{Size{2, 2}};
+    auto frame = backend.acquire_frame(Size{2, 2});
+    if (!frame.has_value()) return false;
+    Frame<HeadlessBackend> taken = std::move(*frame);
+    if (backend.frame_pixels(*frame).error().code != ErrorCode::StaleFrame) return false;
+    if (!backend.frame_pixels(taken).has_value()) return false;
+    Frame<HeadlessBackend> again{std::move(taken)};
+    if (backend.frame_pixels(taken).has_value()) return false;
+    taken = std::move(again);
+    if (backend.frame_pixels(again).has_value() || !backend.frame_pixels(taken).has_value()) return false;
+    return backend.present(std::move(taken), Rect{}).has_value() && backend.presented() == 1;
+}
+static_assert(a_frame_moved_from_is_refused());
+
+constexpr bool a_presented_frame_ends() {
+    HeadlessBackend backend{Size{2, 2}};
+    auto frame = backend.acquire_frame(Size{2, 2});
+    if (!frame.has_value()) return false;
+    auto second = backend.acquire_frame(Size{2, 2});
+    if (!second.has_value() || !backend.present(std::move(*second), Rect{}).has_value()) return false;
+    return backend.frame_pixels(*second).error().code == ErrorCode::StaleFrame &&
+           backend.present(std::move(*frame), Rect{}).error().code == ErrorCode::StaleFrame;
+}
+static_assert(a_presented_frame_ends());
+
+static_assert(!std::copy_constructible<Frame<HeadlessBackend>> && !std::is_copy_assignable_v<Frame<HeadlessBackend>>);
+static_assert(std::move_constructible<Frame<HeadlessBackend>>);
+static_assert(!std::constructible_from<Frame<HeadlessBackend>, Frame<HeadlessBackend>&>);
+
 // --- Frame ---
 using Frame = WindowFrame<DefaultFrameMetrics>;
 constexpr Size frame_window{200, 100};

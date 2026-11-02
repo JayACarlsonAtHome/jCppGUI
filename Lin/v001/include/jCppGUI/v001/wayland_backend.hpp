@@ -44,8 +44,9 @@ public:
     }
 
     [[nodiscard]] bool can_present() const noexcept;
-    std::expected<PixelBuffer, Error> acquire_frame(Size size);
-    std::expected<void, Error> present(Rect damage);
+    std::expected<Frame<WaylandBackend>, Error> acquire_frame(Size size);
+    std::expected<PixelBuffer, Error> frame_pixels(const Frame<WaylandBackend>& frame);
+    std::expected<void, Error> present(Frame<WaylandBackend> frame, Rect damage);
     std::expected<void, Error> sync();
     void begin_move(Serial serial) noexcept;
     void begin_resize(Serial serial, ResizeEdge edge) noexcept;

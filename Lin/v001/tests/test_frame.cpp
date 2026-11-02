@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <limits>
+#include <utility>
 
 #include "app_helpers.hpp"
 #include "check.hpp"
@@ -93,6 +94,21 @@ void test_move_and_resize_requests(Checker& check) {
     check(app->backend().move_serial() == jgui::Serial{101}, "edges did not start a move");
 }
 
+// The same rule as the static_asserts, at run time and with ASan watching: an old frame reaches nothing.
+void test_stale_frames(Checker& check) {
+    jgui::HeadlessBackend backend{jgui::Size{4, 4}};
+    auto older = backend.acquire_frame(jgui::Size{4, 4});
+    check(older.has_value() && backend.frame_pixels(*older).has_value(), "the current frame has pixels");
+    check(!backend.acquire_frame(jgui::Size{1 << 20, 1 << 20}).has_value(), "an oversized acquire fails");
+    check(!backend.frame_pixels(*older).has_value(), "and has still ended the older frame");
+    const auto presented = backend.present(std::move(*older), jgui::Rect{});
+    check(!presented.has_value() && presented.error().code == jgui::ErrorCode::StaleFrame, "which present refuses");
+    check(backend.presented() == 0, "so nothing was shown");
+    auto newest = backend.acquire_frame(jgui::Size{2, 2});
+    check(newest.has_value() && backend.present(std::move(*newest), jgui::Rect{}).has_value(), "a new frame still works");
+    check(backend.presented() == 1, "and was shown");
+}
+
 void test_content_stays_inside(Checker& check) {
     auto app = jgui::make_application(jgui::HeadlessBackend{window_size}, jgui::window(jgui::window_frame(Overflowing{})));
     check(app.has_value() && app->process_pending().has_value(), "first frame");
@@ -114,6 +130,7 @@ int main() {
     test_close_box(check);
     test_absurd_resize(check);
     test_move_and_resize_requests(check);
+    test_stale_frames(check);
     test_content_stays_inside(check);
     return check.finish();
 }

@@ -40,15 +40,23 @@ public:
 
     [[nodiscard]] constexpr bool can_present() const noexcept { return true; }
 
-    constexpr std::expected<PixelBuffer, Error> acquire_frame(Size size) {
+    constexpr std::expected<Frame<HeadlessBackend>, Error> acquire_frame(Size size) {
+        const std::uint64_t generation = ledger_.begin();
         auto bytes = PixelBuffer::byte_size(size);
         if (!bytes) return std::unexpected(std::move(bytes.error()));
         pixels_.resize(*bytes / sizeof(std::uint32_t));
         size_ = size;
-        return PixelBuffer::create(pixels_, size, sat_mul(size.width(), 4));
+        return Frame<HeadlessBackend>{generation, 0, size};
     }
 
-    constexpr std::expected<void, Error> present(Rect) {
+    constexpr std::expected<PixelBuffer, Error> frame_pixels(const Frame<HeadlessBackend>& frame) {
+        if (!ledger_.current(frame.generation_)) return make_error(ErrorCode::StaleFrame, "this frame is no longer the current one");
+        return PixelBuffer::create(pixels_, frame.size_, sat_mul(frame.size_.width(), 4));
+    }
+
+    constexpr std::expected<void, Error> present(Frame<HeadlessBackend> frame, Rect) {
+        if (!ledger_.current(frame.generation_)) return make_error(ErrorCode::StaleFrame, "this frame is no longer the current one");
+        ledger_.finish();
         ++presented_;
         return {};
     }
@@ -74,6 +82,7 @@ public:
 
 private:
     BackendEventQueue events_;
+    detail::FrameLedger ledger_;
     std::vector<std::uint32_t> pixels_;
     Size size_{};
     std::size_t presented_{};

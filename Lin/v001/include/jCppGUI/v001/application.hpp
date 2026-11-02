@@ -127,12 +127,14 @@ private:
     [[nodiscard]] constexpr std::expected<void, Error> draw(const Shaper& text) {
         const Rect whole{Point{}, root_.size()};
         if (auto laid_out = root_.layout(whole, text); !laid_out) return std::unexpected(std::move(laid_out.error()));
-        auto buffer = backend_.acquire_frame(root_.size());
-        if (!buffer) return std::unexpected(std::move(buffer.error()));
-        Canvas canvas{*buffer};
+        auto frame = backend_.acquire_frame(root_.size());
+        if (!frame) return std::unexpected(std::move(frame.error()));
+        auto pixels = backend_.frame_pixels(*frame);
+        if (!pixels) return std::unexpected(std::move(pixels.error()));
+        Canvas canvas{*pixels};
         canvas.fill_rect(whole, theme::background);
         root_.paint(canvas);
-        if (auto presented = backend_.present(whole); !presented) return presented;
+        if (auto presented = backend_.present(std::move(*frame), whole); !presented) return presented;
         root_.clear_damage();
         damaged_ = false;
         ++frames_;

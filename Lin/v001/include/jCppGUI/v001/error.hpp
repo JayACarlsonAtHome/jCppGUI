@@ -23,6 +23,7 @@ enum class ErrorCode {
     Keymap,         // a keymap was refused
     PoolExhausted,  // a pool has no slot left to give
     WouldBlock,     // a headless wait with nothing queued, which would never wake
+    StaleFrame,     // a frame that a newer acquire or a present has ended
 };
 
 struct Error {

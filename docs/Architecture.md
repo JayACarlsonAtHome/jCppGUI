@@ -138,6 +138,14 @@ file is sized with `posix_fallocate`, and a file the compositor still holds is n
 keymap is read with `read_at` into a private copy. The C libraries we link may map things of their own:
 see `SECURITY.md`.
 
+## Frames
+
+`acquire_frame` returns a move-only `Frame<Backend>`, and `present` takes it by value, so a frame cannot be
+presented twice. A frame holds no pointer: only its generation, its buffer's index and its size. A new
+acquire invalidates every older frame even if it then fails, and `frame_pixels` and `present` refuse anything
+but the current one with `ErrorCode::StaleFrame`. A frame moved from has generation 0, which is never current.
+Both backends use the same `detail::FrameLedger`, so the headless tests run the Wayland backend's rule.
+
 ## Hidden implementation types
 
 `WaylandImpl` and `TextEngineImpl` stay out of the public headers, each behind a `std::unique_ptr` of its

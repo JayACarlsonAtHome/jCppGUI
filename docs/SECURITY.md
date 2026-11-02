@@ -107,7 +107,9 @@ errors. It covers only the paths those tests evaluate.
 
 - A hostile compositor can make us allocate up to about 5 GiB, through maximum-size buffers: four buffer
   files and the frame's own pixels, at up to 1 GiB each.
-- `PixelBuffer` is a non-owning view, and the next `acquire_frame` invalidates it.
+- `PixelBuffer` and `Canvas` are non-owning views, and the next `acquire_frame` invalidates them. A `Frame` is
+  checked every time its pixels are asked for, but a view asked for earlier can still be kept and used by
+  mistake. `ApplicationCore` does not keep one, and no widget is given a way to reach a frame.
 
 ## Not yet done
 
