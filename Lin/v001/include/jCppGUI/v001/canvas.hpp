@@ -26,19 +26,19 @@ public:
     // The byte count for a size, after checking its limit. Every size from outside goes through
     // here before it is used in any other arithmetic.
     [[nodiscard]] static constexpr std::expected<std::size_t, Error> byte_size(Size size) {
-        if (size.width() > max_buffer_side || size.height() > max_buffer_side)
+        if (size.width().value_ > max_buffer_side || size.height().value_ > max_buffer_side)
             return make_error(ErrorCode::SizeLimit, "buffer side is over the limit of 8192");
-        return static_cast<std::size_t>(size.width()) * static_cast<std::size_t>(size.height()) * 4U;
+        return static_cast<std::size_t>(size.width().value_) * static_cast<std::size_t>(size.height().value_) * 4U;
     }
 
     // stride_bytes is the distance between rows: a whole number of pixels, at least one row wide.
     [[nodiscard]] static constexpr std::expected<PixelBuffer, Error> create(std::span<std::uint32_t> pixels, Size size,
                                                                   std::int32_t stride_bytes) {
         if (auto bytes = byte_size(size); !bytes) return std::unexpected(std::move(bytes.error()));
-        if (stride_bytes % 4 != 0 || stride_bytes / 4 < size.width())
+        if (stride_bytes % 4 != 0 || stride_bytes / 4 < size.width().value_)
             return make_error(ErrorCode::SizeLimit, "buffer stride does not fit the width");
         const auto stride_pixels = static_cast<std::size_t>(stride_bytes / 4);
-        const auto rows = static_cast<std::size_t>(size.height());
+        const auto rows = static_cast<std::size_t>(size.height().value_);
         if (rows != 0 && stride_pixels > (std::size_t{1} << 40U) / rows)
             return make_error(ErrorCode::SizeLimit, "buffer stride is over the limit");
         if (pixels.size() < stride_pixels * rows)
@@ -46,9 +46,20 @@ public:
         return PixelBuffer{pixels, size, stride_bytes};
     }
 
+    // The distance between rows when rows follow each other with no gap.
+    [[nodiscard]] static constexpr std::int32_t tight_stride(Size size) noexcept {
+        return saturate_to<std::int32_t>(std::int64_t{size.width().value_} * 4);
+    }
+
+    // Where a point is, in pixels from the start, when rows follow each other with no gap.
+    [[nodiscard]] static constexpr std::size_t tight_index(Point at, Size size) noexcept {
+        return static_cast<std::size_t>(at.top().value_) * static_cast<std::size_t>(size.width().value_) + static_cast<std::size_t>(at.left().value_);
+    }
+
     [[nodiscard]] constexpr Size size() const noexcept { return size_; }
-    [[nodiscard]] constexpr std::int32_t stride_bytes() const noexcept { return stride_bytes_; }
-    [[nodiscard]] constexpr std::span<std::uint32_t> pixels() const noexcept { return pixels_; }
+
+private:
+    friend class Canvas;
 
     // One pixel, at a position the caller has clipped to size().
     [[nodiscard]] constexpr std::uint32_t& at(std::int32_t x, std::int32_t y) const {
@@ -56,7 +67,6 @@ public:
         return pixels_[row + static_cast<std::size_t>(x)];
     }
 
-private:
     constexpr PixelBuffer(std::span<std::uint32_t> pixels, Size size, std::int32_t stride_bytes) noexcept
         : pixels_{pixels}, size_{size}, stride_bytes_{stride_bytes} {}
 
@@ -79,27 +89,29 @@ public:
     constexpr void fill_rect(const Rect& area, Color color) const {
         const Rect visible = clip_.intersect(area);
         if (visible.empty()) return;
-        for (std::int32_t y = visible.y(); y < visible.bottom(); ++y)
-            for (std::int32_t x = visible.x(); x < visible.right(); ++x)
+        for (std::int32_t y = visible.top().value_; y < visible.bottom().value_; ++y)
+            for (std::int32_t x = visible.left().value_; x < visible.right().value_; ++x)
                 buffer_.at(x, y) = color.argb;
     }
 
     // A one-pixel outline just inside the rectangle.
     constexpr void stroke_rect(const Rect& area, Color color) const {
         if (area.empty()) return;
-        fill_rect(Rect{Point{area.x(), area.y()}, Size{area.width(), 1}}, color);
-        fill_rect(Rect{Point{area.x(), sat_sub(area.bottom(), 1)}, Size{area.width(), 1}}, color);
-        fill_rect(Rect{Point{area.x(), area.y()}, Size{1, area.height()}}, color);
-        fill_rect(Rect{Point{sat_sub(area.right(), 1), area.y()}, Size{1, area.height()}}, color);
+        constexpr Width one_across{1};
+        constexpr Height one_down{1};
+        fill_rect(Rect{area.origin(), Size{area.width(), one_down}}, color);
+        fill_rect(Rect{Point{area.left(), area.bottom() - one_down}, Size{area.width(), one_down}}, color);
+        fill_rect(Rect{area.origin(), Size{one_across, area.height()}}, color);
+        fill_rect(Rect{Point{area.right() - one_across, area.top()}, Size{one_across, area.height()}}, color);
     }
 
     // Blends a shaped line of text with its top-left corner at the given point.
     constexpr void draw_text(Point at, const TextRun& run, Color color) const {
         const Rect visible = clip_.intersect(Rect{at, run.size()});
         if (visible.empty()) return;
-        for (std::int32_t y = visible.y(); y < visible.bottom(); ++y) {
-            for (std::int32_t x = visible.x(); x < visible.right(); ++x) {
-                const std::uint8_t coverage = run.coverage_at(sat_sub(x, at.x), sat_sub(y, at.y));
+        for (std::int32_t y = visible.top().value_; y < visible.bottom().value_; ++y) {
+            for (std::int32_t x = visible.left().value_; x < visible.right().value_; ++x) {
+                const std::uint8_t coverage = run.coverage_at(Point{Left{sat_sub(x, at.left().value_)}, Top{sat_sub(y, at.top().value_)}});
                 if (coverage != 0) buffer_.at(x, y) = blend(buffer_.at(x, y), color.argb, coverage);
             }
         }

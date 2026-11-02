@@ -51,7 +51,7 @@ public:
 
     constexpr std::expected<PixelBuffer, Error> frame_pixels(const Frame<HeadlessBackend>& frame) {
         if (!ledger_.current(frame.generation_)) return make_error(ErrorCode::StaleFrame, "this frame is no longer the current one");
-        return PixelBuffer::create(pixels_, frame.size_, sat_mul(frame.size_.width(), 4));
+        return PixelBuffer::create(pixels_, frame.size_, PixelBuffer::tight_stride(frame.size_));
     }
 
     constexpr std::expected<void, Error> present(Frame<HeadlessBackend> frame, Rect) {
@@ -72,8 +72,7 @@ public:
     // --- For tests ---
     constexpr void set_display_holding(bool holding) noexcept { display_holding_ = holding; }
     [[nodiscard]] constexpr std::uint32_t pixel(Point p) const {
-        return pixels_.at(static_cast<std::size_t>(p.y) * static_cast<std::size_t>(size_.width()) +
-                          static_cast<std::size_t>(p.x));
+        return pixels_.at(PixelBuffer::tight_index(p, size_));
     }
     [[nodiscard]] constexpr Size size() const noexcept { return size_; }
     [[nodiscard]] constexpr std::size_t presented() const noexcept { return presented_; }

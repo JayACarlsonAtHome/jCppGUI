@@ -39,15 +39,15 @@ void click(App& app, jgui::Point at) {
 }
 
 [[nodiscard]] constexpr jgui::Point centre(const jgui::Rect& area) {
-    return jgui::Point{area.x() + area.width() / 2, area.y() + area.height() / 2};
+    return inside(area, number(area.width()) / 2, number(area.height()) / 2);
 }
 
 // Pixels in the area that differ from the colour.
 [[nodiscard]] inline int count_other_than(const jgui::HeadlessBackend& backend, const jgui::Rect& area, jgui::Color colour) {
     int count = 0;
-    for (std::int32_t y = area.y(); y < area.bottom(); ++y)
-        for (std::int32_t x = area.x(); x < area.right(); ++x)
-            if (backend.pixel(jgui::Point{x, y}) != colour.argb) ++count;
+    for (std::int32_t y = number(area.top()); y < number(area.bottom()); ++y)
+        for (std::int32_t x = number(area.left()); x < number(area.right()); ++x)
+            if (backend.pixel(jgui::Point{jgui::Left{x}, jgui::Top{y}}) != colour.argb) ++count;
     return count;
 }
 

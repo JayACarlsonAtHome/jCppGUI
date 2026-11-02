@@ -18,7 +18,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     // Plain letters, ligatures for substitution rules, and marks and other scripts for shaping paths.
     for (const char* text : {"Help", "office ffi fl", "e\xCC\x81 \xC3\xA9 \xD8\xB9\xD8\xB1\xD8\xA8", "\xE0\xA4\x95\xE0\xA5\x8D\xE0\xA4\xB7"}) {
         const auto run = engine->shape(text);
-        if (run && !run->size().empty()) static_cast<void>(run->coverage_at(run->size().width() - 1, run->size().height() - 1));
+        if (run && !run->size().empty()) static_cast<void>(run->coverage_at(jgui::Point{jgui::Left{} + run->size().width() - jgui::Width{1}, jgui::Top{} + run->size().height() - jgui::Height{1}}));
     }
     return 0;
 }

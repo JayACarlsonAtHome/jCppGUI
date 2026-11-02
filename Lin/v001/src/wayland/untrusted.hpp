@@ -106,9 +106,8 @@ inline constexpr std::size_t max_window_string_bytes = 4096 - 8 - 4 - 1;
 // What a configure's width and height mean. Zero means the client chooses: the fallback. A negative
 // value is treated the same way, and a value over the buffer limit is clamped to it.
 [[nodiscard]] constexpr Size configured_size(std::int32_t width, std::int32_t height, Size fallback) noexcept {
-    const std::int32_t w = width > 0 ? std::min(width, max_buffer_side) : fallback.width();
-    const std::int32_t h = height > 0 ? std::min(height, max_buffer_side) : fallback.height();
-    return Size{w, h};
+    return Size{width > 0 ? Width{std::min(width, max_buffer_side)} : fallback.width(),
+                height > 0 ? Height{std::min(height, max_buffer_side)} : fallback.height()};
 }
 
 // An evdev key code in xkb numbering, which is 8 higher. Empty for a code too large to convert.

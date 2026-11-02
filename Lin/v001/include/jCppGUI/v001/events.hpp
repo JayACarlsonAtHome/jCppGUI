@@ -55,7 +55,7 @@ private:
 };
 
 // The edge or corner a compositor resize starts from.
-enum class ResizeEdge : std::uint8_t { Top, Bottom, Left, Right, TopLeft, TopRight, BottomLeft, BottomRight };
+enum class ResizeEdge : std::uint8_t { TopSide, BottomSide, LeftSide, RightSide, TopLeft, TopRight, BottomLeft, BottomRight };
 
 // --- Delivered by a backend ---
 

@@ -22,7 +22,7 @@ enum class FrameRegion : std::uint8_t { Outside, Client, Title, Close, Edge };
 
 struct FrameHit {
     FrameRegion region{FrameRegion::Outside};
-    ResizeEdge edge{ResizeEdge::Top};  // meaningful only for FrameRegion::Edge
+    ResizeEdge edge{ResizeEdge::TopSide};  // meaningful only for FrameRegion::Edge
 };
 
 // The frame's sizes, as compile-time values of one type. They must be positive, the close box must
@@ -69,36 +69,37 @@ public:
     constexpr explicit WindowFrame(Children... children) : children_{std::move(children)...} {}
 
     [[nodiscard]] static constexpr Rect client_rect(Size window) noexcept {
-        return Rect{Point{edge_width, title_height}, Size{sat_sub(window.width(), sat_mul(edge_width, 2)), sat_sub(window.height(), sat_add(title_height, edge_width))}};
+        return Rect{Point{Left{edge_width}, Top{title_height}},
+                    Size{window.width() - edge_across - edge_across, window.height() - title_down - edge_down}};
     }
 
     [[nodiscard]] static constexpr Rect close_box(Size window) noexcept {
-        const std::int32_t inset = (title_height - close_side) / 2;
-        return Rect{Point{sat_sub(window.width(), sat_add(close_side, sat_add(inset, edge_width))), inset}, Size{close_side, close_side}};
+        constexpr std::int32_t inset = (title_height - close_side) / 2;
+        const Rect whole{Point{}, window};
+        return Rect{Point{whole.right() - Width{close_side + inset + edge_width}, Top{inset}}, Size{close_across, close_down}};
     }
 
     [[nodiscard]] static constexpr FrameHit hit(Point p, Size window) noexcept {
-        if (!Rect{Point{}, window}.contains(p)) return FrameHit{};
-        const std::int32_t w = window.width();
-        const std::int32_t h = window.height();
-        const bool left = p.x < edge_width;
-        const bool right = p.x >= sat_sub(w, edge_width);
-        const bool top = p.y < edge_width;
-        const bool bottom = p.y >= sat_sub(h, edge_width);
-        const bool near_left = p.x < corner_length;
-        const bool near_right = p.x >= sat_sub(w, corner_length);
-        const bool near_top = p.y < corner_length;
-        const bool near_bottom = p.y >= sat_sub(h, corner_length);
+        const Rect whole{Point{}, window};
+        if (!whole.contains(p)) return FrameHit{};
+        const bool left = p.left() < Left{edge_width};
+        const bool right = p.left() >= whole.right() - edge_across;
+        const bool top = p.top() < Top{edge_width};
+        const bool bottom = p.top() >= whole.bottom() - edge_down;
+        const bool near_left = p.left() < Left{corner_length};
+        const bool near_right = p.left() >= whole.right() - Width{corner_length};
+        const bool near_top = p.top() < Top{corner_length};
+        const bool near_bottom = p.top() >= whole.bottom() - Height{corner_length};
         if ((top && near_left) || (left && near_top)) return edge_hit(ResizeEdge::TopLeft);
         if ((top && near_right) || (right && near_top)) return edge_hit(ResizeEdge::TopRight);
         if ((bottom && near_left) || (left && near_bottom)) return edge_hit(ResizeEdge::BottomLeft);
         if ((bottom && near_right) || (right && near_bottom)) return edge_hit(ResizeEdge::BottomRight);
-        if (top) return edge_hit(ResizeEdge::Top);
-        if (bottom) return edge_hit(ResizeEdge::Bottom);
-        if (left) return edge_hit(ResizeEdge::Left);
-        if (right) return edge_hit(ResizeEdge::Right);
+        if (top) return edge_hit(ResizeEdge::TopSide);
+        if (bottom) return edge_hit(ResizeEdge::BottomSide);
+        if (left) return edge_hit(ResizeEdge::LeftSide);
+        if (right) return edge_hit(ResizeEdge::RightSide);
         if (close_box(window).contains(p)) return FrameHit{FrameRegion::Close};
-        if (p.y < title_height) return FrameHit{FrameRegion::Title};
+        if (p.top() < Top{title_height}) return FrameHit{FrameRegion::Title};
         return FrameHit{FrameRegion::Client};
     }
 
@@ -113,7 +114,7 @@ public:
         bounds_ = area;
         if (auto used = detail::layout_in_order(children_, client_rect(area.size()), text); !used)
             return std::unexpected(std::move(used.error()));
-        return Rect{Point{area.x(), area.bottom()}, Size{area.width(), 0}};
+        return Rect{Point{area.left(), top_after(area.bottom())}, Size{area.width(), Height{}}};
     }
 
     // The content first and clipped to the client area, so that the frame is always on top.
@@ -197,6 +198,13 @@ public:
     }
 
 private:
+    // The metrics are plain lengths, because one number can serve both axes. Each use here names its axis.
+    static constexpr Width edge_across{Metrics::edge_width};
+    static constexpr Height edge_down{Metrics::edge_width};
+    static constexpr Height title_down{Metrics::title_height};
+    static constexpr Width close_across{Metrics::close_side};
+    static constexpr Height close_down{Metrics::close_side};
+
     [[nodiscard]] static constexpr FrameHit edge_hit(ResizeEdge edge) noexcept {
         return FrameHit{FrameRegion::Edge, edge};
     }
@@ -208,20 +216,21 @@ private:
 
     constexpr void paint_frame(const Canvas& canvas, Size window) const {
         const Rect whole{Point{}, window};
-        canvas.fill_rect(Rect{Point{0, 0}, Size{window.width(), title_height}}, theme::frame_strip);
+        canvas.fill_rect(Rect{Point{}, Size{window.width(), title_down}}, theme::frame_strip);
         Color fill = theme::close_normal;
         if (close_hover_) fill = close_armed_ ? theme::close_pressed : theme::close_hover;
         const Rect box = close_box(window);
         canvas.fill_rect(box, fill);
         canvas.stroke_rect(box, theme::frame_edge);
+        const Size one_pixel{Width{1}, Height{1}};
         for (std::int32_t i = 4; i < close_side - 4; ++i) {
-            canvas.fill_rect(Rect{Point{sat_add(box.x(), i), sat_add(box.y(), i)}, Size{1, 1}}, theme::close_mark);
-            canvas.fill_rect(Rect{Point{sat_add(box.x(), close_side - 1 - i), sat_add(box.y(), i)}, Size{1, 1}}, theme::close_mark);
+            const Top row = top_after(box.top() + Height{i});
+            canvas.fill_rect(Rect{Point{left_after(box.left() + Width{i}), row}, one_pixel}, theme::close_mark);
+            canvas.fill_rect(Rect{Point{box.right() - Width{i + 1}, row}, one_pixel}, theme::close_mark);
         }
-        canvas.fill_rect(Rect{Point{0, title_height}, Size{edge_width, window.height()}}, theme::frame_strip);
-        canvas.fill_rect(Rect{Point{sat_sub(window.width(), edge_width), title_height}, Size{edge_width, window.height()}},
-                         theme::frame_strip);
-        canvas.fill_rect(Rect{Point{0, sat_sub(window.height(), edge_width)}, Size{window.width(), edge_width}}, theme::frame_strip);
+        canvas.fill_rect(Rect{Point{Left{}, Top{title_height}}, Size{edge_across, window.height()}}, theme::frame_strip);
+        canvas.fill_rect(Rect{Point{whole.right() - edge_across, Top{title_height}}, Size{edge_across, window.height()}}, theme::frame_strip);
+        canvas.fill_rect(Rect{Point{Left{}, whole.bottom() - edge_down}, Size{window.width(), edge_down}}, theme::frame_strip);
         canvas.stroke_rect(whole, theme::frame_edge);
     }
 

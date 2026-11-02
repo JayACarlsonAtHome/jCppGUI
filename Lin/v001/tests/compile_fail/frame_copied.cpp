@@ -6,8 +6,8 @@
 #include "jCppGUI/v001/headless_backend.hpp"
 
 int main() {
-    jgui::HeadlessBackend backend{jgui::Size{1, 1}};
-    auto frame = backend.acquire_frame(jgui::Size{1, 1});
+    jgui::HeadlessBackend backend{jgui::Size{jgui::Width{1}, jgui::Height{1}}};
+    auto frame = backend.acquire_frame(jgui::Size{jgui::Width{1}, jgui::Height{1}});
     if (!frame) return 1;
 #ifdef JGUI_BREAK
     auto kept = *frame;

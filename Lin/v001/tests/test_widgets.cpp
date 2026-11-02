@@ -19,7 +19,7 @@ namespace {
 struct HelpButton;
 struct Item;
 
-constexpr jgui::Size window_size{640, 480};
+constexpr jgui::Size window_size{jgui::Width{640}, jgui::Height{480}};
 
 void test_click_rules(Checker& check) {
     int fired = 0;
@@ -29,7 +29,7 @@ void test_click_rules(Checker& check) {
     check(app.has_value(), "application starts");
     check(app->process_pending().has_value(), "first frame");
     const jgui::Point on = centre(app->ui().get<HelpButton>().bounds());
-    const jgui::Point off{300, 300};
+    const jgui::Point off{jgui::Left{300}, jgui::Top{300}};
 
     // Test 6
     click(*app, on);
@@ -123,7 +123,7 @@ void test_button_colours(Checker& check) {
         jgui::window(jgui::window_frame(jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto&) -> void {})))));
     check(app.has_value() && app->process_pending().has_value(), "first frame");
     const jgui::Rect area = app->ui().get<HelpButton>().bounds();
-    const jgui::Point sample{area.x() + 2, area.y() + 2};
+    const jgui::Point sample = jgui_test::inside(area, 2, 2);
     const jgui::Point on = centre(area);
 
     const std::uint32_t normal = jgui_test::backend(*app).pixel(sample);
@@ -135,7 +135,7 @@ void test_button_colours(Checker& check) {
     check(hover == jgui::theme::button_hover.argb, "hover colour");
     check(pressed == jgui::theme::button_pressed.argb, "pressed colour");
     check(normal != hover && hover != pressed && normal != pressed, "all three differ");
-    move_to(*app, jgui::Point{300, 300});
+    move_to(*app, jgui::Point{jgui::Left{300}, jgui::Top{300}});
     check(jgui_test::backend(*app).pixel(sample) == jgui::theme::button_normal.argb, "dragged off, it no longer looks pressed");
 }
 
@@ -145,14 +145,14 @@ void test_menu_bar(Checker& check) {
         jgui::HeadlessBackend{window_size},
         jgui::window(jgui::window_frame(jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto&) -> void {})))));
     check(app.has_value(), "application starts");
-    for (const jgui::Size size : {window_size, jgui::Size{900, 300}, jgui::Size{200, 150}, window_size}) {
+    for (const jgui::Size size : {window_size, jgui::Size{jgui::Width{900}, jgui::Height{300}}, jgui::Size{jgui::Width{200}, jgui::Height{150}}, window_size}) {
         jgui_test::backend(*app).inject(jgui::ResizeEvent{size});
         check(app->process_pending().has_value(), "resize handled");
         const jgui::Rect client = jgui::WindowFrame<jgui::DefaultFrameMetrics>::client_rect(size);
         const jgui::Rect bar = app->ui().get<jgui::MenuBarTag>().bounds();
         const jgui::Rect target = app->ui().get<HelpButton>().bounds();
-        check(bar.x() == client.x() && bar.width() == client.width(), "the bar has the full client width");
-        check(bar.y() == client.y(), "the bar is directly below the frame's title strip");
+        check(bar.left() == client.left() && bar.width() == client.width(), "the bar has the full client width");
+        check(bar.top() == client.top(), "the bar is directly below the frame's title strip");
         check(!target.empty() && target.intersect(bar) == target, "the button is inside the bar");
     }
 }
@@ -165,13 +165,13 @@ void test_redraw_only_when_damaged(Checker& check) {
     check(app.has_value() && app->process_pending().has_value(), "first frame");
     const auto frames = app->frames();
     check(app->process_pending().has_value() && app->frames() == frames, "no events, no frame");
-    move_to(*app, jgui::Point{300, 300});
+    move_to(*app, jgui::Point{jgui::Left{300}, jgui::Top{300}});
     check(app->frames() == frames, "motion over nothing, no frame");
     move_to(*app, centre(app->ui().get<HelpButton>().bounds()));
     check(app->frames() == frames + 1, "hover changed, one frame");
-    move_to(*app, jgui::Point{300, 300});
+    move_to(*app, jgui::Point{jgui::Left{300}, jgui::Top{300}});
     const auto settled = app->frames();
-    click(*app, jgui::Point{300, 300});
+    click(*app, jgui::Point{jgui::Left{300}, jgui::Top{300}});
     check(app->frames() == settled, "a click on nothing, no frame");
     jgui_test::backend(*app).inject(jgui::PointerLeave{});
     check(app->process_pending().has_value() && app->frames() == settled, "the pointer leaving nothing, no frame");

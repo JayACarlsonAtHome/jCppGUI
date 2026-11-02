@@ -21,17 +21,17 @@ int main() {
     std::vector<std::uint32_t> storage(32U * 32U, guard);
     const std::size_t start = 8U * 32U + 8U;
     const std::span<std::uint32_t> inner = std::span{storage}.subspan(start);
-    auto buffer = PixelBuffer::create(inner, Size{16, 16}, 32 * 4);
+    auto buffer = PixelBuffer::create(inner, Size{Width{16}, Height{16}}, 32 * 4);
     check(buffer.has_value(), "buffer inside the guard region");
     const Canvas canvas{*buffer};
-    const std::array shapes{Rect{Point{lo, lo}, Size{hi, hi}},  Rect{Point{hi, hi}, Size{hi, hi}},     Rect{Point{-100, -100}, Size{100, 100}},
-                            Rect{Point{16, 0}, Size{50, 50}},   Rect{Point{0, 16}, Size{50, 50}},      Rect{Point{-5, 3}, Size{10, 2}},
-                            Rect{Point{15, 15}, Size{hi, hi}},  Rect{Point{-1, -1}, Size{18, 18}},     Rect{Point{lo, 0}, Size{hi, 16}},
-                            Rect{Point{0, hi - 1}, Size{8, 8}}, Rect{Point{hi - 1, 0}, Size{8, 8}},    Rect{Point{4, 4}, Size{0, 0}}};
+    const std::array shapes{Rect{Point{Left{lo}, Top{lo}}, Size{Width{hi}, Height{hi}}},  Rect{Point{Left{hi}, Top{hi}}, Size{Width{hi}, Height{hi}}},     Rect{Point{Left{-100}, Top{-100}}, Size{Width{100}, Height{100}}},
+                            Rect{Point{Left{16}, Top{0}}, Size{Width{50}, Height{50}}},   Rect{Point{Left{0}, Top{16}}, Size{Width{50}, Height{50}}},      Rect{Point{Left{-5}, Top{3}}, Size{Width{10}, Height{2}}},
+                            Rect{Point{Left{15}, Top{15}}, Size{Width{hi}, Height{hi}}},  Rect{Point{Left{-1}, Top{-1}}, Size{Width{18}, Height{18}}},     Rect{Point{Left{lo}, Top{0}}, Size{Width{hi}, Height{16}}},
+                            Rect{Point{Left{0}, Top{hi - 1}}, Size{Width{8}, Height{8}}}, Rect{Point{Left{hi - 1}, Top{0}}, Size{Width{8}, Height{8}}},    Rect{Point{Left{4}, Top{4}}, Size{Width{0}, Height{0}}}};
     for (const Rect& shape : shapes) {
         canvas.fill_rect(shape, Color{0xFF010203U});
         canvas.stroke_rect(shape, Color{0xFF040506U});
-        canvas.clipped(Rect{Point{2, 2}, Size{4, 4}}).fill_rect(shape, Color{0xFF070809U});
+        canvas.clipped(Rect{Point{Left{2}, Top{2}}, Size{Width{4}, Height{4}}}).fill_rect(shape, Color{0xFF070809U});
     }
     int guards_broken = 0;
     for (std::size_t y = 0; y < 32; ++y) {
@@ -45,16 +45,16 @@ int main() {
 
     // Test 3
     const auto refused = [](Size size) { return !PixelBuffer::byte_size(size).has_value(); };
-    check(refused(Size{8193, 1}), "width over the limit");
-    check(refused(Size{1, 8193}), "height over the limit");
-    check(refused(Size{hi, hi}), "both sides at the int32_t maximum");
-    check(refused(Size{65536, 65536}), "the product wraps to zero in 32 bits");
-    check(refused(Size{46341, 46341}), "the product wraps past int32_t");
-    check(PixelBuffer::byte_size(Size{8192, 8192}).value_or(0) == std::size_t{1} << 28U, "exactly at the limit");
+    check(refused(Size{Width{8193}, Height{1}}), "width over the limit");
+    check(refused(Size{Width{1}, Height{8193}}), "height over the limit");
+    check(refused(Size{Width{hi}, Height{hi}}), "both sides at the int32_t maximum");
+    check(refused(Size{Width{65536}, Height{65536}}), "the product wraps to zero in 32 bits");
+    check(refused(Size{Width{46341}, Height{46341}}), "the product wraps past int32_t");
+    check(PixelBuffer::byte_size(Size{Width{8192}, Height{8192}}).value_or(0) == std::size_t{1} << 28U, "exactly at the limit");
     std::array<std::uint32_t, 4> few{};
-    check(!PixelBuffer::create(few, Size{4, 4}, 16).has_value(), "storage smaller than the size");
-    check(!PixelBuffer::create(few, Size{2, 2}, 4).has_value(), "stride under the width");
-    check(!PixelBuffer::create(few, Size{2, 2}, 9).has_value(), "stride not whole pixels");
-    check(PixelBuffer::create(few, Size{2, 2}, 8).has_value(), "a valid buffer");
+    check(!PixelBuffer::create(few, Size{Width{4}, Height{4}}, 16).has_value(), "storage smaller than the size");
+    check(!PixelBuffer::create(few, Size{Width{2}, Height{2}}, 4).has_value(), "stride under the width");
+    check(!PixelBuffer::create(few, Size{Width{2}, Height{2}}, 9).has_value(), "stride not whole pixels");
+    check(PixelBuffer::create(few, Size{Width{2}, Height{2}}, 8).has_value(), "a valid buffer");
     return check.finish();
 }

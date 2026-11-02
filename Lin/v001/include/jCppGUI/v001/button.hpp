@@ -32,10 +32,10 @@ public:
             if (!shaped) return std::unexpected(std::move(shaped.error()));
             run_ = std::move(*shaped);
         }
-        const std::int32_t wanted_width = sat_add(run_->size().width(), sat_mul(theme::button_pad_x, 2));
-        const std::int32_t wanted_height = sat_add(run_->size().height(), sat_mul(theme::button_pad_y, 2));
+        const Width wanted_width = run_->size().width() + theme::button_pad_x + theme::button_pad_x;
+        const Height wanted_height = run_->size().height() + theme::button_pad_y + theme::button_pad_y;
         bounds_ = area.intersect(Rect{area.origin(), Size{wanted_width, wanted_height}});
-        return Rect{Point{bounds_.right(), area.y()}, Size{sat_sub(area.width(), bounds_.width()), area.height()}};
+        return Rect{Point{left_after(bounds_.right()), area.top()}, Size{area.width() - bounds_.width(), area.height()}};
     }
 
     constexpr void paint(Canvas& canvas) {
@@ -49,7 +49,7 @@ public:
         local.fill_rect(bounds_, fill);
         local.stroke_rect(bounds_, focused_ ? theme::focus_edge : theme::button_edge);
         if (run_) {
-            const Point at{sat_add(bounds_.x(), theme::button_pad_x), sat_add(bounds_.y(), theme::button_pad_y)};
+            const Point at{left_after(bounds_.left() + theme::button_pad_x), top_after(bounds_.top() + theme::button_pad_y)};
             local.draw_text(at, *run_, theme::text);
         }
     }

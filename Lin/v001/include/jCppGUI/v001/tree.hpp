@@ -299,7 +299,7 @@ struct TestAccess;
 // the backend once the dispatch has returned.
 struct ResizeRequest {
     Serial serial{};
-    ResizeEdge edge{ResizeEdge::Top};
+    ResizeEdge edge{ResizeEdge::TopSide};
 };
 
 struct WindowRequests {

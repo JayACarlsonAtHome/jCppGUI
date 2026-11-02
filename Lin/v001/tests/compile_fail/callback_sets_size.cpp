@@ -6,7 +6,7 @@ int main() {
     auto ui = jgui::window(Plain<First>{});
     const auto on_click = [](auto& u) -> void {
 #ifdef JGUI_BREAK
-        u.set_size(jgui::Size{1, 1});
+        u.set_size(jgui::Size{jgui::Width{1}, jgui::Height{1}});
 #else
         u.request_close();
 #endif

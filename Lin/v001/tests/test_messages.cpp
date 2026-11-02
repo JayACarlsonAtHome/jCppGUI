@@ -18,7 +18,7 @@
 // text, and a compiler rightly reports a member nobody calls on a type with internal linkage.
 struct NoText {
     [[nodiscard]] std::expected<jgui::TextRun, jgui::Error> shape(std::string_view) const { return jgui::TextRun{}; }
-    [[nodiscard]] std::int32_t line_height() const noexcept { return 0; }
+    [[nodiscard]] jgui::Height line_height() const noexcept { return jgui::Height{}; }
 };
 
 namespace {
@@ -110,7 +110,7 @@ struct QuietWidget {
 // Receivers are whole widgets, which the tree lays out and paints like any other.
 void test_receivers_are_widgets(jgui_test::Checker& check) {
     auto ui = jgui::window(HelpLineWidget{}, StatusBarWidget{}, QuietWidget{});
-    const jgui::Rect area{jgui::Point{0, 0}, jgui::Size{2, 2}};
+    const jgui::Rect area{jgui::Point{jgui::Left{0}, jgui::Top{0}}, jgui::Size{jgui::Width{2}, jgui::Height{2}}};
     const auto left = ui.layout(area, NoText{});
     check(left.has_value() && *left == area, "layout passes through them");
     std::array<std::uint32_t, 4> pixels{};

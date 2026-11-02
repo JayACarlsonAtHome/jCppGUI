@@ -28,18 +28,18 @@ public:
 
     template <TextShaper Shaper>
     constexpr std::expected<Rect, Error> layout(Rect area, const Shaper& text) {
-        const std::int32_t inner = sat_add(text.line_height(), sat_mul(theme::button_pad_y, 2));
-        const std::int32_t strip = sat_add(inner, sat_mul(theme::bar_pad, 2));
+        const Height strip = text.line_height() + theme::button_pad_y + theme::button_pad_y + theme::bar_pad_y + theme::bar_pad_y;
         bounds_ = area.intersect(Rect{area.origin(), Size{area.width(), strip}});
-        if (auto used = detail::layout_in_order(children_, bounds_.inset(theme::bar_pad), text); !used)
+        if (auto used = detail::layout_in_order(children_, bounds_.inset(theme::bar_pad_x, theme::bar_pad_y), text); !used)
             return std::unexpected(std::move(used.error()));
-        return Rect{Point{area.x(), bounds_.bottom()}, Size{area.width(), sat_sub(area.height(), bounds_.height())}};
+        return Rect{Point{area.left(), top_after(bounds_.bottom())}, Size{area.width(), area.height() - bounds_.height()}};
     }
 
     constexpr void paint(Canvas& canvas) {
         const Canvas local = canvas.clipped(bounds_);
         local.fill_rect(bounds_, theme::bar);
-        local.fill_rect(Rect{Point{bounds_.x(), sat_sub(bounds_.bottom(), 1)}, Size{bounds_.width(), 1}}, theme::bar_edge);
+        constexpr Height one_down{1};
+        local.fill_rect(Rect{Point{bounds_.left(), bounds_.bottom() - one_down}, Size{bounds_.width(), one_down}}, theme::bar_edge);
         Canvas inner{local};
         detail::paint_in_order(children_, inner);
     }

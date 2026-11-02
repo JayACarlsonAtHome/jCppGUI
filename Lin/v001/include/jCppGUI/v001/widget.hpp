@@ -34,11 +34,12 @@ inline constexpr Color close_normal{0xFFC8C8C8U};
 inline constexpr Color close_hover{0xFFE08080U};
 inline constexpr Color close_pressed{0xFFC04040U};
 inline constexpr Color close_mark{0xFF202020U};
-inline constexpr std::int32_t button_pad_x = 10;
-inline constexpr std::int32_t button_pad_y = 3;
-inline constexpr std::int32_t bar_pad = 2;
-inline constexpr std::int32_t label_pad_x = 8;
-inline constexpr std::int32_t label_pad_y = 6;
+inline constexpr Width button_pad_x{10};
+inline constexpr Height button_pad_y{3};
+inline constexpr Width bar_pad_x{2};
+inline constexpr Height bar_pad_y{2};
+inline constexpr Width label_pad_x{8};
+inline constexpr Height label_pad_y{6};
 }  // namespace theme
 
 namespace detail {
@@ -47,7 +48,7 @@ namespace detail {
 struct ProbeUi {};
 struct ProbeShaper {
     [[nodiscard]] constexpr std::expected<TextRun, Error> shape(std::string_view) const { return TextRun{}; }
-    [[nodiscard]] constexpr std::int32_t line_height() const noexcept { return 0; }
+    [[nodiscard]] constexpr Height line_height() const noexcept { return Height{}; }
 };
 }  // namespace detail
 

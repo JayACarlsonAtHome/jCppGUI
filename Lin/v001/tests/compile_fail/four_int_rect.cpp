@@ -6,7 +6,7 @@ int main() {
 #ifdef JGUI_BREAK
     const jgui::Rect area{1, 2, 3, 4};
 #else
-    const jgui::Rect area{jgui::Point{1, 2}, jgui::Size{3, 4}};
+    const jgui::Rect area{jgui::Point{jgui::Left{1}, jgui::Top{2}}, jgui::Size{jgui::Width{3}, jgui::Height{4}}};
 #endif
     static_cast<void>(area);
 }

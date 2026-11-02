@@ -12,13 +12,13 @@ using jgui_test::count_other_than;
 
 namespace {
 
-constexpr jgui::Size window_size{640, 480};
+constexpr jgui::Size window_size{jgui::Width{640}, jgui::Height{480}};
 
 template <class App>
 jgui::Rect area_below_bar(App& app) {
     const jgui::Rect bar = app.ui().template get<jgui::MenuBarTag>().bounds();
     const jgui::Rect client = jgui::WindowFrame<jgui::DefaultFrameMetrics>::client_rect(window_size);
-    return jgui::Rect{jgui::Point{client.x(), bar.bottom()}, jgui::Size{client.width(), client.bottom() - bar.bottom()}};
+    return jgui::Rect{jgui::Point{client.left(), jgui::top_after(bar.bottom())}, jgui::Size{client.width(), client.bottom() - jgui::top_after(bar.bottom())}};
 }
 
 void test_toggle(Checker& check) {

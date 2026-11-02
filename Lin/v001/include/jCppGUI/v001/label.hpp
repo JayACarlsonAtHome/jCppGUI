@@ -36,15 +36,15 @@ public:
             if (!shaped) return std::unexpected(std::move(shaped.error()));
             run_ = std::move(*shaped);
         }
-        const std::int32_t row = sat_add(run_->size().height(), sat_mul(theme::label_pad_y, 2));
+        const Height row = run_->size().height() + theme::label_pad_y + theme::label_pad_y;
         bounds_ = area.intersect(Rect{area.origin(), Size{area.width(), row}});
-        return Rect{Point{area.x(), bounds_.bottom()}, Size{area.width(), sat_sub(area.height(), bounds_.height())}};
+        return Rect{Point{area.left(), top_after(bounds_.bottom())}, Size{area.width(), area.height() - bounds_.height()}};
     }
 
     constexpr void paint(Canvas& canvas) {
         if (!run_) return;
         const Canvas local = canvas.clipped(bounds_);
-        const Point at{sat_add(bounds_.x(), theme::label_pad_x), sat_add(bounds_.y(), theme::label_pad_y)};
+        const Point at{left_after(bounds_.left() + theme::label_pad_x), top_after(bounds_.top() + theme::label_pad_y)};
         local.draw_text(at, *run_, theme::text);
     }
 

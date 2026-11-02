@@ -18,7 +18,7 @@ struct Unused;
 
 int main() {
     jgui_test::Checker check;
-    auto app = jgui::make_application(jgui::HeadlessBackend{jgui::Size{100, 100}}, jgui::window(jgui::label<Unused>("x")));
+    auto app = jgui::make_application(jgui::HeadlessBackend{jgui::Size{jgui::Width{100}, jgui::Height{100}}}, jgui::window(jgui::label<Unused>("x")));
     check(app.has_value() && app->process_pending().has_value(), "the owning thread may use it");
 
     const pid_t child = ::fork();

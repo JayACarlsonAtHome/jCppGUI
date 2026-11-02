@@ -43,11 +43,13 @@ inline constexpr std::size_t max_glyph_bytes = static_cast<std::size_t>(max_glyp
     return pitch >= width && width >= 0 && pitch <= max_glyph_pitch;
 }
 
-// True when the byte count is exactly one per pixel. Both sides of a Size are at most 2^31 - 1, so the
-// product fits in 64 bits.
-[[nodiscard]] constexpr bool coverage_fits(Size size, std::size_t bytes) noexcept {
-    return std::cmp_equal(std::int64_t{size.width()} * std::int64_t{size.height()}, bytes);
-}
+// One rendered glyph, as the font library described it.
+struct GlyphBitmap {
+    std::span<const std::uint8_t> rows;  // pitch bytes per row
+    std::int64_t row_count{};
+    std::int64_t column_count{};
+    std::int64_t pitch{};
+};
 
 }  // namespace detail
 
@@ -93,16 +95,41 @@ public:
     constexpr TextRun() = default;
     // The coverage must hold exactly one byte per pixel of the size. Anything else aborts.
     constexpr TextRun(Size size, std::vector<std::uint8_t> coverage) : size_{size}, coverage_{std::move(coverage)} {
-        require(detail::coverage_fits(size_, coverage_.size()), "TextRun coverage does not match its size");
+        require(fits(size_, coverage_.size()), "TextRun coverage does not match its size");
+    }
+
+    // True when the byte count is exactly one per pixel. Both sides of a Size are at most 2^31 - 1, so the
+    // product fits in 64 bits.
+    [[nodiscard]] static constexpr bool fits(Size size, std::size_t bytes) noexcept {
+        return std::cmp_equal(std::int64_t{size.width().value_} * std::int64_t{size.height().value_}, bytes);
+    }
+
+    // Copies a glyph into a run's coverage, with every position clipped to the run. The glyph's position
+    // comes from the font, so it is held in 64 bits and may lie anywhere.
+    static constexpr void blit(const detail::GlyphBitmap& glyph, std::int64_t left, std::int64_t top, Size run,
+                               std::span<std::uint8_t> out) {
+        const std::int64_t run_width = run.width().value_;
+        const std::int64_t run_height = run.height().value_;
+        for (std::int64_t row = 0; row < glyph.row_count; ++row) {
+            const std::int64_t y = top + row;
+            if (y < 0 || y >= run_height) continue;
+            for (std::int64_t column = 0; column < glyph.column_count; ++column) {
+                const std::int64_t x = left + column;
+                if (x < 0 || x >= run_width) continue;
+                const std::uint8_t value = glyph.rows[static_cast<std::size_t>(row * glyph.pitch + column)];
+                std::uint8_t& target = out[static_cast<std::size_t>(y * run_width + x)];
+                target = std::max(target, value);
+            }
+        }
     }
 
     [[nodiscard]] constexpr Size size() const noexcept { return size_; }
 
-    // Coverage at a column and row, which the caller has clipped to size().
-    [[nodiscard]] constexpr std::uint8_t coverage_at(std::int32_t column, std::int32_t row) const {
-        const auto c = static_cast<std::size_t>(column);
-        const auto r = static_cast<std::size_t>(row);
-        return coverage_[r * static_cast<std::size_t>(size_.width()) + c];
+    // Coverage at a point counted from the run's own corner, which the caller has clipped to size().
+    [[nodiscard]] constexpr std::uint8_t coverage_at(Point at) const {
+        const auto c = static_cast<std::size_t>(at.left().value_);
+        const auto r = static_cast<std::size_t>(at.top().value_);
+        return coverage_[r * static_cast<std::size_t>(size_.width().value_) + c];
     }
 
 private:
@@ -115,7 +142,7 @@ private:
 template <class S>
 concept TextShaper = requires(const S& shaper, std::string_view text) {
     { shaper.shape(text) } -> std::same_as<std::expected<TextRun, Error>>;
-    { shaper.line_height() } -> std::same_as<std::int32_t>;
+    { shaper.line_height() } -> std::same_as<Height>;
 };
 
 namespace detail {
@@ -123,31 +150,6 @@ namespace detail {
 // Rounds 26.6 fixed point up to whole pixels, and clamps it to int32_t.
 [[nodiscard]] constexpr std::int32_t ceil_pixels(std::int64_t fixed) noexcept {
     return saturate_to<std::int32_t>((fixed + 63) / 64);
-}
-
-// One rendered glyph, as the font library described it.
-struct GlyphBitmap {
-    std::span<const std::uint8_t> rows;  // pitch bytes per row
-    std::int64_t row_count{};
-    std::int64_t column_count{};
-    std::int64_t pitch{};
-};
-
-// Copies a glyph into a run's coverage, with every position clipped to the run. The glyph's position
-// comes from the font, so it is held in 64 bits and may lie anywhere.
-constexpr void blit_glyph(const GlyphBitmap& glyph, std::int64_t left, std::int64_t top, Size run,
-                          std::span<std::uint8_t> out) {
-    for (std::int64_t row = 0; row < glyph.row_count; ++row) {
-        const std::int64_t y = top + row;
-        if (y < 0 || y >= run.height()) continue;
-        for (std::int64_t column = 0; column < glyph.column_count; ++column) {
-            const std::int64_t x = left + column;
-            if (x < 0 || x >= run.width()) continue;
-            const std::uint8_t value = glyph.rows[static_cast<std::size_t>(row * glyph.pitch + column)];
-            std::uint8_t& target = out[static_cast<std::size_t>(y * run.width() + x)];
-            target = std::max(target, value);
-        }
-    }
 }
 
 struct TextEngineImpl;
@@ -168,7 +170,7 @@ public:
     // Refuses over-long captions and invalid UTF-8 before anything is shaped.
     [[nodiscard]] std::expected<TextRun, Error> shape(std::string_view text) const;
 
-    [[nodiscard]] std::int32_t line_height() const noexcept;
+    [[nodiscard]] Height line_height() const noexcept;
 
 private:
     explicit TextEngine(std::unique_ptr<detail::TextEngineImpl, detail::TextEngineImplDeleter> impl) noexcept;

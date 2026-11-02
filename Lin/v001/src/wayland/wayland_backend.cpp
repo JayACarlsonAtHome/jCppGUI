@@ -23,6 +23,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 #include "../c_resource.hpp"
+#include "../geometry_access.hpp"
 #include "file_io.hpp"
 #include "trampoline.hpp"
 #include "untrusted.hpp"
@@ -111,8 +112,8 @@ std::expected<std::unique_ptr<ShmBuffer>, Error> ShmBuffer::create(wl_shm* shm, 
 
     const ShmPool pool{wl_shm_create_pool(shm, file->get(), saturate_to<std::int32_t>(*bytes))};
     if (!pool) return make_error(ErrorCode::System, "wl_shm_create_pool failed");
-    WaylandBuffer object{wl_shm_pool_create_buffer(pool.get(), 0, size.width(), size.height(),
-                                                   sat_mul(size.width(), 4), WL_SHM_FORMAT_ARGB8888)};
+    WaylandBuffer object{wl_shm_pool_create_buffer(pool.get(), 0, detail::GeometryAccess::number(size.width()), detail::GeometryAccess::number(size.height()),
+                                                   PixelBuffer::tight_stride(size), WL_SHM_FORMAT_ARGB8888)};
     if (!object) return make_error(ErrorCode::System, "wl_shm_pool_create_buffer failed");
 
     auto buffer = std::make_unique<ShmBuffer>(std::move(*file), std::move(object), size, *bytes / sizeof(std::uint32_t));
@@ -141,10 +142,10 @@ static_assert(cursor_colour('X') == 0xFF000000U && cursor_colour('.') == 0xFFFFF
 
 [[nodiscard]] constexpr std::uint32_t resize_edge_value(ResizeEdge edge) noexcept {
     switch (edge) {
-        case ResizeEdge::Top: return XDG_TOPLEVEL_RESIZE_EDGE_TOP;
-        case ResizeEdge::Bottom: return XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM;
-        case ResizeEdge::Left: return XDG_TOPLEVEL_RESIZE_EDGE_LEFT;
-        case ResizeEdge::Right: return XDG_TOPLEVEL_RESIZE_EDGE_RIGHT;
+        case ResizeEdge::TopSide: return XDG_TOPLEVEL_RESIZE_EDGE_TOP;
+        case ResizeEdge::BottomSide: return XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM;
+        case ResizeEdge::LeftSide: return XDG_TOPLEVEL_RESIZE_EDGE_LEFT;
+        case ResizeEdge::RightSide: return XDG_TOPLEVEL_RESIZE_EDGE_RIGHT;
         case ResizeEdge::TopLeft: return XDG_TOPLEVEL_RESIZE_EDGE_TOP_LEFT;
         case ResizeEdge::TopRight: return XDG_TOPLEVEL_RESIZE_EDGE_TOP_RIGHT;
         case ResizeEdge::BottomLeft: return XDG_TOPLEVEL_RESIZE_EDGE_BOTTOM_LEFT;
@@ -398,12 +399,12 @@ void WaylandImpl::on_seat_capabilities(wl_seat* object, std::uint32_t capabiliti
 void WaylandImpl::on_pointer_enter(wl_pointer* object, std::uint32_t serial, wl_surface*, wl_fixed_t x,
                                    wl_fixed_t y) noexcept {
     if (cursor_surface) wl_pointer_set_cursor(object, serial, cursor_surface.get(), 0, 0);
-    pointer_position = Point{wl_fixed_to_int(x), wl_fixed_to_int(y)};
+    pointer_position = Point{Left{wl_fixed_to_int(x)}, Top{wl_fixed_to_int(y)}};
     record(PointerMove{pointer_position});
 }
 
 void WaylandImpl::on_pointer_motion(wl_pointer*, std::uint32_t, wl_fixed_t x, wl_fixed_t y) noexcept {
-    pointer_position = Point{wl_fixed_to_int(x), wl_fixed_to_int(y)};
+    pointer_position = Point{Left{wl_fixed_to_int(x)}, Top{wl_fixed_to_int(y)}};
     record(PointerMove{pointer_position});
 }
 
@@ -475,7 +476,7 @@ Error WaylandImpl::connection_error() const {
 std::expected<void, Error> WaylandImpl::create_cursor() {
     const auto height = saturate_to<std::int32_t>(cursor_shape.size());
     const auto width = saturate_to<std::int32_t>(cursor_shape.front().size());
-    auto buffer = ShmBuffer::create(shm.get(), Size{width, height});
+    auto buffer = ShmBuffer::create(shm.get(), Size{Width{width}, Height{height}});
     if (!buffer) return std::unexpected(std::move(buffer.error()));
     cursor_buffer = std::move(*buffer);
 
@@ -634,7 +635,7 @@ std::expected<Frame<WaylandBackend>, Error> WaylandBackend::acquire_frame(Size s
 
 std::expected<PixelBuffer, Error> WaylandBackend::frame_pixels(const Frame<WaylandBackend>& frame) {
     if (!impl_->ledger.current(frame.generation_)) return make_error(ErrorCode::StaleFrame, "this frame is no longer the current one");
-    return PixelBuffer::create(impl_->frame_pixels, frame.size_, sat_mul(frame.size_.width(), 4));
+    return PixelBuffer::create(impl_->frame_pixels, frame.size_, PixelBuffer::tight_stride(frame.size_));
 }
 
 std::expected<void, Error> WaylandBackend::present(Frame<WaylandBackend> frame, Rect damage) {
@@ -646,11 +647,13 @@ std::expected<void, Error> WaylandBackend::present(Frame<WaylandBackend> frame, 
     wl_surface* surface = impl_->surface.get();
     if (impl_->geometry != buffer.size()) {
         impl_->geometry = buffer.size();
-        xdg_surface_set_window_geometry(impl_->xdg.get(), 0, 0, impl_->geometry.width(), impl_->geometry.height());
+        xdg_surface_set_window_geometry(impl_->xdg.get(), 0, 0, detail::GeometryAccess::number(impl_->geometry.width()),
+                                        detail::GeometryAccess::number(impl_->geometry.height()));
     }
     buffer.mark_busy();
     wl_surface_attach(surface, buffer.object(), 0, 0);
-    wl_surface_damage_buffer(surface, damage.x(), damage.y(), damage.width(), damage.height());
+    wl_surface_damage_buffer(surface, detail::GeometryAccess::number(damage.left()), detail::GeometryAccess::number(damage.top()),
+                             detail::GeometryAccess::number(damage.width()), detail::GeometryAccess::number(damage.height()));
     wl_surface_commit(surface);
     return {};
 }

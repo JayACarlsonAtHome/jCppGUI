@@ -30,13 +30,13 @@ using namespace jgui::detail;
 
 constexpr std::int32_t hi = std::numeric_limits<std::int32_t>::max();
 constexpr std::int32_t lo = std::numeric_limits<std::int32_t>::min();
-constexpr Size fallback{640, 480};
+constexpr Size fallback{Width{640}, Height{480}};
 
 static_assert(configured_size(0, 0, fallback) == fallback, "zero means the client chooses");
 static_assert(configured_size(-1, -1, fallback) == fallback && configured_size(lo, lo, fallback) == fallback);
-static_assert(configured_size(800, 0, fallback) == Size{800, 480} && configured_size(0, 600, fallback) == Size{640, 600});
-static_assert(configured_size(800, 600, fallback) == Size{800, 600});
-static_assert(configured_size(hi, hi, fallback) == Size{max_buffer_side, max_buffer_side}, "clamped to the limit");
+static_assert(configured_size(800, 0, fallback) == Size{Width{800}, Height{480}} && configured_size(0, 600, fallback) == Size{Width{640}, Height{600}});
+static_assert(configured_size(800, 600, fallback) == Size{Width{800}, Height{600}});
+static_assert(configured_size(hi, hi, fallback) == Size{Width{max_buffer_side}, Height{max_buffer_side}}, "clamped to the limit");
 static_assert(PixelBuffer::byte_size(configured_size(hi, hi, fallback)).has_value(), "and the clamped size is accepted");
 
 static_assert(check_keymap_header(keymap_format_xkb_v1, 1).has_value());

@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
     }
 
     auto backend = jgui::WaylandBackend::create(
-        jgui::WaylandOptions{.title = "jCppGUI", .app_id = "jcppgui.demo", .size = jgui::Size{640, 480}});
+        jgui::WaylandOptions{.title = "jCppGUI", .app_id = "jcppgui.demo", .size = jgui::Size{jgui::Width{640}, jgui::Height{480}}});
     if (!backend) return report(backend.error());
 
     auto app = jgui::make_application(std::move(*backend), demo::make_ui());

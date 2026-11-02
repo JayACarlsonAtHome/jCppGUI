@@ -68,8 +68,6 @@ static_assert(sat_add(int_min, -1) == int_min && sat_add(int_min, int_min) == in
 static_assert(sat_add(int_max, int_min) == -1 && sat_add(2, 3) == 5);
 static_assert(sat_sub(int_min, 1) == int_min && sat_sub(int_max, -1) == int_max && sat_sub(int_min, int_min) == 0);
 static_assert(sat_sub(0, int_min) == int_max);
-static_assert(sat_mul(int_max, 2) == int_max && sat_mul(int_min, 2) == int_min && sat_mul(int_min, -1) == int_max);
-static_assert(sat_mul(int_max, int_max) == int_max && sat_mul(int_min, int_min) == int_max && sat_mul(-3, 4) == -12);
 static_assert(saturate_to<std::int32_t>(std::int64_t{1} << 40U) == int_max);
 static_assert(saturate_to<std::int32_t>(-(std::int64_t{1} << 40U)) == int_min);
 static_assert(saturate_to<std::uint32_t>(-1) == 0U);
@@ -79,27 +77,62 @@ static_assert(detail::ceil_pixels(0) == 0 && detail::ceil_pixels(1) == 1 && deta
 static_assert(detail::ceil_pixels(std::int64_t{1} << 50U) == int_max);
 
 // --- Geometry ---
-static_assert(Size{-1, -1} == Size{0, 0} && Size{int_min, 5}.width() == 0 && Size{5, int_min}.empty());
-static_assert(Size{int_max, int_max}.width() == int_max);
-static_assert((Point{int_max, int_min} + Point{1, -1}) == Point{int_max, int_min});
-static_assert((Point{int_min, int_max} - Point{1, -1}) == Point{int_min, int_max});
-static_assert(Rect{Point{int_max, int_max}, Size{10, 10}}.right() == int_max && Rect{Point{int_max, int_max}, Size{10, 10}}.bottom() == int_max);
-static_assert(Rect{Point{int_max - 1, 0}, Size{10, 10}}.contains(Point{int_max, 5}));
-static_assert(!Rect{Point{int_max, 0}, Size{0, 10}}.contains(Point{int_max, 5}));
-static_assert(Rect{Point{int_min, int_min}, Size{int_max, int_max}}.contains(Point{int_min, int_min}));
-static_assert(!Rect{Point{int_min, int_min}, Size{int_max, int_max}}.contains(Point{-1, -1}));
-static_assert(Rect{Point{int_min, int_min}, Size{int_max, int_max}}.contains(Point{-2, -2}));
-static_assert(!Rect{Point{0, 0}, Size{10, 10}}.contains(Point{10, 0}) && !Rect{Point{0, 0}, Size{10, 10}}.contains(Point{-1, 0}));
+static_assert(Size{Width{-1}, Height{-1}} == Size{Width{0}, Height{0}} && Size{Width{int_min}, Height{5}}.width() == Width{} && Size{Width{5}, Height{int_min}}.empty());
+static_assert(Size{Width{int_max}, Height{int_max}}.width() == Width{int_max});
+static_assert(Left{int_max} + Width{1} == Right{int_max} && Top{int_max} + Height{1} == Bottom{int_max});
+static_assert(Right{int_min} - Width{1} == Left{int_min} && Bottom{int_min} - Height{1} == Top{int_min});
+static_assert(Right{int_max} - Left{int_min} == Width{int_max} && Bottom{int_max} - Top{int_min} == Height{int_max}, "the length saturates");
+static_assert(Right{int_min} - Left{int_max} == Width{} && Bottom{int_min} - Top{int_max} == Height{}, "and is never negative");
+static_assert(Left{3} + Width{4} == Right{7} && Right{7} - Left{3} == Width{4} && Right{7} - Width{4} == Left{3});
+static_assert(Top{3} + Height{4} == Bottom{7} && Bottom{7} - Top{3} == Height{4} && Bottom{7} - Height{4} == Top{3});
+static_assert(Width{3} + Width{4} == Width{7} && Width{3} - Width{4} == Width{} && Width{int_max} + Width{int_max} == Width{int_max});
+static_assert(Height{3} + Height{4} == Height{7} && Height{3} - Height{4} == Height{} && Height{int_max} + Height{1} == Height{int_max});
+static_assert(Width{-1} == Width{} && Width{int_min} == Width{} && Height{-1} == Height{}, "a length is never negative");
+static_assert(left_after(Right{5}) == Left{5} && top_after(Bottom{5}) == Top{5});
+static_assert(Point{} == Point{Left{}, Top{}} && Size{}.empty() && Size{Width{1}, Height{}}.empty() && !Size{Width{1}, Height{1}}.empty());
+
+// Each is its own type, with no conversion to or from an integer or each other, in either direction.
+template <class A, class B>
+concept Interchangeable = std::constructible_from<A, B> || std::constructible_from<B, A> || std::convertible_to<A, B> || std::convertible_to<B, A>;
+template <class T>
+concept NoLooseIntegers = !std::convertible_to<int, T> && !std::convertible_to<T, int> && !std::constructible_from<int, T> &&
+                          !std::constructible_from<T, std::int64_t> && !std::constructible_from<T, std::uint32_t> &&
+                          !std::constructible_from<T, bool> && !std::constructible_from<T, double> && std::constructible_from<T, std::int32_t>;
+static_assert(NoLooseIntegers<Left> && NoLooseIntegers<Right> && NoLooseIntegers<Top> && NoLooseIntegers<Bottom> && NoLooseIntegers<Width> && NoLooseIntegers<Height>);
+static_assert(!Interchangeable<Left, Right> && !Interchangeable<Left, Top> && !Interchangeable<Left, Bottom> && !Interchangeable<Left, Width> && !Interchangeable<Left, Height>);
+static_assert(!Interchangeable<Right, Top> && !Interchangeable<Right, Bottom> && !Interchangeable<Right, Width> && !Interchangeable<Right, Height>);
+static_assert(!Interchangeable<Top, Bottom> && !Interchangeable<Top, Width> && !Interchangeable<Top, Height>);
+static_assert(!Interchangeable<Bottom, Width> && !Interchangeable<Bottom, Height> && !Interchangeable<Width, Height>);
+// Only the arithmetic that means something exists.
+template <class A, class B>
+concept Adds = requires(A a, B b) { a + b; };
+template <class A, class B>
+concept Subtracts = requires(A a, B b) { a - b; };
+template <class A, class B>
+concept Compares = requires(A a, B b) { a == b; };
+static_assert(!Adds<Left, Left> && !Adds<Left, Right> && !Adds<Left, Top> && !Adds<Left, Height> && !Adds<Right, Width> && !Adds<Width, Left> && !Adds<Width, Height> && !Adds<Top, Width>);
+static_assert(!Subtracts<Left, Left> && !Subtracts<Left, Right> && !Subtracts<Left, Width> && !Subtracts<Right, Right> && !Subtracts<Right, Top> && !Subtracts<Width, Height>);
+static_assert(!Adds<Left, int> && !Adds<Width, int> && !Subtracts<Right, int> && !Compares<Left, int> && !Compares<Width, int> && !Compares<Left, Right> && !Compares<Width, Height>);
+static_assert(!std::constructible_from<Size, int, int> && !std::constructible_from<Size, Height, Width> && !std::constructible_from<Size, Width, Width>);
+static_assert(!std::constructible_from<Point, int, int> && !std::constructible_from<Point, Top, Left> && !std::constructible_from<Point, Width, Height>);
+static_assert(!std::constructible_from<Rect, Size, Point> && !std::constructible_from<Rect, Left, Top, Width, Height>);
+static_assert(Rect{Point{Left{int_max}, Top{int_max}}, Size{Width{10}, Height{10}}}.right() == Right{int_max} && Rect{Point{Left{int_max}, Top{int_max}}, Size{Width{10}, Height{10}}}.bottom() == Bottom{int_max});
+static_assert(Rect{Point{Left{int_max - 1}, Top{0}}, Size{Width{10}, Height{10}}}.contains(Point{Left{int_max}, Top{5}}));
+static_assert(!Rect{Point{Left{int_max}, Top{0}}, Size{Width{0}, Height{10}}}.contains(Point{Left{int_max}, Top{5}}));
+static_assert(Rect{Point{Left{int_min}, Top{int_min}}, Size{Width{int_max}, Height{int_max}}}.contains(Point{Left{int_min}, Top{int_min}}));
+static_assert(!Rect{Point{Left{int_min}, Top{int_min}}, Size{Width{int_max}, Height{int_max}}}.contains(Point{Left{-1}, Top{-1}}));
+static_assert(Rect{Point{Left{int_min}, Top{int_min}}, Size{Width{int_max}, Height{int_max}}}.contains(Point{Left{-2}, Top{-2}}));
+static_assert(!Rect{Point{Left{0}, Top{0}}, Size{Width{10}, Height{10}}}.contains(Point{Left{10}, Top{0}}) && !Rect{Point{Left{0}, Top{0}}, Size{Width{10}, Height{10}}}.contains(Point{Left{-1}, Top{0}}));
 static_assert(!Rect{}.contains(Point{}));
-static_assert(Rect{Point{0, 0}, Size{10, 10}}.intersect(Rect{Point{5, 5}, Size{10, 10}}) == Rect{Point{5, 5}, Size{5, 5}});
-static_assert(Rect{Point{0, 0}, Size{10, 10}}.intersect(Rect{Point{10, 0}, Size{10, 10}}).empty());
-static_assert(Rect{Point{0, 0}, Size{10, 10}}.intersect(Rect{Point{-5, -5}, Size{3, 3}}).empty());
-static_assert(Rect{Point{int_max, int_max}, Size{int_max, int_max}}.intersect(Rect{Point{int_min, int_min}, Size{int_max, int_max}}).empty());
-static_assert(Rect{Point{int_min, int_min}, Size{int_max, int_max}}.intersect(Rect{Point{int_min, int_min}, Size{int_max, int_max}}) == Rect{Point{int_min, int_min}, Size{int_max, int_max}});
-static_assert(Rect{Point{int_max - 1, 0}, Size{int_max, 4}}.intersect(Rect{Point{0, 0}, Size{int_max, 4}}) == Rect{Point{int_max - 1, 0}, Size{1, 4}});
-static_assert(Rect{Point{int_max - 2, 0}, Size{int_max, 4}}.intersect(Rect{Point{0, 0}, Size{int_max, 4}}) == Rect{Point{int_max - 2, 0}, Size{2, 4}});
-static_assert(Rect{Point{0, 0}, Size{4, 4}}.inset(3).empty() && Rect{Point{0, 0}, Size{10, 10}}.inset(2) == Rect{Point{2, 2}, Size{6, 6}});
-static_assert(Rect{Point{int_max, int_min}, Size{4, 4}}.inset(int_max).empty());
+static_assert(Rect{Point{Left{0}, Top{0}}, Size{Width{10}, Height{10}}}.intersect(Rect{Point{Left{5}, Top{5}}, Size{Width{10}, Height{10}}}) == Rect{Point{Left{5}, Top{5}}, Size{Width{5}, Height{5}}});
+static_assert(Rect{Point{Left{0}, Top{0}}, Size{Width{10}, Height{10}}}.intersect(Rect{Point{Left{10}, Top{0}}, Size{Width{10}, Height{10}}}).empty());
+static_assert(Rect{Point{Left{0}, Top{0}}, Size{Width{10}, Height{10}}}.intersect(Rect{Point{Left{-5}, Top{-5}}, Size{Width{3}, Height{3}}}).empty());
+static_assert(Rect{Point{Left{int_max}, Top{int_max}}, Size{Width{int_max}, Height{int_max}}}.intersect(Rect{Point{Left{int_min}, Top{int_min}}, Size{Width{int_max}, Height{int_max}}}).empty());
+static_assert(Rect{Point{Left{int_min}, Top{int_min}}, Size{Width{int_max}, Height{int_max}}}.intersect(Rect{Point{Left{int_min}, Top{int_min}}, Size{Width{int_max}, Height{int_max}}}) == Rect{Point{Left{int_min}, Top{int_min}}, Size{Width{int_max}, Height{int_max}}});
+static_assert(Rect{Point{Left{int_max - 1}, Top{0}}, Size{Width{int_max}, Height{4}}}.intersect(Rect{Point{Left{0}, Top{0}}, Size{Width{int_max}, Height{4}}}) == Rect{Point{Left{int_max - 1}, Top{0}}, Size{Width{1}, Height{4}}});
+static_assert(Rect{Point{Left{int_max - 2}, Top{0}}, Size{Width{int_max}, Height{4}}}.intersect(Rect{Point{Left{0}, Top{0}}, Size{Width{int_max}, Height{4}}}) == Rect{Point{Left{int_max - 2}, Top{0}}, Size{Width{2}, Height{4}}});
+static_assert(Rect{Point{Left{0}, Top{0}}, Size{Width{4}, Height{4}}}.inset(Width{3}, Height{3}).empty() && Rect{Point{Left{0}, Top{0}}, Size{Width{10}, Height{10}}}.inset(Width{2}, Height{2}) == Rect{Point{Left{2}, Top{2}}, Size{Width{6}, Height{6}}});
+static_assert(Rect{Point{Left{int_max}, Top{int_min}}, Size{Width{4}, Height{4}}}.inset(Width{int_max}, Height{int_max}).empty());
 
 // --- UTF-8 ---
 static_assert(valid_utf8("") && valid_utf8("Help") && valid_utf8("caf\xC3\xA9"));
@@ -120,12 +153,12 @@ static_assert(!valid_utf8("a\xC3") && !valid_utf8("\xC3(") && !valid_utf8("\xE2(
 // --- Limits ---
 consteval bool refused(Size size) { return !PixelBuffer::byte_size(size).has_value(); }
 static_assert(PixelBuffer::byte_size(Size{}).value() == 0);
-static_assert(PixelBuffer::byte_size(Size{0, max_buffer_side}).value() == 0);
-static_assert(PixelBuffer::byte_size(Size{1, 1}).value() == 4);
+static_assert(PixelBuffer::byte_size(Size{Width{0}, Height{max_buffer_side}}).value() == 0);
+static_assert(PixelBuffer::byte_size(Size{Width{1}, Height{1}}).value() == 4);
 static_assert(max_buffer_side == 8192);
-static_assert(PixelBuffer::byte_size(Size{max_buffer_side, max_buffer_side}).value() == std::size_t{1} << 28U, "256 MiB at most");
-static_assert(refused(Size{max_buffer_side + 1, 1}) && refused(Size{1, max_buffer_side + 1}));
-static_assert(refused(Size{int_max, int_max}) && refused(Size{46341, 46341}) && refused(Size{65536, 65536}));
+static_assert(PixelBuffer::byte_size(Size{Width{max_buffer_side}, Height{max_buffer_side}}).value() == std::size_t{1} << 28U, "256 MiB at most");
+static_assert(refused(Size{Width{max_buffer_side + 1}, Height{1}}) && refused(Size{Width{1}, Height{max_buffer_side + 1}}));
+static_assert(refused(Size{Width{int_max}, Height{int_max}}) && refused(Size{Width{46341}, Height{46341}}) && refused(Size{Width{65536}, Height{65536}}));
 static_assert(max_caption_bytes == 4096 && max_run_width > 0 && max_run_area > 0);
 
 // A shaped run's glyph count, at the limit.
@@ -145,12 +178,12 @@ static_assert(!detail::glyph_pitch_fits(int_max, int_max) && !detail::glyph_pitc
 static_assert(detail::max_glyph_bytes == 512U * 2048U);
 
 // A run's coverage must hold one byte per pixel. A violation aborts: see tests/test_text.cpp.
-static_assert(detail::coverage_fits(Size{}, 0) && detail::coverage_fits(Size{3, 4}, 12));
-static_assert(!detail::coverage_fits(Size{3, 4}, 11) && !detail::coverage_fits(Size{3, 4}, 13) && !detail::coverage_fits(Size{}, 1));
-static_assert(!detail::coverage_fits(Size{int_max, int_max}, 0));
-static_assert(detail::coverage_fits(Size{int_max, int_max}, std::size_t{2147483647} * std::size_t{2147483647}));
-static_assert(!detail::coverage_fits(Size{int_max, int_max}, std::numeric_limits<std::size_t>::max()));
-static_assert(TextRun{Size{2, 2}, std::vector<std::uint8_t>(4, 7)}.coverage_at(1, 1) == 7);
+static_assert(TextRun::fits(Size{}, 0) && TextRun::fits(Size{Width{3}, Height{4}}, 12));
+static_assert(!TextRun::fits(Size{Width{3}, Height{4}}, 11) && !TextRun::fits(Size{Width{3}, Height{4}}, 13) && !TextRun::fits(Size{}, 1));
+static_assert(!TextRun::fits(Size{Width{int_max}, Height{int_max}}, 0));
+static_assert(TextRun::fits(Size{Width{int_max}, Height{int_max}}, std::size_t{2147483647} * std::size_t{2147483647}));
+static_assert(!TextRun::fits(Size{Width{int_max}, Height{int_max}}, std::numeric_limits<std::size_t>::max()));
+static_assert(TextRun{Size{Width{2}, Height{2}}, std::vector<std::uint8_t>(4, 7)}.coverage_at(Point{Left{1}, Top{1}}) == 7);
 static_assert(TextRun{Size{}, std::vector<std::uint8_t>{}}.size().empty());
 
 consteval bool buffer_create_checks() {
@@ -158,13 +191,13 @@ consteval bool buffer_create_checks() {
     const auto accepted = [&storage](Size size, std::int32_t stride) {
         return PixelBuffer::create(storage, size, stride).has_value();
     };
-    if (!accepted(Size{3, 4}, 12)) return false;
-    if (!accepted(Size{2, 3}, 16)) return false;
-    if (accepted(Size{3, 5}, 12)) return false;  // too little storage
-    if (accepted(Size{3, 4}, 8)) return false;   // stride under the width
-    if (accepted(Size{3, 4}, 13)) return false;  // not whole pixels
-    if (accepted(Size{3, 4}, -4)) return false;
-    if (accepted(Size{1, max_buffer_side}, int_max - 3)) return false;
+    if (!accepted(Size{Width{3}, Height{4}}, 12)) return false;
+    if (!accepted(Size{Width{2}, Height{3}}, 16)) return false;
+    if (accepted(Size{Width{3}, Height{5}}, 12)) return false;  // too little storage
+    if (accepted(Size{Width{3}, Height{4}}, 8)) return false;   // stride under the width
+    if (accepted(Size{Width{3}, Height{4}}, 13)) return false;  // not whole pixels
+    if (accepted(Size{Width{3}, Height{4}}, -4)) return false;
+    if (accepted(Size{Width{1}, Height{max_buffer_side}}, int_max - 3)) return false;
     return true;
 }
 static_assert(buffer_create_checks());
@@ -177,17 +210,17 @@ consteval bool canvas_stays_inside() {
     storage.fill(guard);
     // A 4x4 buffer in the middle of the storage, with rows 8 pixels apart.
     const std::span<std::uint32_t> inner = std::span{storage}.subspan(18);
-    const Canvas canvas{PixelBuffer::create(inner, Size{4, 4}, 32).value()};
-    const std::array<Rect, 12> shapes{Rect{Point{int_min, int_min}, Size{int_max, int_max}}, Rect{Point{int_max, int_max}, Size{int_max, int_max}},
-                                      Rect{Point{-100, -100}, Size{100, 100}},               Rect{Point{4, 0}, Size{10, 10}},
-                                      Rect{Point{0, 4}, Size{10, 10}},                       Rect{Point{-5, 1}, Size{6, 1}},
-                                      Rect{Point{3, 3}, Size{int_max, int_max}},             Rect{Point{1, 1}, Size{0, 0}},
-                                      Rect{Point{-1, -1}, Size{6, 6}},                       Rect{Point{int_min, 0}, Size{int_max, 2}},
-                                      Rect{Point{0, int_max - 1}, Size{4, 4}},               Rect{Point{int_max - 1, 0}, Size{4, 4}}};
+    const Canvas canvas{PixelBuffer::create(inner, Size{Width{4}, Height{4}}, 32).value()};
+    const std::array<Rect, 12> shapes{Rect{Point{Left{int_min}, Top{int_min}}, Size{Width{int_max}, Height{int_max}}}, Rect{Point{Left{int_max}, Top{int_max}}, Size{Width{int_max}, Height{int_max}}},
+                                      Rect{Point{Left{-100}, Top{-100}}, Size{Width{100}, Height{100}}},               Rect{Point{Left{4}, Top{0}}, Size{Width{10}, Height{10}}},
+                                      Rect{Point{Left{0}, Top{4}}, Size{Width{10}, Height{10}}},                       Rect{Point{Left{-5}, Top{1}}, Size{Width{6}, Height{1}}},
+                                      Rect{Point{Left{3}, Top{3}}, Size{Width{int_max}, Height{int_max}}},             Rect{Point{Left{1}, Top{1}}, Size{Width{0}, Height{0}}},
+                                      Rect{Point{Left{-1}, Top{-1}}, Size{Width{6}, Height{6}}},                       Rect{Point{Left{int_min}, Top{0}}, Size{Width{int_max}, Height{2}}},
+                                      Rect{Point{Left{0}, Top{int_max - 1}}, Size{Width{4}, Height{4}}},               Rect{Point{Left{int_max - 1}, Top{0}}, Size{Width{4}, Height{4}}}};
     for (const Rect& shape : shapes) {
         canvas.fill_rect(shape, Color{1});
         canvas.stroke_rect(shape, Color{2});
-        canvas.clipped(Rect{Point{1, 1}, Size{2, 2}}).fill_rect(shape, Color{3});
+        canvas.clipped(Rect{Point{Left{1}, Top{1}}, Size{Width{2}, Height{2}}}).fill_rect(shape, Color{3});
     }
     for (std::size_t y = 0; y < 8; ++y) {
         for (std::size_t x = 0; x < 8; ++x) {
@@ -201,18 +234,18 @@ static_assert(canvas_stays_inside());
 
 consteval bool canvas_clip_and_text() {
     std::array<std::uint32_t, 16> storage{};
-    const Canvas canvas{PixelBuffer::create(storage, Size{4, 4}, 16).value()};
-    const TextRun run{Size{4, 4}, std::vector<std::uint8_t>(16, 255)};
-    canvas.clipped(Rect{Point{1, 1}, Size{2, 2}}).draw_text(Point{0, 0}, run, Color{0xFF112233U});
+    const Canvas canvas{PixelBuffer::create(storage, Size{Width{4}, Height{4}}, 16).value()};
+    const TextRun run{Size{Width{4}, Height{4}}, std::vector<std::uint8_t>(16, 255)};
+    canvas.clipped(Rect{Point{Left{1}, Top{1}}, Size{Width{2}, Height{2}}}).draw_text(Point{Left{0}, Top{0}}, run, Color{0xFF112233U});
     for (std::size_t y = 0; y < 4; ++y) {
         for (std::size_t x = 0; x < 4; ++x) {
             const bool inside = x >= 1 && x < 3 && y >= 1 && y < 3;
             if (storage[y * 4 + x] != (inside ? 0xFF112233U : 0U)) return false;
         }
     }
-    canvas.draw_text(Point{int_max, int_max}, run, Color{1});
-    canvas.draw_text(Point{int_min, int_min}, run, Color{1});
-    canvas.draw_text(Point{-3, -3}, run, Color{0xFF000000U});
+    canvas.draw_text(Point{Left{int_max}, Top{int_max}}, run, Color{1});
+    canvas.draw_text(Point{Left{int_min}, Top{int_min}}, run, Color{1});
+    canvas.draw_text(Point{Left{-3}, Top{-3}}, run, Color{0xFF000000U});
     return storage[0] == 0xFF000000U && storage[5] == 0xFF112233U;
 }
 static_assert(canvas_clip_and_text());
@@ -222,12 +255,12 @@ consteval bool glyph_blit_is_clipped() {
     const detail::GlyphBitmap bitmap{glyph, 2, 2, 2};
     std::array<std::uint8_t, 9> out{};
     constexpr std::int64_t huge = std::int64_t{1} << 40U;
-    detail::blit_glyph(bitmap, huge, huge, Size{3, 3}, out);
-    detail::blit_glyph(bitmap, -huge, -huge, Size{3, 3}, out);
+    TextRun::blit(bitmap, huge, huge, Size{Width{3}, Height{3}}, out);
+    TextRun::blit(bitmap, -huge, -huge, Size{Width{3}, Height{3}}, out);
     if (out != std::array<std::uint8_t, 9>{}) return false;
-    detail::blit_glyph(bitmap, 2, 2, Size{3, 3}, out);  // only the top-left of the glyph lands
+    TextRun::blit(bitmap, 2, 2, Size{Width{3}, Height{3}}, out);  // only the top-left of the glyph lands
     if (out[8] != 10 || out[7] != 0 || out[5] != 0) return false;
-    detail::blit_glyph(bitmap, -1, -1, Size{3, 3}, out);  // only the bottom-right lands
+    TextRun::blit(bitmap, -1, -1, Size{Width{3}, Height{3}}, out);  // only the bottom-right lands
     return out[0] == 40 && out[1] == 0 && out[3] == 0;
 }
 static_assert(glyph_blit_is_clipped());
@@ -379,8 +412,8 @@ static_assert(room(mib, 0, 0) == detail::FrameRoom::Ready && room(512 * mib, 0, 
 
 // --- A frame being drawn. The rule is one FrameLedger, which the Wayland backend shares. ---
 consteval bool the_current_frame_works() {
-    HeadlessBackend backend{Size{2, 2}};
-    auto frame = backend.acquire_frame(Size{2, 2});
+    HeadlessBackend backend{Size{Width{2}, Height{2}}};
+    auto frame = backend.acquire_frame(Size{Width{2}, Height{2}});
     if (!frame.has_value() || !backend.frame_pixels(*frame).has_value()) return false;
     if (!backend.present(std::move(*frame), Rect{}).has_value()) return false;
     return backend.presented() == 1;
@@ -388,9 +421,9 @@ consteval bool the_current_frame_works() {
 static_assert(the_current_frame_works());
 
 consteval bool a_newer_acquire_invalidates_a_frame() {
-    HeadlessBackend backend{Size{2, 2}};
-    auto older = backend.acquire_frame(Size{2, 2});
-    auto newer = backend.acquire_frame(Size{3, 3});
+    HeadlessBackend backend{Size{Width{2}, Height{2}}};
+    auto older = backend.acquire_frame(Size{Width{2}, Height{2}});
+    auto newer = backend.acquire_frame(Size{Width{3}, Height{3}});
     if (!older.has_value() || !newer.has_value()) return false;
     if (backend.frame_pixels(*older).error().code != ErrorCode::StaleFrame) return false;
     if (backend.present(std::move(*older), Rect{}).error().code != ErrorCode::StaleFrame) return false;
@@ -402,17 +435,17 @@ static_assert(a_newer_acquire_invalidates_a_frame());
 
 // The old dangling-buffer path: acquire one size, then fail to acquire another, then use the first.
 consteval bool a_failed_acquire_still_invalidates() {
-    HeadlessBackend backend{Size{2, 2}};
-    auto older = backend.acquire_frame(Size{2, 2});
-    if (!older.has_value() || backend.acquire_frame(Size{int_max, int_max}).has_value()) return false;
+    HeadlessBackend backend{Size{Width{2}, Height{2}}};
+    auto older = backend.acquire_frame(Size{Width{2}, Height{2}});
+    if (!older.has_value() || backend.acquire_frame(Size{Width{int_max}, Height{int_max}}).has_value()) return false;
     if (backend.frame_pixels(*older).error().code != ErrorCode::StaleFrame) return false;
     return backend.present(std::move(*older), Rect{}).error().code == ErrorCode::StaleFrame && backend.presented() == 0;
 }
 static_assert(a_failed_acquire_still_invalidates());
 
 consteval bool a_frame_moved_from_is_refused() {
-    HeadlessBackend backend{Size{2, 2}};
-    auto frame = backend.acquire_frame(Size{2, 2});
+    HeadlessBackend backend{Size{Width{2}, Height{2}}};
+    auto frame = backend.acquire_frame(Size{Width{2}, Height{2}});
     if (!frame.has_value()) return false;
     Frame<HeadlessBackend> taken = std::move(*frame);
     if (backend.frame_pixels(*frame).error().code != ErrorCode::StaleFrame) return false;
@@ -426,10 +459,10 @@ consteval bool a_frame_moved_from_is_refused() {
 static_assert(a_frame_moved_from_is_refused());
 
 consteval bool a_presented_frame_ends() {
-    HeadlessBackend backend{Size{2, 2}};
-    auto frame = backend.acquire_frame(Size{2, 2});
+    HeadlessBackend backend{Size{Width{2}, Height{2}}};
+    auto frame = backend.acquire_frame(Size{Width{2}, Height{2}});
     if (!frame.has_value()) return false;
-    auto second = backend.acquire_frame(Size{2, 2});
+    auto second = backend.acquire_frame(Size{Width{2}, Height{2}});
     if (!second.has_value() || !backend.present(std::move(*second), Rect{}).has_value()) return false;
     return backend.frame_pixels(*second).error().code == ErrorCode::StaleFrame &&
            backend.present(std::move(*frame), Rect{}).error().code == ErrorCode::StaleFrame;
@@ -454,24 +487,24 @@ static_assert(!HasBackend<Window<>> && !HasBackend<Application<HeadlessBackend, 
 
 // --- Frame ---
 using Frame = WindowFrame<DefaultFrameMetrics>;
-constexpr Size frame_window{200, 100};
-static_assert(Frame::hit(Point{-1, 0}, frame_window).region == FrameRegion::Outside);
-static_assert(Frame::hit(Point{200, 0}, frame_window).region == FrameRegion::Outside);
-static_assert(Frame::hit(Point{int_max, int_min}, frame_window).region == FrameRegion::Outside);
-static_assert(Frame::hit(Point{0, 0}, frame_window).edge == ResizeEdge::TopLeft);
-static_assert(Frame::hit(Point{199, 0}, frame_window).edge == ResizeEdge::TopRight);
-static_assert(Frame::hit(Point{0, 99}, frame_window).edge == ResizeEdge::BottomLeft);
-static_assert(Frame::hit(Point{199, 99}, frame_window).edge == ResizeEdge::BottomRight);
-static_assert(Frame::hit(Point{100, 0}, frame_window).edge == ResizeEdge::Top);
-static_assert(Frame::hit(Point{100, 99}, frame_window).edge == ResizeEdge::Bottom);
-static_assert(Frame::hit(Point{0, 50}, frame_window).edge == ResizeEdge::Left);
-static_assert(Frame::hit(Point{199, 50}, frame_window).edge == ResizeEdge::Right);
-static_assert(Frame::hit(Point{100, 10}, frame_window).region == FrameRegion::Title);
-static_assert(Frame::hit(Point{100, 50}, frame_window).region == FrameRegion::Client);
-static_assert(Frame::hit(Point{Frame::close_box(frame_window).x(), 10}, frame_window).region == FrameRegion::Close);
-static_assert(Frame::client_rect(Size{}).empty() && Frame::client_rect(Size{1, 1}).empty());
-static_assert(Frame::client_rect(Size{int_max, int_max}).width() > 0);
-static_assert(Frame::hit(Point{0, 0}, Size{}).region == FrameRegion::Outside);
+constexpr Size frame_window{Width{200}, Height{100}};
+static_assert(Frame::hit(Point{Left{-1}, Top{0}}, frame_window).region == FrameRegion::Outside);
+static_assert(Frame::hit(Point{Left{200}, Top{0}}, frame_window).region == FrameRegion::Outside);
+static_assert(Frame::hit(Point{Left{int_max}, Top{int_min}}, frame_window).region == FrameRegion::Outside);
+static_assert(Frame::hit(Point{Left{0}, Top{0}}, frame_window).edge == ResizeEdge::TopLeft);
+static_assert(Frame::hit(Point{Left{199}, Top{0}}, frame_window).edge == ResizeEdge::TopRight);
+static_assert(Frame::hit(Point{Left{0}, Top{99}}, frame_window).edge == ResizeEdge::BottomLeft);
+static_assert(Frame::hit(Point{Left{199}, Top{99}}, frame_window).edge == ResizeEdge::BottomRight);
+static_assert(Frame::hit(Point{Left{100}, Top{0}}, frame_window).edge == ResizeEdge::TopSide);
+static_assert(Frame::hit(Point{Left{100}, Top{99}}, frame_window).edge == ResizeEdge::BottomSide);
+static_assert(Frame::hit(Point{Left{0}, Top{50}}, frame_window).edge == ResizeEdge::LeftSide);
+static_assert(Frame::hit(Point{Left{199}, Top{50}}, frame_window).edge == ResizeEdge::RightSide);
+static_assert(Frame::hit(Point{Left{100}, Top{10}}, frame_window).region == FrameRegion::Title);
+static_assert(Frame::hit(Point{Left{100}, Top{50}}, frame_window).region == FrameRegion::Client);
+static_assert(Frame::hit(Point{Frame::close_box(frame_window).left(), Top{10}}, frame_window).region == FrameRegion::Close);
+static_assert(Frame::client_rect(Size{}).empty() && Frame::client_rect(Size{Width{1}, Height{1}}).empty());
+static_assert(Frame::client_rect(Size{Width{int_max}, Height{int_max}}).width() > Width{});
+static_assert(Frame::hit(Point{Left{0}, Top{0}}, Size{}).region == FrameRegion::Outside);
 
 // Metrics are compile-time values, each set of them a different type, and every size follows them.
 struct ThickMetrics {
@@ -485,14 +518,14 @@ static_assert(FrameMetrics<DefaultFrameMetrics> && FrameMetrics<ThickMetrics>);
 static_assert(!std::same_as<Frame, ThickFrame>);
 static_assert(Widget<Frame> && Widget<ThickFrame>);
 static_assert(Frame::edge_width == 4 && Frame::corner_length == 12 && Frame::title_height == 24 && Frame::close_side == 16);
-static_assert(Frame::client_rect(frame_window) == Rect{Point{4, 24}, Size{192, 72}});
-static_assert(ThickFrame::client_rect(frame_window) == Rect{Point{8, 32}, Size{184, 60}});
-static_assert(Frame::close_box(frame_window) == Rect{Point{176, 4}, Size{16, 16}});
-static_assert(ThickFrame::close_box(frame_window) == Rect{Point{166, 6}, Size{20, 20}});
-static_assert(Frame::hit(Point{6, 50}, frame_window).region == FrameRegion::Client);
-static_assert(ThickFrame::hit(Point{6, 50}, frame_window).edge == ResizeEdge::Left);
-static_assert(Frame::hit(Point{100, 28}, frame_window).region == FrameRegion::Client);
-static_assert(ThickFrame::hit(Point{100, 28}, frame_window).region == FrameRegion::Title);
+static_assert(Frame::client_rect(frame_window) == Rect{Point{Left{4}, Top{24}}, Size{Width{192}, Height{72}}});
+static_assert(ThickFrame::client_rect(frame_window) == Rect{Point{Left{8}, Top{32}}, Size{Width{184}, Height{60}}});
+static_assert(Frame::close_box(frame_window) == Rect{Point{Left{176}, Top{4}}, Size{Width{16}, Height{16}}});
+static_assert(ThickFrame::close_box(frame_window) == Rect{Point{Left{166}, Top{6}}, Size{Width{20}, Height{20}}});
+static_assert(Frame::hit(Point{Left{6}, Top{50}}, frame_window).region == FrameRegion::Client);
+static_assert(ThickFrame::hit(Point{Left{6}, Top{50}}, frame_window).edge == ResizeEdge::LeftSide);
+static_assert(Frame::hit(Point{Left{100}, Top{28}}, frame_window).region == FrameRegion::Client);
+static_assert(ThickFrame::hit(Point{Left{100}, Top{28}}, frame_window).region == FrameRegion::Title);
 
 using namespace refused_metrics;
 static_assert(!FrameMetrics<NoCloseSide> && !FrameMetrics<NotConstant> && !FrameMetrics<WrongFieldType>);
@@ -504,10 +537,10 @@ struct BlockShaper {
     [[nodiscard]] constexpr std::expected<TextRun, Error> shape(std::string_view text) const {
         if (text.size() > max_caption_bytes) return make_error(ErrorCode::TextTooLong, "too long");
         if (!valid_utf8(text)) return make_error(ErrorCode::InvalidUtf8, "invalid");
-        const Size size{saturate_to<std::int32_t>(text.size() * 2), 4};
+        const Size size{Width{saturate_to<std::int32_t>(text.size() * 2)}, Height{4}};
         return TextRun{size, std::vector<std::uint8_t>(text.size() * 2 * 4, 255)};
     }
-    [[nodiscard]] constexpr std::int32_t line_height() const noexcept { return 4; }
+    [[nodiscard]] constexpr Height line_height() const noexcept { return Height{4}; }
 };
 static_assert(TextShaper<BlockShaper>);
 
@@ -571,7 +604,7 @@ static_assert(messages_reach_receivers_in_order());
 // Receivers are whole widgets, which the tree lays out and paints like any other.
 consteval bool receivers_are_widgets() {
     auto ui = window(Counter{}, Silent{});
-    const Rect area{Point{0, 0}, Size{2, 2}};
+    const Rect area{Point{Left{0}, Top{0}}, Size{Width{2}, Height{2}}};
     const auto left = ui.layout(area, BlockShaper{});
     const bool passed_through = left.has_value() && *left == area;
     std::array<std::uint32_t, 4> pixels{};
@@ -588,10 +621,10 @@ constexpr auto bump_on_click = [](auto& u) -> void { u.template send<Bump>(); };
 
 consteval bool button_click_rules() {
     auto ui = window(menu_bar(button<ClickTag>(caption, bump_on_click)), Counter{});
-    static_cast<void>(ui.layout(Rect{Point{0, 0}, Size{100, 40}}, BlockShaper{}));
+    static_cast<void>(ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{100}, Height{40}}}, BlockShaper{}));
     auto& target = ui.get<ClickTag>();
-    const Point on{target.bounds().x() + 1, target.bounds().y() + 1};
-    const Point off{99, 39};
+    const Point on = jgui_test::inside(target.bounds(), 1, 1);
+    const Point off{Left{99}, Top{39}};
     const auto count = [&] { return ui.get<CountTag>().value; };
 
     ui.dispatch(PointerPress{on, MouseButton::Left});
@@ -625,8 +658,8 @@ consteval bool self_destruction_is_deferred() {
     auto ui = window(Dynamic<ItemTag, KillButton, std::vector>{});
     auto& node = ui.get<ItemTag>();
     const Handle<KillButton> handle = node.create("x", kill).value();
-    static_cast<void>(ui.layout(Rect{Point{0, 0}, Size{50, 20}}, BlockShaper{}));
-    const Point on{1, 1};
+    static_cast<void>(ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{20}}}, BlockShaper{}));
+    const Point on{Left{1}, Top{1}};
     ui.dispatch(PointerPress{on, MouseButton::Left});
     ui.dispatch(PointerRelease{on, MouseButton::Left});
     if (observed != 40 || node.find(handle) != nullptr || node.shown()) return false;
@@ -645,8 +678,8 @@ consteval bool capture_and_focus_go_inert() {
     auto ui = window(Dynamic<ItemTag, FireButton, std::vector>{});
     auto& node = ui.get<ItemTag>();
     const Handle<FireButton> handle = node.create("x", fire).value();
-    static_cast<void>(ui.layout(Rect{Point{0, 0}, Size{50, 20}}, BlockShaper{}));
-    const Point on{1, 1};
+    static_cast<void>(ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{20}}}, BlockShaper{}));
+    const Point on{Left{1}, Top{1}};
     ui.dispatch(PointerPress{on, MouseButton::Left});
     if (node.captured() == nullptr || node.focused() == nullptr || !ui.capture_active()) return false;
     node.destroy(handle);
@@ -668,8 +701,8 @@ struct Recorder {
     constexpr void paint(Canvas&) {}
     template <class Shaper>
     constexpr std::expected<Rect, Error> layout(Rect offered, const Shaper&) {
-        area = Rect{Point{offered.x(), offered.y()}, Size{offered.width(), 10}};
-        return Rect{Point{offered.x(), offered.y() + 10}, Size{offered.width(), offered.height() - 10}};
+        area = Rect{offered.origin(), Size{offered.width(), Height{10}}};
+        return Rect{Point{offered.left(), top_after(area.bottom())}, Size{offered.width(), offered.height() - Height{10}}};
     }
     template <class U>
     constexpr bool handle(U&, const PointerPress& event) { return area.contains(event.position); }
@@ -700,15 +733,15 @@ consteval bool dynamic_routes_to_the_holder_only() {
     auto& node = ui.get<ItemTag>();
     const Handle<Recorder> upper = node.create().value();
     const Handle<Recorder> lower = node.create().value();
-    static_cast<void>(ui.layout(Rect{Point{0, 0}, Size{50, 40}}, BlockShaper{}));
-    if (node.find(upper)->bounds() != Rect{Point{0, 0}, Size{50, 10}} || node.find(lower)->bounds() != Rect{Point{0, 10}, Size{50, 10}}) return false;
+    static_cast<void>(ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{40}}}, BlockShaper{}));
+    if (node.find(upper)->bounds() != Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{10}}} || node.find(lower)->bounds() != Rect{Point{Left{0}, Top{10}}, Size{Width{50}, Height{10}}}) return false;
     std::array<std::uint32_t, 1> pixel{};
-    Canvas canvas{PixelBuffer::create(pixel, Size{1, 1}, 4).value()};
+    Canvas canvas{PixelBuffer::create(pixel, Size{Width{1}, Height{1}}, 4).value()};
     ui.paint(canvas);
     ui.clear_damage();
     if (ui.damaged()) return false;
-    const Point on_upper{5, 5};
-    const Point on_lower{5, 15};
+    const Point on_upper{Left{5}, Top{5}};
+    const Point on_lower{Left{5}, Top{15}};
 
     // Pressing the lower item gives it the pointer and the focus.
     ui.dispatch(PointerPress{on_lower, MouseButton::Left});
@@ -742,24 +775,24 @@ static_assert(dynamic_routes_to_the_holder_only());
 
 consteval bool shaper_errors_reach_layout() {
     auto ui = window(label<ClickTag>("\xFF"));
-    const auto result = ui.layout(Rect{Point{0, 0}, Size{10, 10}}, BlockShaper{});
+    const auto result = ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{10}, Height{10}}}, BlockShaper{});
     return !result.has_value() && result.error().code == ErrorCode::InvalidUtf8;
 }
 static_assert(shaper_errors_reach_layout());
 
 consteval bool label_new_text_is_checked_by_layout() {
     auto ui = window(label<ClickTag>("good"));
-    if (!ui.layout(Rect{Point{0, 0}, Size{40, 40}}, BlockShaper{}).has_value() || ui.damaged()) return false;
+    if (!ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}}, BlockShaper{}).has_value() || ui.damaged()) return false;
     ui.get<ClickTag>().set_text("\xC0\x80");
     if (!ui.damaged()) return false;
-    if (ui.layout(Rect{Point{0, 0}, Size{40, 40}}, BlockShaper{}).has_value()) return false;
+    if (ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}}, BlockShaper{}).has_value()) return false;
     ui.get<ClickTag>().set_text("fine");
-    return ui.layout(Rect{Point{0, 0}, Size{40, 40}}, BlockShaper{}).has_value() && ui.get<ClickTag>().text() == "fine";
+    return ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}}, BlockShaper{}).has_value() && ui.get<ClickTag>().text() == "fine";
 }
 static_assert(label_new_text_is_checked_by_layout());
 
 // --- The real demo tree and application logic, from injected events to pixels, during compilation ---
-constexpr Size small_window{120, 60};
+constexpr Size small_window{Width{120}, Height{60}};
 
 consteval bool demo_help_toggles_in_pixels() {
     ApplicationCore core{HeadlessBackend{small_window}, demo::make_ui<std::vector>()};
@@ -767,14 +800,14 @@ consteval bool demo_help_toggles_in_pixels() {
     if (!core.process_pending(shaper).has_value() || core.frames() != 1) return false;
 
     const Rect target = core.ui().get<demo::HelpButton>().bounds();
-    const Point on{target.x() + 1, target.y() + 1};
+    const Point on = jgui_test::inside(target, 1, 1);
     const Rect bar = core.ui().get<MenuBarTag>().bounds();
-    const Rect below{Point{bar.x(), bar.bottom()}, Size{bar.width(), Frame::client_rect(small_window).bottom() - bar.bottom()}};
+    const Rect below{Point{bar.left(), top_after(bar.bottom())}, Size{bar.width(), Frame::client_rect(small_window).bottom() - top_after(bar.bottom())}};
     const auto text_pixels = [&] {
         int count = 0;
-        for (std::int32_t y = below.y(); y < below.bottom(); ++y)
-            for (std::int32_t x = below.x(); x < below.right(); ++x)
-                if (jgui_test::backend(core).pixel(Point{x, y}) != theme::background.argb) ++count;
+        for (std::int32_t y = jgui_test::number(below.top()); y < jgui_test::number(below.bottom()); ++y)
+            for (std::int32_t x = jgui_test::number(below.left()); x < jgui_test::number(below.right()); ++x)
+                if (jgui_test::backend(core).pixel(Point{Left{x}, Top{y}}) != theme::background.argb) ++count;
         return count;
     };
     const auto click = [&] {
@@ -799,22 +832,22 @@ consteval bool frame_routing_and_refused_sizes() {
     if (!core.process_pending(shaper).has_value() || core.frames() != frames) return false;
 
     // A title press starts a move with its serial, and an edge press a resize.
-    jgui_test::backend(core).inject(PointerButton{Point{60, 10}, MouseButton::Left, ButtonState::Pressed, Serial{11}});
-    jgui_test::backend(core).inject(PointerButton{Point{0, 30}, MouseButton::Left, ButtonState::Pressed, Serial{12}});
+    jgui_test::backend(core).inject(PointerButton{Point{Left{60}, Top{10}}, MouseButton::Left, ButtonState::Pressed, Serial{11}});
+    jgui_test::backend(core).inject(PointerButton{Point{Left{0}, Top{30}}, MouseButton::Left, ButtonState::Pressed, Serial{12}});
     if (!core.process_pending(shaper).has_value()) return false;
     if (jgui_test::backend(core).move_serial() != Serial{11} || jgui_test::backend(core).resize_serial() != Serial{12}) return false;
-    if (jgui_test::backend(core).resize_edge() != ResizeEdge::Left) return false;
+    if (jgui_test::backend(core).resize_edge() != ResizeEdge::LeftSide) return false;
 
     // An absurd size is refused and leaves the window as it was.
-    jgui_test::backend(core).inject(ResizeEvent{Size{int_max, int_max}});
+    jgui_test::backend(core).inject(ResizeEvent{Size{Width{int_max}, Height{int_max}}});
     const auto refused_result = core.process_pending(shaper);
     if (refused_result.has_value() || refused_result.error().code != ErrorCode::SizeLimit) return false;
     if (core.size() != small_window) return false;
 
     // Press on the close box, release off it: nothing. Press and release on it: closed.
-    const Point close = Point{Frame::close_box(small_window).x() + 1, Frame::close_box(small_window).y() + 1};
+    const Point close = jgui_test::inside(Frame::close_box(small_window), 1, 1);
     jgui_test::backend(core).inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, Serial{13}});
-    jgui_test::backend(core).inject(PointerButton{Point{60, 40}, MouseButton::Left, ButtonState::Released, Serial{14}});
+    jgui_test::backend(core).inject(PointerButton{Point{Left{60}, Top{40}}, MouseButton::Left, ButtonState::Released, Serial{14}});
     if (!core.process_pending(shaper).has_value() || core.closed()) return false;
     jgui_test::backend(core).inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, Serial{15}});
     jgui_test::backend(core).inject(PointerButton{close, MouseButton::Left, ButtonState::Released, Serial{16}});
@@ -825,7 +858,7 @@ static_assert(frame_routing_and_refused_sizes());
 // The frame is an ordinary node: the tree finds it and what it holds, and a childless frame works.
 consteval bool frame_is_a_node_of_the_tree() {
     auto ui = window(window_frame<ThickMetrics>(menu_bar(button<ClickTag>("x", bump_on_click)), Counter{}));
-    const Rect whole{Point{0, 0}, Size{120, 80}};
+    const Rect whole{Point{Left{0}, Top{0}}, Size{Width{120}, Height{80}}};
     detail::TestAccess::set_size(ui, whole.size());
     const auto left = ui.layout(whole, BlockShaper{});
     if (!left.has_value() || !left->empty()) return false;
@@ -836,7 +869,7 @@ consteval bool frame_is_a_node_of_the_tree() {
     auto empty = window(window_frame());
     detail::TestAccess::set_size(empty, whole.size());
     if (!empty.layout(whole, BlockShaper{}).has_value()) return false;
-    empty.dispatch(PointerPress{Point{60, 10}, MouseButton::Left, Serial{9}});
+    empty.dispatch(PointerPress{Point{Left{60}, Top{10}}, MouseButton::Left, Serial{9}});
     return detail::TestAccess::take_requests(empty).move == Serial{9} && !detail::TestAccess::take_requests(empty).move.has_value();
 }
 static_assert(frame_is_a_node_of_the_tree());
@@ -846,12 +879,12 @@ consteval bool thick_frame_through_the_application() {
     ApplicationCore core{HeadlessBackend{small_window}, window(window_frame<ThickMetrics>(label<ClickTag>("x")))};
     const BlockShaper shaper;
     if (!core.process_pending(shaper).has_value()) return false;
-    jgui_test::backend(core).inject(PointerButton{Point{6, 30}, MouseButton::Left, ButtonState::Pressed, Serial{21}});
-    jgui_test::backend(core).inject(PointerButton{Point{60, 28}, MouseButton::Left, ButtonState::Pressed, Serial{22}});
+    jgui_test::backend(core).inject(PointerButton{Point{Left{6}, Top{30}}, MouseButton::Left, ButtonState::Pressed, Serial{21}});
+    jgui_test::backend(core).inject(PointerButton{Point{Left{60}, Top{28}}, MouseButton::Left, ButtonState::Pressed, Serial{22}});
     if (!core.process_pending(shaper).has_value()) return false;
-    if (jgui_test::backend(core).resize_serial() != Serial{21} || jgui_test::backend(core).resize_edge() != ResizeEdge::Left) return false;
+    if (jgui_test::backend(core).resize_serial() != Serial{21} || jgui_test::backend(core).resize_edge() != ResizeEdge::LeftSide) return false;
     if (jgui_test::backend(core).move_serial() != Serial{22}) return false;
-    return jgui_test::backend(core).pixel(Point{6, 30}) == theme::frame_strip.argb && jgui_test::backend(core).pixel(Point{60, 28}) == theme::frame_strip.argb;
+    return jgui_test::backend(core).pixel(Point{Left{6}, Top{30}}) == theme::frame_strip.argb && jgui_test::backend(core).pixel(Point{Left{60}, Top{28}}) == theme::frame_strip.argb;
 }
 static_assert(thick_frame_through_the_application());
 
@@ -873,13 +906,13 @@ struct FrameRig {
     [[nodiscard]] constexpr auto& frame() { return core.ui().get<WindowFrameTag>(); }
     [[nodiscard]] constexpr auto& help() { return core.ui().get<demo::HelpButton>(); }
     [[nodiscard]] constexpr Point on_help() {
-        return Point{help().bounds().x() + 1, help().bounds().y() + 1};
+        return jgui_test::inside(help().bounds(), 1, 1);
     }
 };
 constexpr Rect small_box = Frame::close_box(small_window);
-constexpr Point on_close{small_box.x() + 1, small_box.y() + 1};
-constexpr Point on_title{60, 10};
-constexpr Point on_client{60, 50};
+constexpr Point on_close = jgui_test::inside(small_box, 1, 1);
+constexpr Point on_title{Left{60}, Top{10}};
+constexpr Point on_client{Left{60}, Top{50}};
 constexpr PointerButtonCode right_button{0x111};
 
 consteval bool hovering_the_close_box_redraws_once() {
@@ -887,7 +920,7 @@ consteval bool hovering_the_close_box_redraws_once() {
     if (!rig.start()) return false;
     const auto frames = rig.core.frames();
     if (!rig.send(PointerMove{on_close}) || rig.core.frames() != frames + 1 || !rig.frame().close_hovered()) return false;
-    if (jgui_test::backend(rig.core).pixel(Point{small_box.x() + 1, small_box.y() + 2}) != theme::close_hover.argb) return false;
+    if (jgui_test::backend(rig.core).pixel(jgui_test::inside(small_box, 1, 2)) != theme::close_hover.argb) return false;
     return rig.send(PointerMove{on_close}) && rig.core.frames() == frames + 1;
 }
 static_assert(hovering_the_close_box_redraws_once());
@@ -896,7 +929,7 @@ consteval bool close_stays_armed_over_a_widget_and_back() {
     FrameRig rig;
     if (!rig.start() || !rig.send(PointerMove{on_close})) return false;
     if (!rig.left(on_close, ButtonState::Pressed, 31) || !rig.frame().close_armed()) return false;
-    if (jgui_test::backend(rig.core).pixel(Point{small_box.x() + 1, small_box.y() + 2}) != theme::close_pressed.argb) return false;
+    if (jgui_test::backend(rig.core).pixel(jgui_test::inside(small_box, 1, 2)) != theme::close_pressed.argb) return false;
     if (!rig.send(PointerMove{rig.on_help()}) || !rig.frame().close_armed() || rig.frame().close_hovered()) return false;
     if (!rig.help().hovered()) return false;
     if (!rig.send(PointerMove{on_close}) || !rig.frame().close_armed() || rig.core.closed()) return false;
@@ -954,15 +987,15 @@ static_assert(moving_off_the_client_area_is_a_leave());
 consteval bool a_press_behind_a_resize_uses_the_new_size() {
     FrameRig rig;
     if (!rig.start()) return false;
-    jgui_test::backend(rig.core).inject(ResizeEvent{Size{300, 200}});
-    if (!rig.left(Point{299, 100}, ButtonState::Pressed, 43)) return false;
-    return jgui_test::backend(rig.core).resize_serial() == Serial{43} && jgui_test::backend(rig.core).resize_edge() == ResizeEdge::Right;
+    jgui_test::backend(rig.core).inject(ResizeEvent{Size{Width{300}, Height{200}}});
+    if (!rig.left(Point{Left{299}, Top{100}}, ButtonState::Pressed, 43)) return false;
+    return jgui_test::backend(rig.core).resize_serial() == Serial{43} && jgui_test::backend(rig.core).resize_edge() == ResizeEdge::RightSide;
 }
 static_assert(a_press_behind_a_resize_uses_the_new_size());
 
 // While the display holds too much, nothing is drawn, nothing fails, and the damage stays until it can be.
 consteval bool waiting_for_room_keeps_the_damage() {
-    ApplicationCore core{HeadlessBackend{Size{60, 40}}, window(window_frame())};
+    ApplicationCore core{HeadlessBackend{Size{Width{60}, Height{40}}}, window(window_frame())};
     const BlockShaper shaper;
     jgui_test::backend(core).set_display_holding(true);
     if (!core.process_pending(shaper).has_value() || core.frames() != 0) return false;

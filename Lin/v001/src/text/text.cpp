@@ -156,7 +156,7 @@ std::expected<TextEngine, Error> TextEngine::from_font_bytes(std::span<const std
     return TextEngine{std::move(impl)};
 }
 
-std::int32_t TextEngine::line_height() const noexcept { return impl_->line_height; }
+Height TextEngine::line_height() const noexcept { return Height{impl_->line_height}; }
 
 std::expected<TextRun, Error> TextEngine::shape(std::string_view text) const {
     if (text.size() > max_caption_bytes) return make_error(ErrorCode::TextTooLong, "caption is over 4096 bytes");
@@ -185,8 +185,8 @@ std::expected<TextRun, Error> TextEngine::shape(std::string_view text) const {
     for (const hb_glyph_position_t& position : *positions) advance_sum += std::max(position.x_advance, 0);
     const std::int32_t width = detail::ceil_pixels(advance_sum);
     if (width > max_run_width) return make_error(ErrorCode::GlyphTooLarge, "the shaped line is over the width limit");
-    const Size size{width, impl_->line_height};
-    const std::int64_t area = std::int64_t{size.width()} * std::int64_t{size.height()};
+    const Size size{Width{width}, Height{impl_->line_height}};
+    const std::int64_t area = std::int64_t{width} * std::int64_t{impl_->line_height};
     if (area > max_run_area) return make_error(ErrorCode::GlyphTooLarge, "the shaped line is over the area limit");
 
     std::vector<std::uint8_t> coverage(static_cast<std::size_t>(area), 0);
@@ -216,8 +216,8 @@ std::expected<TextRun, Error> TextEngine::shape(std::string_view text) const {
             auto rows = detail::copy_from_c<std::uint8_t>(
                 bitmap.buffer, static_cast<std::size_t>(bitmap.rows) * static_cast<std::size_t>(bitmap.pitch), detail::max_glyph_bytes);
             if (!rows) return std::unexpected(std::move(rows.error()));
-            detail::blit_glyph(detail::GlyphBitmap{*rows, std::int64_t{bitmap.rows}, std::int64_t{bitmap.width}, bitmap.pitch},
-                               left, top, size, coverage);
+            TextRun::blit(detail::GlyphBitmap{*rows, std::int64_t{bitmap.rows}, std::int64_t{bitmap.width}, bitmap.pitch},
+                          left, top, size, coverage);
         }
         pen += std::max(position.x_advance, 0);
     }
