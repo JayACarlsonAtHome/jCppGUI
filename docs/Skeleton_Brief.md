@@ -352,9 +352,9 @@ Tiny runs only: no soak or benchmark runs in this slice.
 
 ## bsir.sh
 
-Follows the pattern in `jText_GUI/v001/bsir.sh`, reading that script only for its flow: detect the package manager,
+Follows the pattern in `jText_GUI/v001/bsir.sh`, reading that script only for its flow: stop unless `dnf` is here,
 check components with `Setup/recipes.conf`, run the system upgrade on every run without asking,
-offer anything missing, build, test, open the demo. dnf and apt recipes for
+offer anything missing, build, test, open the demo. dnf recipes, Fedora only, for
 wayland-protocols, wayland-client development files, xkbcommon development files, FreeType,
 HarfBuzz and fontconfig development files, CMake, Ninja and a C++23 compiler.
 

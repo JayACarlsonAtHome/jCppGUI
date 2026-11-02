@@ -22,6 +22,9 @@
 
 ## Known limits
 
+- **`bsir.sh` has not been run end to end**, on any system. It is written for Fedora only and stops on a
+  system with no `dnf`. Only its syntax, its usage text and its recipes' check lines have been tried.
+
 - One font, one size, one line. No text editing, input methods or font selection. No bidirectional
   text ordering beyond what HarfBuzz does for one segment.
 - A damaged window repaints in full, and the frame is not throttled to `wl_surface.frame`.

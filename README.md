@@ -10,8 +10,9 @@ works and what does not.
 ## Build
 
 Linux, with a C++23 compiler, CMake, Ninja, and the Wayland, xkbcommon, FreeType, HarfBuzz and
-fontconfig development files. From `Lin/v001`, `bash bsir.sh` checks for all of these, offers what is
-missing, builds, tests and opens the demo. It runs a system update on every run and needs sudo. The
+fontconfig development files. On Fedora, from `Lin/v001`, `bash bsir.sh` checks for all of these, offers
+what is missing, builds, tests and opens the demo. It runs a system update on every run and needs sudo,
+and it stops on a system with no `dnf`. It has not been run end to end. The
 scripts have no shebang and no executable bit, because a shebang cannot be a relative path.
 
 To build by hand, with the tools already installed:

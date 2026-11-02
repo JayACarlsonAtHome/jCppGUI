@@ -1,7 +1,7 @@
 # File: bsir.sh
 # Purpose: Bootstrap, Setup, Install and Run for jCppGUI Lin/v001.
 #
-#   1. Detect the package manager.
+#   1. Stop unless dnf is here: Fedora is the only system this has been written for.
 #   2. Check each component with its `check` line in Setup/recipes.conf.
 #   3. Run the system update on every run, without asking.
 #   4. Offer anything missing, once, and install it from Setup/recipes.conf.
@@ -30,14 +30,12 @@ for arg in "$@"; do
   esac
 done
 
-# --- 1. the package manager (tokens match Setup/recipes.conf) ---
-family=unknown
-if [ -n "$(command -v dnf)" ]; then
-  family=dnf
-elif [ -n "$(command -v apt-get)" ]; then
-  family=apt
+# --- 1. Fedora only, until others are tested ---
+if [ -z "$(command -v dnf)" ]; then
+  echo "This script supports Fedora only, and this system has no dnf. Nothing was changed." >&2
+  echo "To build by hand, see README.md." >&2
+  exit 1
 fi
-echo "Package manager: $family"
 
 # A recipe value, joining backslash-continued lines: recipe <component> <field>
 recipe() {
@@ -77,11 +75,7 @@ echo "Missing:${missing:- nothing}"
 # --- 3. the system update runs on every run, without asking ---
 echo
 echo "=== system update ==="
-case "$family" in
-  dnf) sudo dnf -y upgrade --refresh || echo "  [FAIL] system update; going on" ;;
-  apt) { sudo apt-get update && sudo apt-get -y upgrade; } || echo "  [FAIL] system update; going on" ;;
-  *) echo "  (no update command for '$family'; skipped)" ;;
-esac
+sudo dnf -y upgrade --refresh || echo "  [FAIL] system update; going on"
 
 # --- 4. offer anything missing, once ---
 find_missing
@@ -100,12 +94,7 @@ if [ -n "$missing" ]; then
   for component in $missing; do
     echo
     echo "=== $(recipe "$component" desc) ==="
-    command="$(recipe "$component" "$family")"
-    if [ -z "$command" ]; then
-      echo "  [FAIL] no recipe for '$family': install it with your package manager."
-      continue
-    fi
-    sh -c "$command" || echo "  [FAIL] (see above)"
+    sh -c "$(recipe "$component" dnf)" || echo "  [FAIL] (see above)"
   done
   find_missing
   if [ -n "$missing" ]; then
