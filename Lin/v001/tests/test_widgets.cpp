@@ -100,11 +100,11 @@ void test_capture_and_focus(Checker& check) {
 
     press(*app, on);
     check(node.captured() != nullptr && node.focused() != nullptr, "a press takes capture and focus");
-    check(app->ui().capture_active(), "the tree reports the capture");
+    check(jgui_test::capture_active(app->ui()), "the tree reports the capture");
     node.destroy(first);
     check(node.captured() == nullptr, "capture is inert at once");
     check(node.focused() == nullptr, "focus is inert at once");
-    check(!app->ui().capture_active(), "the tree no longer reports a capture");
+    check(!jgui_test::capture_active(app->ui()), "the tree no longer reports a capture");
     release(*app, on);
     jgui_test::backend(*app).inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, true});
     check(app->process_pending().has_value(), "events after the death are handled");

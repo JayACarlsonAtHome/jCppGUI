@@ -18,6 +18,11 @@ public:
     using tag = Tag;
 
     constexpr explicit Label(std::string_view text) : text_{text} {}
+    Label(const Label&) = delete;
+    Label& operator=(const Label&) = delete;
+    constexpr Label(Label&&) = default;
+    Label& operator=(Label&&) = delete;
+    constexpr ~Label() = default;
 
     [[nodiscard]] constexpr Rect bounds() const noexcept { return bounds_; }
     [[nodiscard]] constexpr std::string_view text() const noexcept { return text_; }
@@ -30,7 +35,7 @@ public:
     }
 
     template <TextShaper Shaper>
-    constexpr std::expected<Rect, Error> layout(Rect area, const Shaper& engine) {
+    constexpr std::expected<Rect, Error> layout(const TreeKey&, Rect area, const Shaper& engine) {
         if (!run_) {
             auto shaped = engine.shape(text_);
             if (!shaped) return std::unexpected(std::move(shaped.error()));
@@ -41,7 +46,7 @@ public:
         return Rect{Point{area.left(), top_after(bounds_.bottom())}, Size{area.width(), area.height() - bounds_.height()}};
     }
 
-    constexpr void paint(Canvas& canvas) {
+    constexpr void paint(const TreeKey&, Canvas& canvas) {
         if (!run_) return;
         const Canvas local = canvas.clipped(bounds_);
         const Point at{left_after(bounds_.left() + theme::label_pad_x), top_after(bounds_.top() + theme::label_pad_y)};
@@ -49,22 +54,22 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U&, const QueryDamage&) {
+    constexpr bool handle(const TreeKey&, U&, const QueryDamage&) {
         return damaged_;
     }
 
     template <class U>
-    constexpr void notify(U&, const ClearDamage&) {
+    constexpr void notify(const TreeKey&, U&, const ClearDamage&) {
         damaged_ = false;
     }
 
     template <class U, class E>
-    constexpr bool handle(U&, const E&) {
+    constexpr bool handle(const TreeKey&, U&, const E&) {
         return false;
     }
 
     template <class U, class E>
-    constexpr void notify(U&, const E&) {}
+    constexpr void notify(const TreeKey&, U&, const E&) {}
 
 private:
     std::string text_;

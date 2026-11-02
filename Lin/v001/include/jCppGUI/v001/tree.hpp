@@ -94,6 +94,12 @@ public:
     using tag = Tag;
 
     constexpr Dynamic() = default;
+    // Assigning over a node could free the item whose callback is running, so a node can only be moved into place.
+    Dynamic(const Dynamic&) = delete;
+    Dynamic& operator=(const Dynamic&) = delete;
+    constexpr Dynamic(Dynamic&&) = default;
+    Dynamic& operator=(Dynamic&&) = delete;
+    constexpr ~Dynamic() = default;
 
     template <class... A>
     constexpr std::expected<Handle<T>, Error> create(A&&... args) {
@@ -136,15 +142,15 @@ public:
 
     [[nodiscard]] constexpr Rect bounds() const noexcept { return bounds_; }
 
-    constexpr void paint(Canvas& canvas) {
+    constexpr void paint(const TreeKey& key, Canvas& canvas) {
         for_each_live([&](T& item, Handle<T>) {
-            item.paint(canvas);
+            item.paint(key, canvas);
             return false;
         });
     }
 
     template <TextShaper Shaper>
-    constexpr std::expected<Rect, Error> layout(Rect area, const Shaper& text) {
+    constexpr std::expected<Rect, Error> layout(const TreeKey& key, Rect area, const Shaper& text) {
         std::expected<Rect, Error> remaining{area};
         if (deferred_error_) {
             remaining = std::unexpected(std::move(*deferred_error_));
@@ -153,7 +159,7 @@ public:
         }
         bounds_ = area;
         for_each_live([&](T& item, Handle<T>) {
-            remaining = item.layout(*remaining, text);
+            remaining = item.layout(key, *remaining, text);
             return !remaining.has_value();
         });
         return remaining;
@@ -161,9 +167,9 @@ public:
 
     // Topmost first. The item that takes the press holds the pointer and the focus.
     template <class U>
-    constexpr bool handle(U& ui, const PointerPress& event) {
+    constexpr bool handle(const TreeKey& key, U& ui, const PointerPress& event) {
         return for_each_live_reversed([&](T& item, Handle<T> handle) {
-            if (!item.handle(ui, event)) return false;
+            if (!item.handle(key, ui, event)) return false;
             capture_.emplace(handle);
             focus_.emplace(handle);
             return true;
@@ -171,21 +177,21 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const PointerRelease& event) {
+    constexpr bool handle(const TreeKey& key, U& ui, const PointerRelease& event) {
         const std::optional<Handle<T>> holder = std::exchange(capture_, std::nullopt);
         T* item = holder ? pool_.find(*holder) : nullptr;
-        return item != nullptr && item->handle(ui, event);
+        return item != nullptr && item->handle(key, ui, event);
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const PointerMove& event) {
-        if (T* holder = captured(); holder != nullptr) return holder->handle(ui, event);
+    constexpr bool handle(const TreeKey& key, U& ui, const PointerMove& event) {
+        if (T* holder = captured(); holder != nullptr) return holder->handle(key, ui, event);
         bool hit = false;
         for_each_live_reversed([&](T& item, Handle<T>) {
             if (hit) {
-                item.notify(ui, PointerLeave{});
+                item.notify(key, ui, PointerLeave{});
             } else {
-                hit = item.handle(ui, event);
+                hit = item.handle(key, ui, event);
             }
             return false;
         });
@@ -193,43 +199,43 @@ public:
     }
 
     template <class U>
-    constexpr void notify(U& ui, const PointerLeave& event) {
+    constexpr void notify(const TreeKey& key, U& ui, const PointerLeave& event) {
         capture_.reset();
-        notify_each(ui, event);
+        notify_each(key, ui, event);
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const KeyEvent& event) {
+    constexpr bool handle(const TreeKey& key, U& ui, const KeyEvent& event) {
         T* item = focused();
-        return item != nullptr && item->handle(ui, event);
+        return item != nullptr && item->handle(key, ui, event);
     }
 
     template <class U>
-    constexpr void notify(U& ui, const ClearFocus& event) {
+    constexpr void notify(const TreeKey& key, U& ui, const ClearFocus& event) {
         focus_.reset();
-        notify_each(ui, event);
+        notify_each(key, ui, event);
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const HoldsCapture& event) {
+    constexpr bool handle(const TreeKey& key, U& ui, const HoldsCapture& event) {
         T* item = captured();
-        return item != nullptr && item->handle(ui, event);
+        return item != nullptr && item->handle(key, ui, event);
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const QueryDamage& event) {
-        return handle_all(ui, event) || damaged_;
+    constexpr bool handle(const TreeKey& key, U& ui, const QueryDamage& event) {
+        return handle_all(key, ui, event) || damaged_;
     }
 
     template <class U>
-    constexpr void notify(U& ui, const ClearDamage& event) {
+    constexpr void notify(const TreeKey& key, U& ui, const ClearDamage& event) {
         damaged_ = false;
-        notify_each(ui, event);
+        notify_each(key, ui, event);
     }
 
     template <class U>
-    constexpr void notify(U& ui, const CollectDead& event) {
-        notify_each(ui, event);
+    constexpr void notify(const TreeKey& key, U& ui, const CollectDead& event) {
+        notify_each(key, ui, event);
         pool_.collect();
         std::erase_if(live_, [&](const Handle<T>& handle) { return pool_.find(handle) == nullptr; });
     }
@@ -256,19 +262,19 @@ private:
     }
 
     template <class U, class E>
-    constexpr bool handle_all(U& ui, const E& event) {
+    constexpr bool handle_all(const TreeKey& key, U& ui, const E& event) {
         bool any = false;
         for_each_live([&](T& item, Handle<T>) {
-            any = item.handle(ui, event) || any;
+            any = item.handle(key, ui, event) || any;
             return false;
         });
         return any;
     }
 
     template <class U, class E>
-    constexpr void notify_each(U& ui, const E& event) {
+    constexpr void notify_each(const TreeKey& key, U& ui, const E& event) {
         for_each_live([&](T& item, Handle<T>) {
-            item.notify(ui, event);
+            item.notify(key, ui, event);
             return false;
         });
     }
@@ -290,11 +296,6 @@ template <class Tag, class T>
 template <class B, class Root>
 class ApplicationCore;
 
-namespace detail {
-// Defined only in tests/test_access.hpp. Nothing in a program can use it.
-struct TestAccess;
-}  // namespace detail
-
 // What widgets asked of the window system during a dispatch. ApplicationCore carries it out through
 // the backend once the dispatch has returned.
 struct ResizeRequest {
@@ -308,7 +309,8 @@ struct WindowRequests {
     bool close{};
 };
 
-// The root of a tree. Callbacks and message handlers receive it as their "u".
+// The root of a tree. Callbacks receive it as their "u", and can reach only what is public: widgets by tag,
+// messages, the size and the three requests.
 template <Widget... C>
 class Window {
 public:
@@ -316,6 +318,17 @@ public:
     static_assert(detail::tags_unique<C...>(), "duplicate widget tag in one tree");
 
     constexpr explicit Window(C... children) : children_{std::move(children)...} {}
+
+    // A window moves into its application and stays there. Moving one out from under a running callback would
+    // leave its tree empty, so that aborts, and a copy or an assignment does not compile.
+    Window(const Window&) = delete;
+    Window& operator=(const Window&) = delete;
+    constexpr Window(Window&& other)
+        : children_{std::move(other.children_)}, dispatch_depth_{other.dispatch_depth_}, requests_{other.requests_}, size_{other.size_} {
+        require(other.dispatch_depth_ == 0, "a Window moved while its tree is delivering an event");
+    }
+    Window& operator=(Window&&) = delete;
+    constexpr ~Window() = default;
 
     template <class Tag>
     [[nodiscard]] static consteval bool has() {
@@ -335,31 +348,6 @@ public:
         return detail::SendOp<M>::run(*this, values...);
     }
 
-    // Delivers an event to the tree. What a callback destroys is freed when the outermost dispatch ends.
-    template <class E>
-    constexpr bool dispatch(const E& event) {
-        const DispatchScope scope{*this};
-        return detail::deliver(children_, *this, event);
-    }
-
-    // Delivers a notice to the tree, with the same rule for what a callback destroys.
-    template <class E>
-    constexpr void notify(const E& event) {
-        const DispatchScope scope{*this};
-        detail::notify_all(children_, *this, event);
-    }
-
-    [[nodiscard]] constexpr bool capture_active() { return detail::broadcast(children_, *this, HoldsCapture{}); }
-    [[nodiscard]] constexpr bool damaged() { return detail::broadcast(children_, *this, QueryDamage{}); }
-    constexpr void clear_damage() { detail::notify_all(children_, *this, ClearDamage{}); }
-
-    template <TextShaper Shaper>
-    constexpr std::expected<Rect, Error> layout(Rect area, const Shaper& text) {
-        return detail::layout_in_order(children_, area, text);
-    }
-
-    constexpr void paint(Canvas& canvas) { detail::paint_in_order(children_, canvas); }
-
     // The window's current size. ApplicationCore sets it, after validating it, as soon as a resize
     // arrives, so events that follow are judged against it even before the next layout.
     [[nodiscard]] constexpr Size size() const noexcept { return size_; }
@@ -375,6 +363,46 @@ private:
     friend class ApplicationCore;
     friend struct detail::TestAccess;
 
+    // Only the application, and tests, run the tree. A callback, which holds the Window, cannot.
+    template <class E>
+    constexpr bool dispatch(const E& event) {
+        const DispatchScope scope{*this};
+        const TreeKey key{};
+        return detail::deliver(children_, key, *this, event);
+    }
+
+    template <class E>
+    constexpr void notify(const E& event) {
+        const DispatchScope scope{*this};
+        const TreeKey key{};
+        detail::notify_all(children_, key, *this, event);
+    }
+
+    [[nodiscard]] constexpr bool capture_active() {
+        const TreeKey key{};
+        return detail::broadcast(children_, key, *this, HoldsCapture{});
+    }
+    [[nodiscard]] constexpr bool damaged() {
+        const TreeKey key{};
+        return detail::broadcast(children_, key, *this, QueryDamage{});
+    }
+    constexpr void clear_damage() {
+        const TreeKey key{};
+        detail::notify_all(children_, key, *this, ClearDamage{});
+    }
+
+    template <TextShaper Shaper>
+    constexpr std::expected<Rect, Error> layout(Rect area, const Shaper& text) {
+        const TreeKey key{};
+        return detail::layout_in_order(children_, key, area, text);
+    }
+
+    constexpr void paint(Canvas& canvas) {
+        const TreeKey key{};
+        detail::paint_in_order(children_, key, canvas);
+    }
+
+    [[nodiscard]] constexpr bool delivering() const noexcept { return dispatch_depth_ != 0; }
     constexpr void set_size(Size size) noexcept { size_ = size; }
     [[nodiscard]] constexpr WindowRequests take_requests() noexcept { return std::exchange(requests_, WindowRequests{}); }
 
@@ -384,7 +412,9 @@ private:
         DispatchScope(const DispatchScope&) = delete;
         DispatchScope& operator=(const DispatchScope&) = delete;
         constexpr ~DispatchScope() {
-            if (--window_.dispatch_depth_ == 0) detail::notify_all(window_.children_, window_, CollectDead{});
+            if (--window_.dispatch_depth_ != 0) return;
+            const TreeKey key{};
+            detail::notify_all(window_.children_, key, window_, CollectDead{});
         }
 
     private:

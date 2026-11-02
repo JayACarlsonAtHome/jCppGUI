@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <expected>
 
 #include "jCppGUI/v001/application.hpp"
 #include "jCppGUI/v001/geometry.hpp"
@@ -30,6 +31,34 @@ struct TestAccess {
         application.check_thread();
         return backend(application.core_);
     }
+    template <class... C, class E>
+    static constexpr bool dispatch(Window<C...>& window, const E& event) {
+        return window.dispatch(event);
+    }
+    template <class... C, class E>
+    static constexpr void notify(Window<C...>& window, const E& event) {
+        window.notify(event);
+    }
+    template <class... C>
+    [[nodiscard]] static constexpr bool capture_active(Window<C...>& window) {
+        return window.capture_active();
+    }
+    template <class... C>
+    [[nodiscard]] static constexpr bool damaged(Window<C...>& window) {
+        return window.damaged();
+    }
+    template <class... C>
+    static constexpr void clear_damage(Window<C...>& window) {
+        window.clear_damage();
+    }
+    template <class... C, class Shaper>
+    static constexpr std::expected<Rect, Error> layout(Window<C...>& window, Rect area, const Shaper& text) {
+        return window.layout(area, text);
+    }
+    template <class... C>
+    static constexpr void paint(Window<C...>& window, Canvas& canvas) {
+        window.paint(canvas);
+    }
     template <class... C>
     static constexpr void set_size(Window<C...>& window, Size size) noexcept {
         window.set_size(size);
@@ -48,6 +77,36 @@ namespace jgui_test {
 template <class Value>
 [[nodiscard]] constexpr std::int32_t number(Value value) noexcept {
     return jgui::detail::TestAccess::number(value);
+}
+
+// A test runs a tree with no application, which only an application may otherwise do.
+template <class W, class E>
+constexpr bool dispatch(W& window, const E& event) {
+    return jgui::detail::TestAccess::dispatch(window, event);
+}
+template <class W, class E>
+constexpr void notify(W& window, const E& event) {
+    jgui::detail::TestAccess::notify(window, event);
+}
+template <class W>
+[[nodiscard]] constexpr bool capture_active(W& window) {
+    return jgui::detail::TestAccess::capture_active(window);
+}
+template <class W>
+[[nodiscard]] constexpr bool damaged(W& window) {
+    return jgui::detail::TestAccess::damaged(window);
+}
+template <class W>
+constexpr void clear_damage(W& window) {
+    jgui::detail::TestAccess::clear_damage(window);
+}
+template <class W, class Shaper>
+constexpr auto layout(W& window, jgui::Rect area, const Shaper& text) {
+    return jgui::detail::TestAccess::layout(window, area, text);
+}
+template <class W>
+constexpr void paint(W& window, jgui::Canvas& canvas) {
+    jgui::detail::TestAccess::paint(window, canvas);
 }
 
 // A point that many pixels in from a rectangle's corner.

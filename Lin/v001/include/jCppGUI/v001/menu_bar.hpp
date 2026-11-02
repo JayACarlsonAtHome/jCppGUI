@@ -21,37 +21,41 @@ public:
     using children_type = std::tuple<Children...>;
 
     constexpr explicit MenuBar(Children... children) : children_{std::move(children)...} {}
+    MenuBar(const MenuBar&) = delete;
+    MenuBar& operator=(const MenuBar&) = delete;
+    constexpr MenuBar(MenuBar&&) = default;
+    MenuBar& operator=(MenuBar&&) = delete;
+    constexpr ~MenuBar() = default;
 
     [[nodiscard]] constexpr Rect bounds() const noexcept { return bounds_; }
     [[nodiscard]] constexpr children_type& children() noexcept { return children_; }
     [[nodiscard]] constexpr const children_type& children() const noexcept { return children_; }
 
     template <TextShaper Shaper>
-    constexpr std::expected<Rect, Error> layout(Rect area, const Shaper& text) {
+    constexpr std::expected<Rect, Error> layout(const TreeKey& key, Rect area, const Shaper& text) {
         const Height strip = text.line_height() + theme::button_pad_y + theme::button_pad_y + theme::bar_pad_y + theme::bar_pad_y;
         bounds_ = area.intersect(Rect{area.origin(), Size{area.width(), strip}});
-        if (auto used = detail::layout_in_order(children_, bounds_.inset(theme::bar_pad_x, theme::bar_pad_y), text); !used)
+        if (auto used = detail::layout_in_order(children_, key, bounds_.inset(theme::bar_pad_x, theme::bar_pad_y), text); !used)
             return std::unexpected(std::move(used.error()));
         return Rect{Point{area.left(), top_after(bounds_.bottom())}, Size{area.width(), area.height() - bounds_.height()}};
     }
 
-    constexpr void paint(Canvas& canvas) {
-        const Canvas local = canvas.clipped(bounds_);
+    constexpr void paint(const TreeKey& key, Canvas& canvas) {
+        Canvas local = canvas.clipped(bounds_);
         local.fill_rect(bounds_, theme::bar);
         constexpr Height one_down{1};
         local.fill_rect(Rect{Point{bounds_.left(), bounds_.bottom() - one_down}, Size{bounds_.width(), one_down}}, theme::bar_edge);
-        Canvas inner{local};
-        detail::paint_in_order(children_, inner);
+        detail::paint_in_order(children_, key, local);
     }
 
     template <class U, class E>
-    constexpr bool handle(U& ui, const E& event) {
-        return detail::deliver(children_, ui, event);
+    constexpr bool handle(const TreeKey& key, U& ui, const E& event) {
+        return detail::deliver(children_, key, ui, event);
     }
 
     template <class U, class E>
-    constexpr void notify(U& ui, const E& event) {
-        detail::notify_all(children_, ui, event);
+    constexpr void notify(const TreeKey& key, U& ui, const E& event) {
+        detail::notify_all(children_, key, ui, event);
     }
 
 private:

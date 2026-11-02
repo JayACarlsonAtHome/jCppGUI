@@ -36,20 +36,20 @@ public:
 
     [[nodiscard]] constexpr bool shown() const noexcept { return line_.shown(); }
     [[nodiscard]] constexpr jgui::Rect bounds() const noexcept { return line_.bounds(); }
-    constexpr void paint(jgui::Canvas& canvas) { line_.paint(canvas); }
+    constexpr void paint(const jgui::TreeKey& key, jgui::Canvas& canvas) { line_.paint(key, canvas); }
     template <jgui::TextShaper Shaper>
-    constexpr std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper& text) {
-        return line_.layout(area, text);
+    constexpr std::expected<jgui::Rect, jgui::Error> layout(const jgui::TreeKey& key, jgui::Rect area, const Shaper& text) {
+        return line_.layout(key, area, text);
     }
 
     template <class U, class E>
-    constexpr bool handle(U& ui, const E& event) {
-        return line_.handle(ui, event);
+    constexpr bool handle(const jgui::TreeKey& key, U& ui, const E& event) {
+        return line_.handle(key, ui, event);
     }
 
     template <class U, class E>
-    constexpr void notify(U& ui, const E& event) {
-        line_.notify(ui, event);
+    constexpr void notify(const jgui::TreeKey& key, U& ui, const E& event) {
+        line_.notify(key, ui, event);
     }
 
 private:

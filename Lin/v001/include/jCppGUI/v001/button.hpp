@@ -19,6 +19,11 @@ public:
     using tag = Tag;
 
     constexpr Button(std::string_view caption, OnClick on_click) : caption_{caption}, on_click_{std::move(on_click)} {}
+    Button(const Button&) = delete;
+    Button& operator=(const Button&) = delete;
+    constexpr Button(Button&&) = default;
+    Button& operator=(Button&&) = delete;
+    constexpr ~Button() = default;
 
     [[nodiscard]] constexpr Rect bounds() const noexcept { return bounds_; }
     [[nodiscard]] constexpr bool hovered() const noexcept { return hovered_; }
@@ -26,7 +31,7 @@ public:
     [[nodiscard]] constexpr bool focused() const noexcept { return focused_; }
 
     template <TextShaper Shaper>
-    constexpr std::expected<Rect, Error> layout(Rect area, const Shaper& text) {
+    constexpr std::expected<Rect, Error> layout(const TreeKey&, Rect area, const Shaper& text) {
         if (!run_) {
             auto shaped = text.shape(caption_);
             if (!shaped) return std::unexpected(std::move(shaped.error()));
@@ -38,7 +43,7 @@ public:
         return Rect{Point{left_after(bounds_.right()), area.top()}, Size{area.width() - bounds_.width(), area.height()}};
     }
 
-    constexpr void paint(Canvas& canvas) {
+    constexpr void paint(const TreeKey&, Canvas& canvas) {
         const Canvas local = canvas.clipped(bounds_);
         Color fill = theme::button_normal;
         if (pressed_ && hovered_) {
@@ -55,7 +60,7 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U&, const PointerPress& event) {
+    constexpr bool handle(const TreeKey&, U&, const PointerPress& event) {
         if (event.button != MouseButton::Left || !bounds_.contains(event.position)) return false;
         pressed_ = true;
         hovered_ = true;
@@ -65,7 +70,7 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const PointerRelease& event) {
+    constexpr bool handle(const TreeKey&, U& ui, const PointerRelease& event) {
         if (!pressed_ || event.button != MouseButton::Left) return false;
         pressed_ = false;
         damaged_ = true;
@@ -76,7 +81,7 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U&, const PointerMove& event) {
+    constexpr bool handle(const TreeKey&, U&, const PointerMove& event) {
         const bool inside = bounds_.contains(event.position);
         const bool hover = inside && (pressed_ || !event.captured);
         if (hover != hovered_) {
@@ -87,14 +92,14 @@ public:
     }
 
     template <class U>
-    constexpr void notify(U&, const PointerLeave&) {
+    constexpr void notify(const TreeKey&, U&, const PointerLeave&) {
         if (hovered_ || pressed_) damaged_ = true;
         hovered_ = false;
         pressed_ = false;
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const KeyEvent& event) {
+    constexpr bool handle(const TreeKey&, U& ui, const KeyEvent& event) {
         if (!focused_ || !event.pressed) return false;
         if (event.keysym != Key::Return && event.keysym != Key::Space) return false;
         on_click_(ui);
@@ -102,28 +107,28 @@ public:
     }
 
     template <class U>
-    constexpr void notify(U&, const ClearFocus&) {
+    constexpr void notify(const TreeKey&, U&, const ClearFocus&) {
         if (focused_) damaged_ = true;
         focused_ = false;
     }
 
     template <class U>
-    constexpr bool handle(U&, const HoldsCapture&) {
+    constexpr bool handle(const TreeKey&, U&, const HoldsCapture&) {
         return pressed_;
     }
 
     template <class U>
-    constexpr bool handle(U&, const QueryDamage&) {
+    constexpr bool handle(const TreeKey&, U&, const QueryDamage&) {
         return damaged_;
     }
 
     template <class U>
-    constexpr void notify(U&, const ClearDamage&) {
+    constexpr void notify(const TreeKey&, U&, const ClearDamage&) {
         damaged_ = false;
     }
 
     template <class U>
-    constexpr void notify(U&, const CollectDead&) {}
+    constexpr void notify(const TreeKey&, U&, const CollectDead&) {}
 
 private:
     std::string caption_;

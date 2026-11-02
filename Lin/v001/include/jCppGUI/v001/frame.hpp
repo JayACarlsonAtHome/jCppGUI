@@ -67,6 +67,11 @@ public:
     static constexpr std::int32_t close_side = Metrics::close_side;
 
     constexpr explicit WindowFrame(Children... children) : children_{std::move(children)...} {}
+    WindowFrame(const WindowFrame&) = delete;
+    WindowFrame& operator=(const WindowFrame&) = delete;
+    constexpr WindowFrame(WindowFrame&&) = default;
+    WindowFrame& operator=(WindowFrame&&) = delete;
+    constexpr ~WindowFrame() = default;
 
     [[nodiscard]] static constexpr Rect client_rect(Size window) noexcept {
         return Rect{Point{Left{edge_width}, Top{title_height}},
@@ -110,26 +115,26 @@ public:
     [[nodiscard]] constexpr bool close_armed() const noexcept { return close_armed_; }
 
     template <TextShaper Shaper>
-    constexpr std::expected<Rect, Error> layout(Rect area, const Shaper& text) {
+    constexpr std::expected<Rect, Error> layout(const TreeKey& key, Rect area, const Shaper& text) {
         bounds_ = area;
-        if (auto used = detail::layout_in_order(children_, client_rect(area.size()), text); !used)
+        if (auto used = detail::layout_in_order(children_, key, client_rect(area.size()), text); !used)
             return std::unexpected(std::move(used.error()));
         return Rect{Point{area.left(), top_after(area.bottom())}, Size{area.width(), Height{}}};
     }
 
     // The content first and clipped to the client area, so that the frame is always on top.
-    constexpr void paint(Canvas& canvas) {
+    constexpr void paint(const TreeKey& key, Canvas& canvas) {
         Canvas inside = canvas.clipped(client_rect(bounds_.size()));
-        detail::paint_in_order(children_, inside);
+        detail::paint_in_order(children_, key, inside);
         paint_frame(canvas, bounds_.size());
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const PointerPress& event) {
+    constexpr bool handle(const TreeKey& key, U& ui, const PointerPress& event) {
         const FrameHit where = hit(event.position, ui.size());
         if (where.region == FrameRegion::Client || event.button != MouseButton::Left) {
-            detail::notify_all(children_, ui, ClearFocus{});
-            return detail::deliver(children_, ui, event);
+            detail::notify_all(children_, key, ui, ClearFocus{});
+            return detail::deliver(children_, key, ui, event);
         }
         switch (where.region) {
             case FrameRegion::Close:
@@ -150,51 +155,51 @@ public:
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const PointerRelease& event) {
+    constexpr bool handle(const TreeKey& key, U& ui, const PointerRelease& event) {
         if (close_armed_) {
             damaged_ = true;
             if (hit(event.position, ui.size()).region == FrameRegion::Close) ui.request_close();
         }
         close_armed_ = false;
-        return detail::deliver(children_, ui, event);
+        return detail::deliver(children_, key, ui, event);
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const PointerMove& event) {
+    constexpr bool handle(const TreeKey& key, U& ui, const PointerMove& event) {
         set_close_hover(hit(event.position, ui.size()).region == FrameRegion::Close);
         if (event.captured || client_rect(ui.size()).contains(event.position))
-            return detail::deliver(children_, ui, event);
-        detail::notify_all(children_, ui, PointerLeave{});
+            return detail::deliver(children_, key, ui, event);
+        detail::notify_all(children_, key, ui, PointerLeave{});
         return false;
     }
 
     template <class U>
-    constexpr void notify(U& ui, const PointerLeave& event) {
+    constexpr void notify(const TreeKey& key, U& ui, const PointerLeave& event) {
         if (close_armed_) damaged_ = true;
         close_armed_ = false;
         set_close_hover(false);
-        detail::notify_all(children_, ui, event);
+        detail::notify_all(children_, key, ui, event);
     }
 
     template <class U>
-    constexpr bool handle(U& ui, const QueryDamage& event) {
-        return detail::deliver(children_, ui, event) || damaged_;
+    constexpr bool handle(const TreeKey& key, U& ui, const QueryDamage& event) {
+        return detail::deliver(children_, key, ui, event) || damaged_;
     }
 
     template <class U>
-    constexpr void notify(U& ui, const ClearDamage& event) {
+    constexpr void notify(const TreeKey& key, U& ui, const ClearDamage& event) {
         damaged_ = false;
-        detail::notify_all(children_, ui, event);
+        detail::notify_all(children_, key, ui, event);
     }
 
     template <class U, class E>
-    constexpr bool handle(U& ui, const E& event) {
-        return detail::deliver(children_, ui, event);
+    constexpr bool handle(const TreeKey& key, U& ui, const E& event) {
+        return detail::deliver(children_, key, ui, event);
     }
 
     template <class U, class E>
-    constexpr void notify(U& ui, const E& event) {
-        detail::notify_all(children_, ui, event);
+    constexpr void notify(const TreeKey& key, U& ui, const E& event) {
+        detail::notify_all(children_, key, ui, event);
     }
 
 private:

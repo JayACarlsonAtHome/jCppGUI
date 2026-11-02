@@ -27,6 +27,7 @@ public:
     // Runs until the window is closed or something fails. Sleeps in the backend's wait.
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> run(const Shaper& text) {
+        const Entry entry{*this};
         while (!closed_) {
             if (auto result = settle(text); !result) return std::unexpected(std::move(result.error()));
             if (closed_) break;
@@ -38,6 +39,7 @@ public:
     // Handles what is already queued, and draws if that caused damage. Never sleeps.
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> process_pending(const Shaper& text) {
+        const Entry entry{*this};
         if (auto result = backend_.process_pending(*this); !result) return std::unexpected(std::move(result.error()));
         return settle(text);
     }
@@ -45,6 +47,7 @@ public:
     // Waits for the first configure, presents one frame, and waits for the display to confirm it.
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> present_first_frame(const Shaper& text) {
+        const Entry entry{*this};
         while (frames_ == 0) {
             if (auto result = settle(text); !result) return std::unexpected(std::move(result.error()));
             if (frames_ != 0) break;
@@ -59,7 +62,28 @@ public:
     [[nodiscard]] constexpr std::uint64_t frames() const noexcept { return frames_; }
     [[nodiscard]] constexpr Size size() const noexcept { return root_.size(); }
 
-    // --- The event sink the backend calls, on the UI thread, outside any C callback ---
+private:
+    friend struct detail::TestAccess;
+    template <class... E>
+    friend class EventQueue;
+
+    // Every way of running the loop starts here. A callback or a widget that reaches this application and tries to
+    // run it from inside would redraw and deliver events in the middle of a delivery, so that aborts.
+    class Entry {
+    public:
+        constexpr explicit Entry(ApplicationCore& core) noexcept : core_{core} {
+            require(!core_.entered_ && !core_.root_.delivering(), "an application run from inside its own callback or paint");
+            core_.entered_ = true;
+        }
+        Entry(const Entry&) = delete;
+        Entry& operator=(const Entry&) = delete;
+        constexpr ~Entry() { core_.entered_ = false; }
+
+    private:
+        ApplicationCore& core_;
+    };
+
+    // --- The event sink, which only a backend's event queue calls: on the UI thread, outside any C callback ---
 
     constexpr void on(const CloseEvent&) { closed_ = true; }
 
@@ -93,9 +117,6 @@ public:
     }
 
     constexpr void on(const KeyEvent& event) { send_to_tree(event); }
-
-private:
-    friend struct detail::TestAccess;
 
     // Delivers the event, then carries out what the widgets asked of the window system. The answer is for
     // a parent routing between its children, and nothing above the tree needs it.
@@ -151,6 +172,7 @@ private:
     bool have_size_{};
     bool closed_{};
     bool damaged_{};
+    bool entered_{};
 };
 
 template <Backend B, class Root>

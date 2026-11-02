@@ -52,72 +52,95 @@ struct ProbeShaper {
 };
 }  // namespace detail
 
+class TreeKey;
+
 // tag names the widget in the tree. layout places it inside the rectangle offered and returns what
 // is left over for whatever comes next. handle takes each event that has an answer; a widget with no
 // interest in one answers false. notify takes each notice, which has no answer and so nothing to discard.
+// Each of these takes a TreeKey, which only the tree can make and a callback never sees.
 template <class W>
-concept Widget = requires(W& widget, const W& constant, Canvas& canvas, Rect area, const detail::ProbeShaper& text,
-                          detail::ProbeUi& ui) {
+concept Widget = requires(W& widget, const W& constant, const TreeKey& key, Canvas& canvas, Rect area, const detail::ProbeShaper& text,
+                          detail::ProbeUi& ui, const PointerPress& press, const PointerRelease& release, const PointerMove& move, const KeyEvent& pressed_key) {
     typename W::tag;
     { constant.bounds() } -> std::same_as<Rect>;
-    { widget.paint(canvas) } -> std::same_as<void>;
-    { widget.layout(area, text) } -> std::same_as<std::expected<Rect, Error>>;
-    { widget.handle(ui, PointerPress{}) } -> std::same_as<bool>;
-    { widget.handle(ui, PointerRelease{}) } -> std::same_as<bool>;
-    { widget.handle(ui, PointerMove{}) } -> std::same_as<bool>;
-    { widget.handle(ui, KeyEvent{}) } -> std::same_as<bool>;
-    { widget.handle(ui, HoldsCapture{}) } -> std::same_as<bool>;
-    { widget.handle(ui, QueryDamage{}) } -> std::same_as<bool>;
-    { widget.notify(ui, PointerLeave{}) } -> std::same_as<void>;
-    { widget.notify(ui, ClearFocus{}) } -> std::same_as<void>;
-    { widget.notify(ui, ClearDamage{}) } -> std::same_as<void>;
-    { widget.notify(ui, CollectDead{}) } -> std::same_as<void>;
+    { widget.paint(key, canvas) } -> std::same_as<void>;
+    { widget.layout(key, area, text) } -> std::same_as<std::expected<Rect, Error>>;
+    { widget.handle(key, ui, press) } -> std::same_as<bool>;
+    { widget.handle(key, ui, release) } -> std::same_as<bool>;
+    { widget.handle(key, ui, move) } -> std::same_as<bool>;
+    { widget.handle(key, ui, pressed_key) } -> std::same_as<bool>;
+    { widget.handle(key, ui, HoldsCapture{}) } -> std::same_as<bool>;
+    { widget.handle(key, ui, QueryDamage{}) } -> std::same_as<bool>;
+    { widget.notify(key, ui, PointerLeave{}) } -> std::same_as<void>;
+    { widget.notify(key, ui, ClearFocus{}) } -> std::same_as<void>;
+    { widget.notify(key, ui, ClearDamage{}) } -> std::same_as<void>;
+    { widget.notify(key, ui, CollectDead{}) } -> std::same_as<void>;
+};
+
+template <Widget... C>
+class Window;
+
+// What lets a caller lay out, paint or send an event to a widget. Only the Window and the tests can make one, a
+// widget passes on the one it was given to its children, and a callback is never given one, so a callback
+// that holds a widget still cannot do any of those. It cannot be copied, so a widget has none to keep.
+class TreeKey {
+public:
+    TreeKey(const TreeKey&) = delete;
+    TreeKey& operator=(const TreeKey&) = delete;
+    constexpr ~TreeKey() = default;
+
+private:
+    template <Widget... C>
+    friend class Window;
+    friend struct detail::TestAccess;
+
+    constexpr TreeKey() noexcept = default;
 };
 
 namespace detail {
 
 // Every widget sees the event. True when any of them answered true.
 template <class Children, class U, class E>
-constexpr bool broadcast(Children& children, U& ui, const E& event) {
+constexpr bool broadcast(Children& children, const TreeKey& key, U& ui, const E& event) {
     bool any = false;
-    std::apply([&](auto&... child) { ((any = child.handle(ui, event) || any), ...); }, children);
+    std::apply([&](auto&... child) { ((any = child.handle(key, ui, event) || any), ...); }, children);
     return any;
 }
 
 // Every widget gets the notice.
 template <class Children, class U, class E>
-constexpr void notify_all(Children& children, U& ui, const E& event) {
-    std::apply([&](auto&... child) { (child.notify(ui, event), ...); }, children);
+constexpr void notify_all(Children& children, const TreeKey& key, U& ui, const E& event) {
+    std::apply([&](auto&... child) { (child.notify(key, ui, event), ...); }, children);
 }
 
 // Default delivery: a broadcast.
 template <class Children, class U, class E>
-constexpr bool deliver(Children& children, U& ui, const E& event) {
-    return broadcast(children, ui, event);
+constexpr bool deliver(Children& children, const TreeKey& key, U& ui, const E& event) {
+    return broadcast(children, key, ui, event);
 }
 
 // A press goes to the topmost widget under it: last painted first, stopping at the first that takes it.
 template <class Children, class U>
-constexpr bool deliver(Children& children, U& ui, const PointerPress& event) {
+constexpr bool deliver(Children& children, const TreeKey& key, U& ui, const PointerPress& event) {
     return [&]<std::size_t... I>(std::index_sequence<I...>) {
         constexpr std::size_t count = sizeof...(I);
-        return (std::get<count - 1 - I>(children).handle(ui, event) || ...);
+        return (std::get<count - 1 - I>(children).handle(key, ui, event) || ...);
     }(std::make_index_sequence<std::tuple_size_v<Children>>{});
 }
 
 // Motion reaches the topmost widget under the pointer, and those below it see the pointer leave.
 // During a capture every widget sees it, so the holder keeps tracking and the others stay idle.
 template <class Children, class U>
-constexpr bool deliver(Children& children, U& ui, const PointerMove& event) {
-    if (event.captured) return broadcast(children, ui, event);
+constexpr bool deliver(Children& children, const TreeKey& key, U& ui, const PointerMove& event) {
+    if (event.captured) return broadcast(children, key, ui, event);
     return [&]<std::size_t... I>(std::index_sequence<I...>) {
         constexpr std::size_t count = sizeof...(I);
         bool hit = false;
         const auto visit = [&](auto& child) {
             if (hit) {
-                child.notify(ui, PointerLeave{});
+                child.notify(key, ui, PointerLeave{});
             } else {
-                hit = child.handle(ui, event);
+                hit = child.handle(key, ui, event);
             }
         };
         (visit(std::get<count - 1 - I>(children)), ...);
@@ -127,18 +150,18 @@ constexpr bool deliver(Children& children, U& ui, const PointerMove& event) {
 
 // Places the widgets in order, each in what the one before it left.
 template <class Children, class Shaper>
-constexpr std::expected<Rect, Error> layout_in_order(Children& children, Rect area, const Shaper& text) {
+constexpr std::expected<Rect, Error> layout_in_order(Children& children, const TreeKey& key, Rect area, const Shaper& text) {
     std::expected<Rect, Error> remaining{area};
     const auto place = [&](auto& child) {
-        if (remaining) remaining = child.layout(*remaining, text);
+        if (remaining) remaining = child.layout(key, *remaining, text);
     };
     std::apply([&](auto&... child) { (place(child), ...); }, children);
     return remaining;
 }
 
 template <class Children>
-constexpr void paint_in_order(Children& children, Canvas& canvas) {
-    std::apply([&](auto&... child) { (child.paint(canvas), ...); }, children);
+constexpr void paint_in_order(Children& children, const TreeKey& key, Canvas& canvas) {
+    std::apply([&](auto&... child) { (child.paint(key, canvas), ...); }, children);
 }
 
 }  // namespace detail

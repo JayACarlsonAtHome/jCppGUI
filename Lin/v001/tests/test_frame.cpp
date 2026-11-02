@@ -21,13 +21,13 @@ using jgui_test::release;
 struct Overflowing {
     using tag = Overflowing;
     [[nodiscard]] constexpr jgui::Rect bounds() const noexcept { return jgui::Rect{}; }
-    constexpr void paint(jgui::Canvas& canvas) { canvas.fill_rect(jgui::Rect{jgui::Point{jgui::Left{-100}, jgui::Top{-100}}, jgui::Size{jgui::Width{10000}, jgui::Height{10000}}}, jgui::Color{0xFF00FF00U}); }
+    constexpr void paint(const jgui::TreeKey&, jgui::Canvas& canvas) { canvas.fill_rect(jgui::Rect{jgui::Point{jgui::Left{-100}, jgui::Top{-100}}, jgui::Size{jgui::Width{10000}, jgui::Height{10000}}}, jgui::Color{0xFF00FF00U}); }
     template <class Shaper>
-    constexpr std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper&) { return area; }
+    constexpr std::expected<jgui::Rect, jgui::Error> layout(const jgui::TreeKey&, jgui::Rect area, const Shaper&) { return area; }
     template <class U, class E>
-    constexpr bool handle(U&, const E&) { return false; }
+    constexpr bool handle(const jgui::TreeKey&, U&, const E&) { return false; }
     template <class U, class E>
-    constexpr void notify(U&, const E&) {}
+    constexpr void notify(const jgui::TreeKey&, U&, const E&) {}
 };
 
 namespace {

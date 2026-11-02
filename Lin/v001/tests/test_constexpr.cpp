@@ -53,6 +53,11 @@ struct CornerShorterThanEdge {
     static constexpr std::int32_t title_height = 24;
     static constexpr std::int32_t close_side = 16;
 };
+// A shaper only a concept looks at, for the same reason.
+struct UnusedShaper {
+    [[nodiscard]] constexpr std::expected<jgui::TextRun, jgui::Error> shape(std::string_view) const { return jgui::TextRun{}; }
+    [[nodiscard]] constexpr jgui::Height line_height() const noexcept { return jgui::Height{}; }
+};
 }  // namespace refused_metrics
 
 namespace {
@@ -482,7 +487,28 @@ template <class T>
 concept CanRequest = requires(T& window) { window.request_close(); };
 template <class T>
 concept HasBackend = requires(T& application) { application.backend(); };
+template <class T>
+concept CanDispatch = requires(T& window) { window.dispatch(PointerLeave{}); };
+template <class T>
+concept CanNotify = requires(T& window) { window.notify(PointerLeave{}); };
+template <class T>
+concept CanClearDamage = requires(T& window) { window.clear_damage(); };
+template <class T>
+concept CanLayOut = requires(T& window, const refused_metrics::UnusedShaper& text) { window.layout(Rect{}, text); };
+template <class T>
+concept CanPaint = requires(T& window, Canvas& canvas) { window.paint(canvas); };
+template <class T>
+concept CanAskDamage = requires(T& window) { window.damaged(); };
+template <class T>
+concept CanAskCapture = requires(T& window) { window.capture_active(); };
 static_assert(!CanSetSize<Window<>> && !CanTakeRequests<Window<>> && CanRequest<Window<>>);
+static_assert(!CanDispatch<Window<>> && !CanNotify<Window<>> && !CanClearDamage<Window<>> && !CanLayOut<Window<>> && !CanPaint<Window<>>);
+static_assert(!CanAskDamage<Window<>> && !CanAskCapture<Window<>>);
+static_assert(!std::copy_constructible<Window<>> && !std::is_copy_assignable_v<Window<>> && !std::is_move_assignable_v<Window<>> && std::move_constructible<Window<>>);
+static_assert(!std::default_initializable<TreeKey> && !std::copy_constructible<TreeKey>);
+template <class T>
+concept TakesEvents = requires(T& application) { application.on(CloseEvent{}); };
+static_assert(!TakesEvents<ApplicationCore<HeadlessBackend, Window<>>>);
 static_assert(!HasBackend<Window<>> && !HasBackend<Application<HeadlessBackend, Window<>>> && !HasBackend<ApplicationCore<HeadlessBackend, Window<>>>);
 
 // --- Frame ---
@@ -562,13 +588,13 @@ struct Counter {
     constexpr int on(Add, const int& amount) { return value += amount; }
     constexpr void on(Quiet) { ++value; }
     [[nodiscard]] constexpr Rect bounds() const noexcept { return Rect{}; }
-    constexpr void paint(Canvas&) {}
+    constexpr void paint(const TreeKey&, Canvas&) {}
     template <class Shaper>
-    constexpr std::expected<Rect, Error> layout(Rect area, const Shaper&) { return area; }
+    constexpr std::expected<Rect, Error> layout(const TreeKey&, Rect area, const Shaper&) { return area; }
     template <class U, class E>
-    constexpr bool handle(U&, const E&) { return false; }
+    constexpr bool handle(const TreeKey&, U&, const E&) { return false; }
     template <class U, class E>
-    constexpr void notify(U&, const E&) {}
+    constexpr void notify(const TreeKey&, U&, const E&) {}
 };
 
 struct Silent {
@@ -577,13 +603,13 @@ struct Silent {
     constexpr void on(Add, const int&) { ++calls; }
     constexpr void on(Quiet) { ++calls; }
     [[nodiscard]] constexpr Rect bounds() const noexcept { return Rect{}; }
-    constexpr void paint(Canvas&) {}
+    constexpr void paint(const TreeKey&, Canvas&) {}
     template <class Shaper>
-    constexpr std::expected<Rect, Error> layout(Rect area, const Shaper&) { return area; }
+    constexpr std::expected<Rect, Error> layout(const TreeKey&, Rect area, const Shaper&) { return area; }
     template <class U, class E>
-    constexpr bool handle(U&, const E&) { return false; }
+    constexpr bool handle(const TreeKey&, U&, const E&) { return false; }
     template <class U, class E>
-    constexpr void notify(U&, const E&) {}
+    constexpr void notify(const TreeKey&, U&, const E&) {}
 };
 
 static_assert(Widget<Counter> && Widget<Silent>);
@@ -605,12 +631,12 @@ static_assert(messages_reach_receivers_in_order());
 consteval bool receivers_are_widgets() {
     auto ui = window(Counter{}, Silent{});
     const Rect area{Point{Left{0}, Top{0}}, Size{Width{2}, Height{2}}};
-    const auto left = ui.layout(area, BlockShaper{});
+    const auto left = jgui_test::layout(ui, area, BlockShaper{});
     const bool passed_through = left.has_value() && *left == area;
     std::array<std::uint32_t, 4> pixels{};
     Canvas canvas{PixelBuffer::create(pixels, area.size(), 8).value()};
-    ui.paint(canvas);
-    return passed_through && !ui.capture_active() && !ui.damaged() && ui.get<CountTag>().bounds().empty() && ui.get<SilentTag>().bounds().empty() &&
+    jgui_test::paint(ui, canvas);
+    return passed_through && !jgui_test::capture_active(ui) && !jgui_test::damaged(ui) && ui.get<CountTag>().bounds().empty() && ui.get<SilentTag>().bounds().empty() &&
            pixels == std::array<std::uint32_t, 4>{};
 }
 static_assert(receivers_are_widgets());
@@ -621,27 +647,27 @@ constexpr auto bump_on_click = [](auto& u) -> void { u.template send<Bump>(); };
 
 consteval bool button_click_rules() {
     auto ui = window(menu_bar(button<ClickTag>(caption, bump_on_click)), Counter{});
-    static_cast<void>(ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{100}, Height{40}}}, BlockShaper{}));
+    static_cast<void>(jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{100}, Height{40}}}, BlockShaper{}));
     auto& target = ui.get<ClickTag>();
     const Point on = jgui_test::inside(target.bounds(), 1, 1);
     const Point off{Left{99}, Top{39}};
     const auto count = [&] { return ui.get<CountTag>().value; };
 
-    ui.dispatch(PointerPress{on, MouseButton::Left});
-    if (!target.pressed() || !ui.capture_active()) return false;
-    ui.dispatch(PointerRelease{on, MouseButton::Left});
-    if (count() != 1 || target.pressed() || ui.capture_active()) return false;
+    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left});
+    if (!target.pressed() || !jgui_test::capture_active(ui)) return false;
+    jgui_test::dispatch(ui, PointerRelease{on, MouseButton::Left});
+    if (count() != 1 || target.pressed() || jgui_test::capture_active(ui)) return false;
 
-    ui.dispatch(PointerPress{on, MouseButton::Left});
-    ui.dispatch(PointerRelease{off, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerRelease{off, MouseButton::Left});
     if (count() != 1) return false;
 
-    ui.dispatch(PointerPress{off, MouseButton::Left});
-    ui.dispatch(PointerRelease{on, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerPress{off, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerRelease{on, MouseButton::Left});
     if (count() != 1) return false;
 
-    ui.dispatch(PointerPress{on, PointerButtonCode{0x111}});  // another mouse button
-    ui.dispatch(PointerRelease{on, PointerButtonCode{0x111}});
+    jgui_test::dispatch(ui, PointerPress{on, PointerButtonCode{0x111}});  // another mouse button
+    jgui_test::dispatch(ui, PointerRelease{on, PointerButtonCode{0x111}});
     return count() == 1;
 }
 static_assert(button_click_rules());
@@ -658,14 +684,14 @@ consteval bool self_destruction_is_deferred() {
     auto ui = window(Dynamic<ItemTag, KillButton, std::vector>{});
     auto& node = ui.get<ItemTag>();
     const Handle<KillButton> handle = node.create("x", kill).value();
-    static_cast<void>(ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{20}}}, BlockShaper{}));
+    static_cast<void>(jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{20}}}, BlockShaper{}));
     const Point on{Left{1}, Top{1}};
-    ui.dispatch(PointerPress{on, MouseButton::Left});
-    ui.dispatch(PointerRelease{on, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerRelease{on, MouseButton::Left});
     if (observed != 40 || node.find(handle) != nullptr || node.shown()) return false;
     // A late event finds nothing, and a new item in the old slot is not reached by the old handle.
-    ui.dispatch(PointerPress{on, MouseButton::Left});
-    ui.dispatch(PointerRelease{on, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerRelease{on, MouseButton::Left});
     const Handle<KillButton> next = node.create("y", kill).value();
     return node.find(handle) == nullptr && node.find(next) != nullptr;
 }
@@ -678,14 +704,14 @@ consteval bool capture_and_focus_go_inert() {
     auto ui = window(Dynamic<ItemTag, FireButton, std::vector>{});
     auto& node = ui.get<ItemTag>();
     const Handle<FireButton> handle = node.create("x", fire).value();
-    static_cast<void>(ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{20}}}, BlockShaper{}));
+    static_cast<void>(jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{20}}}, BlockShaper{}));
     const Point on{Left{1}, Top{1}};
-    ui.dispatch(PointerPress{on, MouseButton::Left});
-    if (node.captured() == nullptr || node.focused() == nullptr || !ui.capture_active()) return false;
+    jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left});
+    if (node.captured() == nullptr || node.focused() == nullptr || !jgui_test::capture_active(ui)) return false;
     node.destroy(handle);
-    if (node.captured() != nullptr || node.focused() != nullptr || ui.capture_active()) return false;
-    ui.dispatch(PointerRelease{on, MouseButton::Left});
-    ui.dispatch(KeyEvent{Key::Return, ModifierMask{}, true});
+    if (node.captured() != nullptr || node.focused() != nullptr || jgui_test::capture_active(ui)) return false;
+    jgui_test::dispatch(ui, PointerRelease{on, MouseButton::Left});
+    jgui_test::dispatch(ui, KeyEvent{Key::Return, ModifierMask{}, true});
     return fired == 0;
 }
 static_assert(capture_and_focus_go_inert());
@@ -698,33 +724,33 @@ struct Recorder {
     int releases{};
     int keys{};
     [[nodiscard]] constexpr Rect bounds() const noexcept { return area; }
-    constexpr void paint(Canvas&) {}
+    constexpr void paint(const TreeKey&, Canvas&) {}
     template <class Shaper>
-    constexpr std::expected<Rect, Error> layout(Rect offered, const Shaper&) {
+    constexpr std::expected<Rect, Error> layout(const TreeKey&, Rect offered, const Shaper&) {
         area = Rect{offered.origin(), Size{offered.width(), Height{10}}};
         return Rect{Point{offered.left(), top_after(area.bottom())}, Size{offered.width(), offered.height() - Height{10}}};
     }
     template <class U>
-    constexpr bool handle(U&, const PointerPress& event) { return area.contains(event.position); }
+    constexpr bool handle(const TreeKey&, U&, const PointerPress& event) { return area.contains(event.position); }
     template <class U>
-    constexpr bool handle(U&, const PointerMove& event) {
+    constexpr bool handle(const TreeKey&, U&, const PointerMove& event) {
         ++moves;
         return area.contains(event.position);
     }
     template <class U>
-    constexpr bool handle(U&, const PointerRelease&) {
+    constexpr bool handle(const TreeKey&, U&, const PointerRelease&) {
         ++releases;
         return true;
     }
     template <class U>
-    constexpr bool handle(U&, const KeyEvent&) {
+    constexpr bool handle(const TreeKey&, U&, const KeyEvent&) {
         ++keys;
         return true;
     }
     template <class U, class E>
-    constexpr bool handle(U&, const E&) { return false; }
+    constexpr bool handle(const TreeKey&, U&, const E&) { return false; }
     template <class U, class E>
-    constexpr void notify(U&, const E&) {}
+    constexpr void notify(const TreeKey&, U&, const E&) {}
 };
 static_assert(Widget<Recorder>);
 
@@ -733,61 +759,61 @@ consteval bool dynamic_routes_to_the_holder_only() {
     auto& node = ui.get<ItemTag>();
     const Handle<Recorder> upper = node.create().value();
     const Handle<Recorder> lower = node.create().value();
-    static_cast<void>(ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{40}}}, BlockShaper{}));
+    static_cast<void>(jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{40}}}, BlockShaper{}));
     if (node.find(upper)->bounds() != Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{10}}} || node.find(lower)->bounds() != Rect{Point{Left{0}, Top{10}}, Size{Width{50}, Height{10}}}) return false;
     std::array<std::uint32_t, 1> pixel{};
     Canvas canvas{PixelBuffer::create(pixel, Size{Width{1}, Height{1}}, 4).value()};
-    ui.paint(canvas);
-    ui.clear_damage();
-    if (ui.damaged()) return false;
+    jgui_test::paint(ui, canvas);
+    jgui_test::clear_damage(ui);
+    if (jgui_test::damaged(ui)) return false;
     const Point on_upper{Left{5}, Top{5}};
     const Point on_lower{Left{5}, Top{15}};
 
     // Pressing the lower item gives it the pointer and the focus.
-    ui.dispatch(PointerPress{on_lower, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerPress{on_lower, MouseButton::Left});
     if (node.captured() != node.find(lower) || node.focused() != node.find(lower)) return false;
 
     // While it holds the pointer, motion over the other item goes only to the holder.
-    ui.dispatch(PointerMove{on_upper, true});
+    jgui_test::dispatch(ui, PointerMove{on_upper, true});
     if (node.find(lower)->moves != 1 || node.find(upper)->moves != 0) return false;
 
     // So does the release, which ends the capture.
-    ui.dispatch(PointerRelease{on_upper, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerRelease{on_upper, MouseButton::Left});
     if (node.find(lower)->releases != 1 || node.find(upper)->releases != 0) return false;
     if (node.captured() != nullptr) return false;
 
     // A second release has no holder and reaches nobody.
-    ui.dispatch(PointerRelease{on_upper, MouseButton::Left});
+    jgui_test::dispatch(ui, PointerRelease{on_upper, MouseButton::Left});
     if (node.find(lower)->releases != 1 || node.find(upper)->releases != 0) return false;
 
     // Keys go only to the focused item, and to nobody once the focus is cleared.
-    ui.dispatch(KeyEvent{Key::Return, ModifierMask{}, true});
+    jgui_test::dispatch(ui, KeyEvent{Key::Return, ModifierMask{}, true});
     if (node.find(lower)->keys != 1 || node.find(upper)->keys != 0) return false;
-    ui.notify(ClearFocus{});
-    ui.dispatch(KeyEvent{Key::Return, ModifierMask{}, true});
+    jgui_test::notify(ui, ClearFocus{});
+    jgui_test::dispatch(ui, KeyEvent{Key::Return, ModifierMask{}, true});
     if (node.find(lower)->keys != 1 || node.find(upper)->keys != 0) return false;
 
     // With no capture, motion reaches the topmost item first, and one that is hit stops the hit test.
-    ui.dispatch(PointerMove{on_lower, false});
+    jgui_test::dispatch(ui, PointerMove{on_lower, false});
     return node.find(lower)->moves == 2 && node.find(upper)->moves == 0;
 }
 static_assert(dynamic_routes_to_the_holder_only());
 
 consteval bool shaper_errors_reach_layout() {
     auto ui = window(label<ClickTag>("\xFF"));
-    const auto result = ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{10}, Height{10}}}, BlockShaper{});
+    const auto result = jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{10}, Height{10}}}, BlockShaper{});
     return !result.has_value() && result.error().code == ErrorCode::InvalidUtf8;
 }
 static_assert(shaper_errors_reach_layout());
 
 consteval bool label_new_text_is_checked_by_layout() {
     auto ui = window(label<ClickTag>("good"));
-    if (!ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}}, BlockShaper{}).has_value() || ui.damaged()) return false;
+    if (!jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}}, BlockShaper{}).has_value() || jgui_test::damaged(ui)) return false;
     ui.get<ClickTag>().set_text("\xC0\x80");
-    if (!ui.damaged()) return false;
-    if (ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}}, BlockShaper{}).has_value()) return false;
+    if (!jgui_test::damaged(ui)) return false;
+    if (jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}}, BlockShaper{}).has_value()) return false;
     ui.get<ClickTag>().set_text("fine");
-    return ui.layout(Rect{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}}, BlockShaper{}).has_value() && ui.get<ClickTag>().text() == "fine";
+    return jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}}, BlockShaper{}).has_value() && ui.get<ClickTag>().text() == "fine";
 }
 static_assert(label_new_text_is_checked_by_layout());
 
@@ -860,7 +886,7 @@ consteval bool frame_is_a_node_of_the_tree() {
     auto ui = window(window_frame<ThickMetrics>(menu_bar(button<ClickTag>("x", bump_on_click)), Counter{}));
     const Rect whole{Point{Left{0}, Top{0}}, Size{Width{120}, Height{80}}};
     detail::TestAccess::set_size(ui, whole.size());
-    const auto left = ui.layout(whole, BlockShaper{});
+    const auto left = jgui_test::layout(ui, whole, BlockShaper{});
     if (!left.has_value() || !left->empty()) return false;
     if (ui.get<WindowFrameTag>().bounds() != whole) return false;
     if (ui.get<MenuBarTag>().bounds().origin() != ThickFrame::client_rect(whole.size()).origin()) return false;
@@ -868,8 +894,8 @@ consteval bool frame_is_a_node_of_the_tree() {
 
     auto empty = window(window_frame());
     detail::TestAccess::set_size(empty, whole.size());
-    if (!empty.layout(whole, BlockShaper{}).has_value()) return false;
-    empty.dispatch(PointerPress{Point{Left{60}, Top{10}}, MouseButton::Left, Serial{9}});
+    if (!jgui_test::layout(empty, whole, BlockShaper{}).has_value()) return false;
+    jgui_test::dispatch(empty, PointerPress{Point{Left{60}, Top{10}}, MouseButton::Left, Serial{9}});
     return detail::TestAccess::take_requests(empty).move == Serial{9} && !detail::TestAccess::take_requests(empty).move.has_value();
 }
 static_assert(frame_is_a_node_of_the_tree());
@@ -958,7 +984,7 @@ consteval bool a_captured_drag_over_the_frame_starts_nothing() {
     FrameRig rig;
     if (!rig.start()) return false;
     const Point help = rig.on_help();
-    if (!rig.left(help, ButtonState::Pressed, 37) || !rig.core.ui().capture_active()) return false;
+    if (!rig.left(help, ButtonState::Pressed, 37) || !jgui_test::capture_active(rig.core.ui())) return false;
     if (!rig.send(PointerMove{on_title}) || !rig.help().pressed()) return false;
     if (!rig.left(help, ButtonState::Released, 38)) return false;
     return !jgui_test::backend(rig.core).move_serial().has_value() && !jgui_test::backend(rig.core).resize_serial().has_value();

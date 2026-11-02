@@ -13,6 +13,7 @@
 
 #include "check.hpp"
 #include "jCppGUI/v001/jgui.hpp"
+#include "test_access.hpp"
 
 // Outside the anonymous namespace because only the TextShaper concept reads it: these widgets shape no
 // text, and a compiler rightly reports a member nobody calls on a type with internal linkage.
@@ -39,13 +40,13 @@ template <class Tag>
 struct Passive {
     using tag = Tag;
     [[nodiscard]] jgui::Rect bounds() const { return jgui::Rect{}; }
-    void paint(jgui::Canvas&) {}
+    void paint(const jgui::TreeKey&, jgui::Canvas&) {}
     template <class Shaper>
-    std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper&) { return area; }
+    std::expected<jgui::Rect, jgui::Error> layout(const jgui::TreeKey&, jgui::Rect area, const Shaper&) { return area; }
     template <class U, class E>
-    bool handle(U&, const E&) { return false; }
+    bool handle(const jgui::TreeKey&, U&, const E&) { return false; }
     template <class U, class E>
-    void notify(U&, const E&) {}
+    void notify(const jgui::TreeKey&, U&, const E&) {}
 };
 
 struct HelpLineWidget {
@@ -55,13 +56,13 @@ struct HelpLineWidget {
     std::string text;
     int order = 0;
     [[nodiscard]] jgui::Rect bounds() const { return passive.bounds(); }
-    void paint(jgui::Canvas& canvas) { passive.paint(canvas); }
+    void paint(const jgui::TreeKey& key, jgui::Canvas& canvas) { passive.paint(key, canvas); }
     template <class Shaper>
-    std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper& s) { return passive.layout(area, s); }
+    std::expected<jgui::Rect, jgui::Error> layout(const jgui::TreeKey& key, jgui::Rect area, const Shaper& s) { return passive.layout(key, area, s); }
     template <class U, class E>
-    bool handle(U& u, const E& e) { return passive.handle(u, e); }
+    bool handle(const jgui::TreeKey& key, U& u, const E& e) { return passive.handle(key, u, e); }
     template <class U, class E>
-    void notify(U& u, const E& e) { passive.notify(u, e); }
+    void notify(const jgui::TreeKey& key, U& u, const E& e) { passive.notify(key, u, e); }
 
     bool on(ToggleHelp) { return shown = !shown; }
     std::string on(OtherToggle) { return "other"; }
@@ -78,13 +79,13 @@ struct StatusBarWidget {
     Passive<StatusBar> passive;
     int count = 0;
     [[nodiscard]] jgui::Rect bounds() const { return passive.bounds(); }
-    void paint(jgui::Canvas& canvas) { passive.paint(canvas); }
+    void paint(const jgui::TreeKey& key, jgui::Canvas& canvas) { passive.paint(key, canvas); }
     template <class Shaper>
-    std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper& s) { return passive.layout(area, s); }
+    std::expected<jgui::Rect, jgui::Error> layout(const jgui::TreeKey& key, jgui::Rect area, const Shaper& s) { return passive.layout(key, area, s); }
     template <class U, class E>
-    bool handle(U& u, const E& e) { return passive.handle(u, e); }
+    bool handle(const jgui::TreeKey& key, U& u, const E& e) { return passive.handle(key, u, e); }
     template <class U, class E>
-    void notify(U& u, const E& e) { passive.notify(u, e); }
+    void notify(const jgui::TreeKey& key, U& u, const E& e) { passive.notify(key, u, e); }
 
     int on(ToggleHelp) { return ++count; }
     int on(OtherToggle) { return count += 100; }
@@ -96,13 +97,13 @@ struct QuietWidget {
     Passive<Quiet> passive;
     int calls = 0;
     [[nodiscard]] jgui::Rect bounds() const { return passive.bounds(); }
-    void paint(jgui::Canvas& canvas) { passive.paint(canvas); }
+    void paint(const jgui::TreeKey& key, jgui::Canvas& canvas) { passive.paint(key, canvas); }
     template <class Shaper>
-    std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper& s) { return passive.layout(area, s); }
+    std::expected<jgui::Rect, jgui::Error> layout(const jgui::TreeKey& key, jgui::Rect area, const Shaper& s) { return passive.layout(key, area, s); }
     template <class U, class E>
-    bool handle(U& u, const E& e) { return passive.handle(u, e); }
+    bool handle(const jgui::TreeKey& key, U& u, const E& e) { return passive.handle(key, u, e); }
     template <class U, class E>
-    void notify(U& u, const E& e) { passive.notify(u, e); }
+    void notify(const jgui::TreeKey& key, U& u, const E& e) { passive.notify(key, u, e); }
 
     void on(Hush) { ++calls; }
 };
@@ -111,17 +112,17 @@ struct QuietWidget {
 void test_receivers_are_widgets(jgui_test::Checker& check) {
     auto ui = jgui::window(HelpLineWidget{}, StatusBarWidget{}, QuietWidget{});
     const jgui::Rect area{jgui::Point{jgui::Left{0}, jgui::Top{0}}, jgui::Size{jgui::Width{2}, jgui::Height{2}}};
-    const auto left = ui.layout(area, NoText{});
+    const auto left = jgui_test::layout(ui, area, NoText{});
     check(left.has_value() && *left == area, "layout passes through them");
     std::array<std::uint32_t, 4> pixels{};
     auto buffer = jgui::PixelBuffer::create(pixels, area.size(), 8);
     check(buffer.has_value(), "a small buffer");
     if (buffer) {
         jgui::Canvas canvas{*buffer};
-        ui.paint(canvas);
+        jgui_test::paint(ui, canvas);
     }
     check(pixels == std::array<std::uint32_t, 4>{}, "they paint nothing");
-    check(!ui.capture_active() && !ui.damaged(), "they hold nothing and ask for nothing");
+    check(!jgui_test::capture_active(ui) && !jgui_test::damaged(ui), "they hold nothing and ask for nothing");
     check(ui.get<HelpLine>().bounds().empty() && ui.get<StatusBar>().bounds().empty() && ui.get<Quiet>().bounds().empty(), "and have no bounds");
 }
 
