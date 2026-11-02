@@ -247,6 +247,19 @@ jgui_compile_fail(warn_narrowing "conversion\\]")
 jgui_compile_fail(warn_sign_conversion "sign-conversion\\]")
 jgui_compile_fail(warn_shadow "shadow[-a-z]*\\]")
 
-# --- Source rules: banned type-erasure tokens, casts, paths and layering ---
+# --- Source rules: the text layer, a proof that it catches what it claims, and the AST layer on a clang build ---
 add_test(NAME source_rules
   COMMAND ${JGUI_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_source_rules.sh)
+find_program(JGUI_CLANG_QUERY clang-query)
+set(JGUI_SELFTEST_TOOL "")
+if(JGUI_CLANG_QUERY AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set(JGUI_SELFTEST_TOOL ${JGUI_CLANG_QUERY})
+  add_test(NAME source_rules_ast
+    COMMAND ${JGUI_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_ast_rules.sh ${JGUI_CLANG_QUERY} ${CMAKE_CURRENT_BINARY_DIR})
+  set_tests_properties(source_rules_ast PROPERTIES TIMEOUT 600)
+elseif(NOT JGUI_CLANG_QUERY)
+  message(STATUS "clang-query was not found, so the AST layer of the source rules will not run")
+endif()
+add_test(NAME source_rules_selftest
+  COMMAND ${JGUI_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_rules_selftest.sh ${JGUI_SELFTEST_TOOL})
+set_tests_properties(source_rules_selftest PROPERTIES TIMEOUT 300)

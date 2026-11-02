@@ -948,12 +948,12 @@ struct FrameRig {
 
     [[nodiscard]] consteval bool start() { return core.process_pending(shaper).has_value(); }
     template <class E>
-    [[nodiscard]] consteval bool send(const E& event) {
+    [[nodiscard]] consteval bool deliver(const E& event) {
         jgui_test::backend(core).inject(event);
         return core.process_pending(shaper).has_value();
     }
     [[nodiscard]] consteval bool left(Point at, ButtonState state, std::uint32_t serial) {
-        return send(PointerButton{at, MouseButton::Left, state, jgui_test::serial(serial)});
+        return deliver(PointerButton{at, MouseButton::Left, state, jgui_test::serial(serial)});
     }
     [[nodiscard]] constexpr auto& frame() { return core.ui().get<WindowFrameTag>(); }
     [[nodiscard]] constexpr auto& help() { return core.ui().get<demo::HelpButton>(); }
@@ -971,20 +971,20 @@ consteval bool hovering_the_close_box_redraws_once() {
     FrameRig rig;
     if (!rig.start()) return false;
     const auto frames = rig.core.frames();
-    if (!rig.send(PointerMove{on_close}) || rig.core.frames() != frames + 1 || !rig.frame().close_hovered()) return false;
+    if (!rig.deliver(PointerMove{on_close}) || rig.core.frames() != frames + 1 || !rig.frame().close_hovered()) return false;
     if (jgui_test::backend(rig.core).pixel(jgui_test::inside(small_box, 1, 2)) != theme::close_hover.argb) return false;
-    return rig.send(PointerMove{on_close}) && rig.core.frames() == frames + 1;
+    return rig.deliver(PointerMove{on_close}) && rig.core.frames() == frames + 1;
 }
 static_assert(hovering_the_close_box_redraws_once());
 
 consteval bool close_stays_armed_over_a_widget_and_back() {
     FrameRig rig;
-    if (!rig.start() || !rig.send(PointerMove{on_close})) return false;
+    if (!rig.start() || !rig.deliver(PointerMove{on_close})) return false;
     if (!rig.left(on_close, ButtonState::Pressed, 31) || !rig.frame().close_armed()) return false;
     if (jgui_test::backend(rig.core).pixel(jgui_test::inside(small_box, 1, 2)) != theme::close_pressed.argb) return false;
-    if (!rig.send(PointerMove{rig.on_help()}) || !rig.frame().close_armed() || rig.frame().close_hovered()) return false;
+    if (!rig.deliver(PointerMove{rig.on_help()}) || !rig.frame().close_armed() || rig.frame().close_hovered()) return false;
     if (!rig.help().hovered()) return false;
-    if (!rig.send(PointerMove{on_close}) || !rig.frame().close_armed() || rig.core.closed()) return false;
+    if (!rig.deliver(PointerMove{on_close}) || !rig.frame().close_armed() || rig.core.closed()) return false;
     return rig.left(on_close, ButtonState::Released, 32) && rig.core.closed();
 }
 static_assert(close_stays_armed_over_a_widget_and_back());
@@ -992,7 +992,7 @@ static_assert(close_stays_armed_over_a_widget_and_back());
 consteval bool leaving_the_window_disarms_close() {
     FrameRig rig;
     if (!rig.start() || !rig.left(on_close, ButtonState::Pressed, 33)) return false;
-    if (!rig.send(PointerLeave{}) || rig.frame().close_armed() || rig.frame().close_hovered()) return false;
+    if (!rig.deliver(PointerLeave{}) || rig.frame().close_armed() || rig.frame().close_hovered()) return false;
     return rig.left(on_close, ButtonState::Released, 34) && !rig.core.closed();
 }
 static_assert(leaving_the_window_disarms_close());
@@ -1000,9 +1000,9 @@ static_assert(leaving_the_window_disarms_close());
 consteval bool only_the_left_button_acts_on_the_frame() {
     FrameRig rig;
     if (!rig.start()) return false;
-    if (!rig.send(PointerButton{on_title, right_button, ButtonState::Pressed, jgui_test::serial(35)})) return false;
+    if (!rig.deliver(PointerButton{on_title, right_button, ButtonState::Pressed, jgui_test::serial(35)})) return false;
     if (jgui_test::backend(rig.core).move_serial().has_value()) return false;
-    return rig.send(PointerButton{on_close, right_button, ButtonState::Pressed, jgui_test::serial(36)}) && !rig.frame().close_armed();
+    return rig.deliver(PointerButton{on_close, right_button, ButtonState::Pressed, jgui_test::serial(36)}) && !rig.frame().close_armed();
 }
 static_assert(only_the_left_button_acts_on_the_frame());
 
@@ -1011,7 +1011,7 @@ consteval bool a_captured_drag_over_the_frame_starts_nothing() {
     if (!rig.start()) return false;
     const Point help = rig.on_help();
     if (!rig.left(help, ButtonState::Pressed, 37) || !jgui_test::capture_active(rig.core.ui())) return false;
-    if (!rig.send(PointerMove{on_title}) || !rig.help().pressed()) return false;
+    if (!rig.deliver(PointerMove{on_title}) || !rig.help().pressed()) return false;
     if (!rig.left(help, ButtonState::Released, 38)) return false;
     return !jgui_test::backend(rig.core).move_serial().has_value() && !jgui_test::backend(rig.core).resize_serial().has_value();
 }
@@ -1030,8 +1030,8 @@ static_assert(only_a_client_press_takes_the_focus_away());
 
 consteval bool moving_off_the_client_area_is_a_leave() {
     FrameRig rig;
-    if (!rig.start() || !rig.send(PointerMove{rig.on_help()}) || !rig.help().hovered()) return false;
-    return rig.send(PointerMove{on_title}) && !rig.help().hovered();
+    if (!rig.start() || !rig.deliver(PointerMove{rig.on_help()}) || !rig.help().hovered()) return false;
+    return rig.deliver(PointerMove{on_title}) && !rig.help().hovered();
 }
 static_assert(moving_off_the_client_area_is_a_leave());
 

@@ -1,0 +1,37 @@
+# File: tests/ast_rules.query
+# Purpose: The rules as clang-query matchers, over the compiler's own view of the code, so that no alias, macro or
+#          split token can hide from them. The text layer is tests/check_source_rules.sh. Each match is a failure.
+#          Only our own code counts: system headers, compiler built-ins and the glue wayland-scanner generates are not ours.
+set output diag
+
+# virtual functions and classes with a base: no type erasure, and no base-class widgets
+match cxxMethodDecl(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), isVirtual())
+match cxxRecordDecl(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), isDefinition(), isDerivedFrom(cxxRecordDecl()), unless(isImplicit()))
+
+# dynamic_cast. typeid has no matcher of its own: it is found by its result, below.
+match cxxDynamicCastExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"))
+
+# values whose type is one of the erasing library classes, however it was named
+match valueDecl(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), hasType(hasCanonicalType(hasDeclaration(namedDecl(hasAnyName("::std::function", "::std::move_only_function", "::std::copyable_function", "::std::function_ref", "::std::any", "::std::shared_ptr", "::std::weak_ptr", "::std::type_info", "::std::type_index"))))))
+match expr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), hasType(hasCanonicalType(hasDeclaration(namedDecl(hasAnyName("::std::function", "::std::move_only_function", "::std::copyable_function", "::std::function_ref", "::std::any", "::std::shared_ptr", "::std::weak_ptr", "::std::type_info"))))))
+
+# Anything of ours declared as an untyped pointer, however the type was spelled
+match valueDecl(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), hasType(hasCanonicalType(pointsTo(voidType()))), unless(isExpansionInFileMatching("src/wayland/trampoline[.]hpp$")))
+match functionDecl(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), returns(hasCanonicalType(pointsTo(voidType()))))
+
+# A cast back from an untyped pointer
+match cxxStaticCastExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), hasSourceExpression(hasType(hasCanonicalType(pointsTo(voidType())))), unless(isExpansionInFileMatching("src/wayland/trampoline[.]hpp$")))
+
+# reinterpret_cast, and raw new and delete
+match cxxReinterpretCastExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), unless(isExpansionInFileMatching("tests/fake_compositor/socket_io[.]hpp$")))
+match cxxNewExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"))
+match cxxDeleteExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"))
+
+# Calls that move raw bytes, outside the named helpers
+match callExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), callee(functionDecl(hasAnyName("::read", "::write", "::recv", "::send", "::fread", "::fwrite", "::readv", "::writev", "::recvfrom", "::sendto", "::sendfile", "::memmove", "::mmap", "::munmap", "::mprotect"))))
+match callExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), callee(functionDecl(hasAnyName("::pread", "::pwrite", "::pread64", "::pwrite64"))), unless(isExpansionInFileMatching("src/wayland/file_io[.]hpp$")))
+match callExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), callee(functionDecl(hasAnyName("::sendmsg", "::recvmsg", "::memcpy"))), unless(isExpansionInFileMatching("tests/fake_compositor/socket_io[.]hpp$")))
+
+# A typed pointer quietly becoming untyped, outside the named helpers. tests/test_untrusted.cpp frees the text
+# xkbcommon hands back, which is the one std::free in the repository.
+match implicitCastExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), hasImplicitDestinationType(hasCanonicalType(pointsTo(voidType()))), unless(isExpansionInFileMatching("src/wayland/trampoline[.]hpp$")), unless(isExpansionInFileMatching("src/wayland/file_io[.]hpp$")), unless(isExpansionInFileMatching("tests/fake_compositor/socket_io[.]hpp$")), unless(isExpansionInFileMatching("tests/test_untrusted[.]cpp$")))
