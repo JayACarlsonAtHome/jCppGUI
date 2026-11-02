@@ -12,6 +12,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 option(JGUI_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(JGUI_FUZZ "Build the libFuzzer harnesses with ASan and UBSan, instead of the demo and tests" OFF)
 option(JGUI_WARNINGS_ONLY "Optimize, without the hardening flags that stop warnings firing. Never ship this." OFF)
 
 find_package(PkgConfig REQUIRED)
@@ -42,6 +43,13 @@ endif()
 target_link_options(jgui_hardening INTERFACE -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack)
 if(JGUI_SANITIZE)
   target_compile_options(jgui_hardening INTERFACE -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+  target_link_options(jgui_hardening INTERFACE -fsanitize=address,undefined -fno-sanitize-recover=all)
+endif()
+
+if(JGUI_FUZZ)
+  # Our code gets coverage feedback and the sanitizers. System FreeType, HarfBuzz and xkbcommon get neither.
+  target_compile_options(jgui_hardening INTERFACE
+    -O1 -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
   target_link_options(jgui_hardening INTERFACE -fsanitize=address,undefined -fno-sanitize-recover=all)
 endif()
 
@@ -114,6 +122,23 @@ target_link_libraries(jgui_wayland
 add_library(jgui_program STATIC src/program_arguments.cpp)
 target_include_directories(jgui_program PUBLIC include)
 target_link_libraries(jgui_program PUBLIC jgui_hardening PRIVATE jgui_warnings)
+
+find_program(JGUI_BASH bash REQUIRED)
+
+# --- Fuzzing: this preset builds the harnesses and a tiny smoke run of each, and nothing else ---
+if(JGUI_FUZZ)
+  enable_testing()
+  foreach(harness utf8 keymap font)
+    add_executable(fuzz_${harness} tests/fuzz/fuzz_${harness}.cpp)
+    target_include_directories(fuzz_${harness} PRIVATE src src/wayland)
+    target_link_libraries(fuzz_${harness} PRIVATE jgui_wayland jgui_text jgui_warnings)
+    target_link_options(fuzz_${harness} PRIVATE -fsanitize=fuzzer)
+    add_test(NAME fuzz_smoke_${harness}
+      COMMAND ${JGUI_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/run.sh ${harness} smoke)
+    set_tests_properties(fuzz_smoke_${harness} PROPERTIES TIMEOUT 120)
+  endforeach()
+  return()
+endif()
 
 # --- Demo ---
 add_executable(jcppgui-demo demo/demo.cpp)
@@ -193,6 +218,5 @@ jgui_compile_fail(warn_sign_conversion "sign-conversion\\]")
 jgui_compile_fail(warn_shadow "shadow[-a-z]*\\]")
 
 # --- Source rules: banned type-erasure tokens, casts, paths and layering ---
-find_program(JGUI_BASH bash REQUIRED)
 add_test(NAME source_rules
   COMMAND ${JGUI_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_source_rules.sh)

@@ -97,6 +97,10 @@ int main() {
     test_aborts(check, [] { return TextRun{Size{46341, 46341}, std::vector<std::uint8_t>(1)}; }, "a size whose area would overflow 32 bits aborts");
     auto engine = TextEngine::create();
     check(engine.has_value(), "a default sans-serif font was found");
+    const std::vector<std::uint8_t> not_a_font(1000, 0x5A);
+    const auto refused_font = TextEngine::from_font_bytes(not_a_font);
+    check(!refused_font.has_value() && refused_font.error().code == ErrorCode::Font, "bytes that are no font are refused");
+    check(!TextEngine::from_font_bytes({}).has_value(), "and so is nothing at all");
     if (engine) {
         test_help_text(check, *engine);
         test_refusals(check, *engine);

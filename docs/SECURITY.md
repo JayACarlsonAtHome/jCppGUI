@@ -104,6 +104,30 @@ Constant evaluation is used as a further check: `tests/test_constexpr.cpp` runs 
 `static_assert`, where overflow, out-of-bounds access, use after destruction and leaks are compile
 errors. It covers only the paths those tests evaluate.
 
+## Fuzzing
+
+The `clang-fuzz` preset builds libFuzzer harnesses in `tests/fuzz/`, with ASan and UBSan, around the production
+code and with no copy of its logic:
+
+| Harness | Runs | Seed |
+|---|---|---|
+| `utf8` | `valid_utf8` | none |
+| `keymap` | `load_keymap` under the real compositor context, through a real descriptor | `tests/fuzz/seeds/keymap/minimal.xkb` |
+| `font` | `TextEngine::from_font_bytes` and `shape`, through every font check, HarfBuzz, FreeType and our glyph copying | the default sans-serif, found by `fc-match` at run time and never committed |
+
+Run one with `bash tests/fuzz/run.sh <utf8|keymap|font> <seconds>`, after `cmake --preset clang-fuzz` and
+`cmake --build --preset clang-fuzz`. Normal CTest does not run these. `ctest --preset clang-fuzz` runs only a tiny
+smoke of each.
+
+**The limit is plain.** System FreeType, HarfBuzz and xkbcommon are not instrumented. libFuzzer gets coverage only
+from our code, so nothing guides it through their parsers: it mutates whole seed files blindly, and only a crash
+or abort inside a library is noticed. ASan does not see a library's internal memory errors, except where they
+cross an interceptor such as `memcpy`. Finding deep library bugs would need those libraries built from source
+with the same flags, which has not been done.
+
+Only short runs have been done so far: about 60 seconds each on 2026-11-02, with no crash. That is not evidence of
+safety, and the font run managed only about 35,000 inputs.
+
 ## Accepted risks
 
 - `PixelBuffer` and `Canvas` are non-owning views, and the next `acquire_frame` invalidates them. A `Frame` is
@@ -112,7 +136,8 @@ errors. It covers only the paths those tests evaluate.
 
 ## Not yet done
 
-- **Nothing is fuzzed.** There is no parser of ours yet. Fuzzing comes with our own Wayland client.
+- **Our own Wayland protocol code is not fuzzed**, because libwayland still parses the protocol. That comes with
+  our own Wayland client.
 - Protocol handling in `src/wayland/` is exercised only by `demo --smoke` against a real compositor.
   There is no hostile-compositor test, because no nested or headless compositor is available here.
 - The keymap text is compiled by xkbcommon, which is also exposed to it. Our checks limit only size

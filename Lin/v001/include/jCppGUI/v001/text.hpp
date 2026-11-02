@@ -161,6 +161,10 @@ public:
     // Finds the default sans-serif font through fontconfig. A missing font is an Error.
     [[nodiscard]] static std::expected<TextEngine, Error> create();
 
+    // The same engine from a font's bytes, which it copies. Nothing checks that they are a real font, beyond
+    // what FreeType and the same checks as create do, because font data is untrusted wherever it comes from.
+    [[nodiscard]] static std::expected<TextEngine, Error> from_font_bytes(std::span<const std::uint8_t> font);
+
     // Refuses over-long captions and invalid UTF-8 before anything is shaped.
     [[nodiscard]] std::expected<TextRun, Error> shape(std::string_view text) const;
 

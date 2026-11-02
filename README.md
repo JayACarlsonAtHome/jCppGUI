@@ -25,8 +25,8 @@ ctest --preset gcc-debug
 ./build/gcc-debug/jcppgui-demo
 ```
 
-The presets are `gcc-debug`, `gcc-release`, `clang-debug`, `clang-release` and `gcc-asan`. Build
-one compiler at a time.
+The presets are `gcc-debug`, `gcc-release`, `clang-debug`, `clang-release` and `gcc-asan`, plus `gcc-warn`, which
+is build only and never shipped, and `clang-fuzz`: see `docs/SECURITY.md`. Build one compiler at a time.
 
 ## A window
 

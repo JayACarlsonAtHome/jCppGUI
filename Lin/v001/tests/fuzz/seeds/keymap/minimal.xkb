@@ -1,0 +1,59 @@
+xkb_keymap {
+  xkb_keycodes "seed" {
+    minimum = 8;
+    maximum = 255;
+    <AC01> = 38;
+    <SPCE> = 65;
+    <RTRN> = 36;
+    <LFSH> = 50;
+    <LCTL> = 37;
+    indicator 1 = "Caps Lock";
+    alias <A> = <AC01>;
+  };
+  xkb_types "seed" {
+    virtual_modifiers Alt;
+    type "ONE_LEVEL" {
+      modifiers = none;
+      map[none] = Level1;
+      level_name[Level1] = "Any";
+    };
+    type "TWO_LEVEL" {
+      modifiers = Shift;
+      map[Shift] = Level2;
+      level_name[Level1] = "Base";
+      level_name[Level2] = "Shift";
+    };
+    type "ALPHABETIC" {
+      modifiers = Shift + Lock;
+      map[Shift] = Level2;
+      map[Lock] = Level2;
+      level_name[Level1] = "Base";
+      level_name[Level2] = "Caps";
+    };
+  };
+  xkb_compat "seed" {
+    virtual_modifiers Alt;
+    interpret.useModMapMods = AnyLevel;
+    interpret.repeat = False;
+    interpret Shift_L + AnyOfOrNone(all) {
+      action = SetMods(modifiers = Shift);
+    };
+    interpret Control_L + AnyOfOrNone(all) {
+      action = SetMods(modifiers = Control);
+    };
+    indicator "Caps Lock" {
+      whichModState = Locked;
+      modifiers = Lock;
+    };
+  };
+  xkb_symbols "seed" {
+    name[Group1] = "seed";
+    key <AC01> { type = "ALPHABETIC", [ a, A ] };
+    key <SPCE> { [ space ] };
+    key <RTRN> { [ Return ] };
+    key <LFSH> { [ Shift_L ] };
+    key <LCTL> { [ Control_L ] };
+    modifier_map Shift { <LFSH> };
+    modifier_map Control { <LCTL> };
+  };
+};

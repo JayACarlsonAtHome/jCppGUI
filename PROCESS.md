@@ -15,6 +15,7 @@ Both compilers must build and pass. Build one compiler at a time; `-j` within a 
 4. `gcc-release`
 5. `clang-release`
 6. `gcc-warn`, which is build only
+7. `clang-fuzz`, which builds the fuzz harnesses and runs only a tiny smoke of each under CTest
 
 A warning or a sanitizer report is a failure. Fix the cause and do not suppress it.
 

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -74,6 +75,7 @@ namespace detail {
 
 struct TextEngineImpl {
     FontConfig config;
+    std::vector<std::uint8_t> font_bytes;  // what a face made from memory reads, so it must outlive the face
     FtLibrary library;
     FtFace face;
     HbFont font;
@@ -88,6 +90,38 @@ void TextEngineImplDeleter::operator()(TextEngineImpl* impl) const noexcept {
 
 }  // namespace detail
 
+namespace {
+
+std::expected<void, Error> start_freetype(detail::TextEngineImpl& impl) {
+    FT_Library library = nullptr;
+    if (FT_Init_FreeType(&library) != 0) return make_error(ErrorCode::Font, "FreeType could not start");
+    impl.library.reset(library);
+    return {};
+}
+
+// The rest of starting an engine, whatever the font came from: every check on it, and HarfBuzz.
+std::expected<void, Error> finish_engine(detail::TextEngineImpl& impl, std::string_view name) {
+    FT_Face face = impl.face.get();
+    if (!FT_IS_SCALABLE(face) || FT_Set_Pixel_Sizes(face, 0, font_pixel_size) != 0)
+        return make_error(ErrorCode::Font, "the font cannot be scaled: " + std::string{name});
+
+    const std::int64_t ascender = face->size->metrics.ascender;
+    const std::int64_t descender = face->size->metrics.descender;
+    impl.ascent = detail::ceil_pixels(ascender);
+    impl.line_height = sat_add(impl.ascent, detail::ceil_pixels(-descender));
+    if (impl.ascent <= 0 || impl.line_height <= 0 || impl.line_height > max_glyph_side)
+        return make_error(ErrorCode::Font, "the font's line metrics are out of range: " + std::string{name});
+
+    impl.font.reset(hb_ft_font_create_referenced(face));
+    impl.buffer.reset(hb_buffer_create());
+    if (!impl.font || hb_buffer_allocation_successful(impl.buffer.get()) == 0)
+        return make_error(ErrorCode::Font, "HarfBuzz could not start");
+    hb_ft_font_set_load_flags(impl.font.get(), glyph_load_flags);
+    return {};
+}
+
+}  // namespace
+
 TextEngine::TextEngine(std::unique_ptr<detail::TextEngineImpl, detail::TextEngineImplDeleter> impl) noexcept
     : impl_{std::move(impl)} {}
 
@@ -100,30 +134,25 @@ std::expected<TextEngine, Error> TextEngine::create() {
     auto file = find_default_font(impl->config.get());
     if (!file) return std::unexpected(std::move(file.error()));
 
-    FT_Library library = nullptr;
-    if (FT_Init_FreeType(&library) != 0) return make_error(ErrorCode::Font, "FreeType could not start");
-    impl->library.reset(library);
-
+    if (auto started = start_freetype(*impl); !started) return std::unexpected(std::move(started.error()));
     FT_Face face = nullptr;
-    if (FT_New_Face(library, file->path.c_str(), file->face_index, &face) != 0)
+    if (FT_New_Face(impl->library.get(), file->path.c_str(), file->face_index, &face) != 0)
         return make_error(ErrorCode::Font, "FreeType could not open the font " + file->path);
     impl->face.reset(face);
-    if (!FT_IS_SCALABLE(face) || FT_Set_Pixel_Sizes(face, 0, font_pixel_size) != 0)
-        return make_error(ErrorCode::Font, "the font cannot be scaled: " + file->path);
+    if (auto finished = finish_engine(*impl, file->path); !finished) return std::unexpected(std::move(finished.error()));
+    return TextEngine{std::move(impl)};
+}
 
-    const std::int64_t ascender = face->size->metrics.ascender;
-    const std::int64_t descender = face->size->metrics.descender;
-    impl->ascent = detail::ceil_pixels(ascender);
-    impl->line_height = sat_add(impl->ascent, detail::ceil_pixels(-descender));
-    if (impl->ascent <= 0 || impl->line_height <= 0 || impl->line_height > max_glyph_side)
-        return make_error(ErrorCode::Font, "the font's line metrics are out of range: " + file->path);
-
-    impl->font.reset(hb_ft_font_create_referenced(face));
-    impl->buffer.reset(hb_buffer_create());
-    if (!impl->font || hb_buffer_allocation_successful(impl->buffer.get()) == 0)
-        return make_error(ErrorCode::Font, "HarfBuzz could not start");
-    hb_ft_font_set_load_flags(impl->font.get(), glyph_load_flags);
-
+std::expected<TextEngine, Error> TextEngine::from_font_bytes(std::span<const std::uint8_t> font) {
+    std::unique_ptr<detail::TextEngineImpl, detail::TextEngineImplDeleter> impl{
+        std::make_unique<detail::TextEngineImpl>().release()};
+    impl->font_bytes.assign(font.begin(), font.end());
+    if (auto started = start_freetype(*impl); !started) return std::unexpected(std::move(started.error()));
+    FT_Face face = nullptr;
+    if (FT_New_Memory_Face(impl->library.get(), impl->font_bytes.data(), saturate_to<FT_Long>(impl->font_bytes.size()), 0, &face) != 0)
+        return make_error(ErrorCode::Font, "FreeType could not read the font");
+    impl->face.reset(face);
+    if (auto finished = finish_engine(*impl, "from memory"); !finished) return std::unexpected(std::move(finished.error()));
     return TextEngine{std::move(impl)};
 }
 
