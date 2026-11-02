@@ -1,6 +1,8 @@
 // File: tests/test_frame.cpp
 // Purpose: Test 11 and the frame's hit regions: the close box produces close, an absurd resize fails
 //          cleanly, and strip and edges ask the backend for a move or resize with the press's serial.
+#include <cstdint>
+#include <expected>
 #include <limits>
 
 #include "app_helpers.hpp"
@@ -15,17 +17,18 @@ using jgui_test::release;
 namespace {
 
 struct Unused;
+using Frame = jgui::WindowFrame<jgui::DefaultFrameMetrics>;
 constexpr jgui::Size window_size{640, 480};
 
 auto make_app() {
     return jgui::make_application(jgui::HeadlessBackend{window_size},
-                                  jgui::window(jgui::label<Unused>("x")));
+                                  jgui::window(jgui::window_frame(jgui::label<Unused>("x"))));
 }
 
 void test_close_box(Checker& check) {
     auto app = make_app();
     check(app.has_value() && app->process_pending().has_value(), "first frame");
-    const jgui::Point box = centre(jgui::WindowFrame::close_box(window_size));
+    const jgui::Point box = centre(Frame::close_box(window_size));
     press(*app, box);
     release(*app, jgui::Point{300, 300});
     check(!app->closed(), "press on the box, release off it: no close");
@@ -75,6 +78,31 @@ void test_move_and_resize_requests(Checker& check) {
     check(app->backend().move_serial() == 101U, "edges did not start a move");
 }
 
+// Paints past its bounds on purpose: the frame's clip and paint order must keep it off the frame.
+struct Overflowing {
+    using tag = Unused;
+    [[nodiscard]] constexpr jgui::Rect bounds() const noexcept { return jgui::Rect{}; }
+    constexpr void paint(jgui::Canvas& canvas) { canvas.fill_rect(jgui::Rect{-100, -100, 10000, 10000}, jgui::Color{0xFF00FF00U}); }
+    template <class Shaper>
+    constexpr std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper&) { return area; }
+    template <class U, class E>
+    constexpr bool handle(U&, const E&) { return false; }
+};
+
+void test_content_stays_inside(Checker& check) {
+    auto app = jgui::make_application(jgui::HeadlessBackend{window_size}, jgui::window(jgui::window_frame(Overflowing{})));
+    check(app.has_value() && app->process_pending().has_value(), "first frame");
+    const jgui::Rect client = Frame::client_rect(window_size);
+    constexpr jgui::Color content{0xFF00FF00U};
+    check(jgui_test::count_other_than(app->backend(), client, content) == 0, "the content fills the client area");
+    int outside = 0;
+    for (std::int32_t y = 0; y < window_size.height(); ++y)
+        for (std::int32_t x = 0; x < window_size.width(); ++x)
+            if (!client.contains(jgui::Point{x, y}) && app->backend().pixel(jgui::Point{x, y}) == content.argb) ++outside;
+    check(outside == 0, "and nothing outside it");
+    check(app->backend().pixel(jgui::Point{300, 12}) == jgui::theme::frame_strip.argb, "the title strip is on top");
+}
+
 }  // namespace
 
 int main() {
@@ -82,5 +110,6 @@ int main() {
     test_close_box(check);
     test_absurd_resize(check);
     test_move_and_resize_requests(check);
+    test_content_stays_inside(check);
     return check.finish();
 }

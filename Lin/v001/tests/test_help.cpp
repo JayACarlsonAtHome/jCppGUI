@@ -17,7 +17,7 @@ constexpr jgui::Size window_size{640, 480};
 template <class App>
 jgui::Rect area_below_bar(App& app) {
     const jgui::Rect bar = app.ui().template get<jgui::MenuBarTag>().bounds();
-    const jgui::Rect client = jgui::WindowFrame::client_rect(window_size);
+    const jgui::Rect client = jgui::WindowFrame<jgui::DefaultFrameMetrics>::client_rect(window_size);
     return jgui::Rect{client.x(), bar.bottom(), client.width(), client.bottom() - bar.bottom()};
 }
 
@@ -38,17 +38,17 @@ void test_toggle(Checker& check) {
     check(count_other_than(app->backend(), below, jgui::theme::background) > 0, "the third click shows it again");
 }
 
-// The tree exactly as the design shows it: the callback drives a Dynamic node directly.
+// The tree as the design shows it, inside a frame: the callback drives a Dynamic node directly.
 struct DirectButton;
 struct DirectLine;
 
 void test_direct_form(Checker& check) {
-    auto ui = jgui::window(
+    auto ui = jgui::window(jgui::window_frame(
         jgui::menu_bar(jgui::button<DirectButton>("Help", [](auto& u) -> void {
             auto& line = u.template get<DirectLine>();
             if (line.shown()) line.hide(); else line.show("Some help");
         })),
-        jgui::dynamic<DirectLine, jgui::Label<DirectLine>>());
+        jgui::dynamic<DirectLine, jgui::Label<DirectLine>>()));
     auto app = jgui::make_application(jgui::HeadlessBackend{window_size}, std::move(ui));
     check(app.has_value() && app->process_pending().has_value(), "first frame");
     const jgui::Point help = centre(app->ui().get<DirectButton>().bounds());

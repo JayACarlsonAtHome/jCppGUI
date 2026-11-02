@@ -25,7 +25,7 @@ void test_click_rules(Checker& check) {
     int fired = 0;
     auto app = jgui::make_application(
         jgui::HeadlessBackend{window_size},
-        jgui::window(jgui::menu_bar(jgui::button<HelpButton>("Help", [&fired](auto&) -> void { ++fired; }))));
+        jgui::window(jgui::window_frame(jgui::menu_bar(jgui::button<HelpButton>("Help", [&fired](auto&) -> void { ++fired; })))));
     check(app.has_value(), "application starts");
     check(app->process_pending().has_value(), "first frame");
     const jgui::Point on = centre(app->ui().get<HelpButton>().bounds());
@@ -68,7 +68,7 @@ void test_self_destruction(Checker& check) {
         seen = text.size();
     };
     using KillButton = jgui::Button<Item, decltype(kill)>;
-    auto app = jgui::make_application(jgui::HeadlessBackend{window_size}, jgui::window(jgui::Dynamic<Item, KillButton>{}));
+    auto app = jgui::make_application(jgui::HeadlessBackend{window_size}, jgui::window(jgui::window_frame(jgui::Dynamic<Item, KillButton>{})));
     check(app.has_value(), "application starts");
     auto& node = app->ui().get<Item>();
     const jgui::Handle<KillButton> handle = node.create("Kill", kill).value();
@@ -91,7 +91,7 @@ void test_capture_and_focus(Checker& check) {
     int fired = 0;
     auto fire = [&fired](auto&) -> void { ++fired; };
     using FireButton = jgui::Button<Item, decltype(fire)>;
-    auto app = jgui::make_application(jgui::HeadlessBackend{window_size}, jgui::window(jgui::Dynamic<Item, FireButton>{}));
+    auto app = jgui::make_application(jgui::HeadlessBackend{window_size}, jgui::window(jgui::window_frame(jgui::Dynamic<Item, FireButton>{})));
     check(app.has_value(), "application starts");
     auto& node = app->ui().get<Item>();
     const jgui::Handle<FireButton> first = node.create("One", fire).value();
@@ -120,7 +120,7 @@ void test_capture_and_focus(Checker& check) {
 void test_button_colours(Checker& check) {
     auto app = jgui::make_application(
         jgui::HeadlessBackend{window_size},
-        jgui::window(jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto&) -> void {}))));
+        jgui::window(jgui::window_frame(jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto&) -> void {})))));
     check(app.has_value() && app->process_pending().has_value(), "first frame");
     const jgui::Rect area = app->ui().get<HelpButton>().bounds();
     const jgui::Point sample{area.x() + 2, area.y() + 2};
@@ -143,12 +143,12 @@ void test_button_colours(Checker& check) {
 void test_menu_bar(Checker& check) {
     auto app = jgui::make_application(
         jgui::HeadlessBackend{window_size},
-        jgui::window(jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto&) -> void {}))));
+        jgui::window(jgui::window_frame(jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto&) -> void {})))));
     check(app.has_value(), "application starts");
     for (const jgui::Size size : {window_size, jgui::Size{900, 300}, jgui::Size{200, 150}, window_size}) {
         app->backend().inject(jgui::ResizeEvent{size});
         check(app->process_pending().has_value(), "resize handled");
-        const jgui::Rect client = jgui::WindowFrame::client_rect(size);
+        const jgui::Rect client = jgui::WindowFrame<jgui::DefaultFrameMetrics>::client_rect(size);
         const jgui::Rect bar = app->ui().get<jgui::MenuBarTag>().bounds();
         const jgui::Rect target = app->ui().get<HelpButton>().bounds();
         check(bar.x() == client.x() && bar.width() == client.width(), "the bar has the full client width");
@@ -161,7 +161,7 @@ void test_menu_bar(Checker& check) {
 void test_redraw_only_when_damaged(Checker& check) {
     auto app = jgui::make_application(
         jgui::HeadlessBackend{window_size},
-        jgui::window(jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto&) -> void {}))));
+        jgui::window(jgui::window_frame(jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto&) -> void {})))));
     check(app.has_value() && app->process_pending().has_value(), "first frame");
     const auto frames = app->frames();
     check(app->process_pending().has_value() && app->frames() == frames, "no events, no frame");

@@ -50,6 +50,8 @@ Allowed:
   truly cannot do the job. Any use needs a one-line comment saying why, and the report must list it.
 - `std::unique_ptr<T>` of a concrete `T` with a stateless deleter type.
 
+Anything that is part of the window is a class template; system-level classes with nothing to vary, such as the backends, may stay plain, as long as nothing is erased.
+
 **The one exception is the C boundary, and it is temporary.** libwayland hands listeners a
 `void* data` and requires C function pointers. This is allowed only in one templated trampoline
 helper in `src/wayland/`, which casts straight back to the exact type it was registered with. The
@@ -293,7 +295,8 @@ such as the Wayland and text wrappers, stay in `src/` to limit compile time.
 
 ### 8. Minimal window frame
 
-Drawn by the toolkit using ordinary hit regions: a title strip with no text, a close box, and resize
+`WindowFrame<Metrics, Children...>` is a widget in the tree that holds the window's content, with its
+sizes in a `FrameMetrics` type. Drawn by the toolkit using ordinary hit regions: a title strip with no text, a close box, and resize
 edges and corners. Strip drag calls `xdg_toplevel.move` and edges call `xdg_toplevel.resize`, using
 the serial of the triggering button press. The close box delivers the normal close event. Frame
 behaviour that does not need a compositor, such as hit regions and the close box, is tested
@@ -337,6 +340,7 @@ compile, so a failure for an unrelated reason is caught:
 - A `Handle<A>` passed to a `Pool<B>`.
 - A `Handle<T>` constructed by anything other than its pool.
 - A type that lacks `paint` used as a widget, which must fail on the concept.
+- A frame metrics type missing a field, which must fail on the concept.
 - A message sent to a receiver not in the tree, or to one with no handler for it.
 - A message sent with a wrong value type, or with a value missing.
 

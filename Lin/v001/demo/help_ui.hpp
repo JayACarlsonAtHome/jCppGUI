@@ -53,9 +53,9 @@ private:
 
 template <template <class...> class Slots = std::deque>
 [[nodiscard]] constexpr auto make_ui() {
-    return jgui::window(
+    return jgui::window(jgui::window_frame(
         jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto& u) -> void { u.template send<ToggleHelp>(); })),
-        HelpPanel<HelpLine, Slots>{});
+        HelpPanel<HelpLine, Slots>{}));
 }
 
 }  // namespace demo

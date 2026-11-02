@@ -1,8 +1,8 @@
 // File: include/jCppGUI/v001/application.hpp
 // Purpose: The event loop, split in two. ApplicationCore holds all the logic: it owns the backend and
-//          the tree by value, routes the pointer between frame and tree, and redraws only when damaged.
-//          It is constexpr, so it can be run whole in a static_assert. Application adds only what needs
-//          the system: the real font engine and the UI-thread check.
+//          the tree by value, sends events into the tree, carries out what widgets ask of the window
+//          system, and redraws only when damaged. It is constexpr, so it can be run whole in a static_assert. Application
+//          adds only what needs the system: the real font engine and the UI-thread check.
 #pragma once
 
 #include <cstdint>
@@ -12,7 +12,6 @@
 #include <utility>
 
 #include "backend.hpp"
-#include "frame.hpp"
 #include "text.hpp"
 #include "tree.hpp"
 
@@ -57,7 +56,7 @@ public:
     [[nodiscard]] constexpr B& backend() noexcept { return backend_; }
     [[nodiscard]] constexpr bool closed() const noexcept { return closed_; }
     [[nodiscard]] constexpr std::uint64_t frames() const noexcept { return frames_; }
-    [[nodiscard]] constexpr Size size() const noexcept { return size_; }
+    [[nodiscard]] constexpr Size size() const noexcept { return root_.size(); }
 
     // --- The event sink the backend calls, on the UI thread, outside any C callback ---
 
@@ -70,61 +69,36 @@ public:
             failure_ = std::move(bytes.error());
             return;
         }
-        size_ = event.size;
+        root_.set_size(event.size);
         have_size_ = true;
         damaged_ = true;
     }
 
     constexpr void on(const PointerMove& event) {
-        if (frame_.pointer_moved(event.position, size_)) damaged_ = true;
-        const bool captured = root_.capture_active();
-        if (captured || WindowFrame::client_rect(size_).contains(event.position)) {
-            root_.dispatch(PointerMove{event.position, captured});
-        } else {
-            root_.dispatch(PointerLeave{});
-        }
+        send_to_tree(PointerMove{event.position, root_.capture_active()});
     }
 
     constexpr void on(const PointerButton& event) {
         if (event.state == ButtonState::Pressed) {
-            press(event);
+            send_to_tree(PointerPress{event.position, event.button, event.serial});
         } else {
-            if (frame_.close_armed()) damaged_ = true;
-            if (frame_.release(event.position, size_)) closed_ = true;
-            root_.dispatch(PointerRelease{event.position, event.button});
+            send_to_tree(PointerRelease{event.position, event.button});
         }
     }
 
-    constexpr void on(const PointerLeave& event) {
-        if (frame_.pointer_left()) damaged_ = true;
-        root_.dispatch(event);
-    }
+    constexpr void on(const PointerLeave& event) { send_to_tree(event); }
 
-    constexpr void on(const KeyEvent& event) { root_.dispatch(event); }
+    constexpr void on(const KeyEvent& event) { send_to_tree(event); }
 
 private:
-    constexpr void press(const PointerButton& event) {
-        const FrameHit where = WindowFrame::hit(event.position, size_);
-        if (where.region == FrameRegion::Client || event.button != MouseButton::Left) {
-            root_.dispatch(ClearFocus{});
-            root_.dispatch(PointerPress{event.position, event.button});
-            return;
-        }
-        switch (where.region) {
-            case FrameRegion::Close:
-                frame_.arm_close();
-                damaged_ = true;
-                break;
-            case FrameRegion::Title:
-                backend_.begin_move(event.serial);
-                break;
-            case FrameRegion::Edge:
-                backend_.begin_resize(event.serial, where.edge);
-                break;
-            case FrameRegion::Outside:
-            case FrameRegion::Client:
-                break;
-        }
+    // Delivers the event, then carries out what the widgets asked of the window system.
+    template <class E>
+    constexpr void send_to_tree(const E& event) {
+        root_.dispatch(event);
+        const WindowRequests asked = root_.take_requests();
+        if (asked.move) backend_.begin_move(*asked.move);
+        if (asked.resize) backend_.begin_resize(asked.resize->serial, asked.resize->edge);
+        if (asked.close) on(CloseEvent{});
     }
 
     // Reports a failure recorded during delivery, then draws if anything is damaged.
@@ -143,16 +117,13 @@ private:
 
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> draw(const Shaper& text) {
-        const Rect whole{Point{}, size_};
-        const Rect client = WindowFrame::client_rect(size_);
-        if (auto laid_out = root_.layout(client, text); !laid_out) return std::unexpected(std::move(laid_out.error()));
-        auto buffer = backend_.acquire_frame(size_);
+        const Rect whole{Point{}, root_.size()};
+        if (auto laid_out = root_.layout(whole, text); !laid_out) return std::unexpected(std::move(laid_out.error()));
+        auto buffer = backend_.acquire_frame(root_.size());
         if (!buffer) return std::unexpected(std::move(buffer.error()));
-        const Canvas canvas{*buffer};
+        Canvas canvas{*buffer};
         canvas.fill_rect(whole, theme::background);
-        Canvas inside = canvas.clipped(client);
-        root_.paint(inside);
-        frame_.paint(canvas, size_);
+        root_.paint(canvas);
         if (auto presented = backend_.present(whole); !presented) return presented;
         root_.clear_damage();
         damaged_ = false;
@@ -162,10 +133,8 @@ private:
 
     B backend_;
     Root root_;
-    WindowFrame frame_{};
     std::optional<Error> failure_;
     std::uint64_t frames_{};
-    Size size_{};
     bool have_size_{};
     bool closed_{};
     bool damaged_{};

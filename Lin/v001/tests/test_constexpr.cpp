@@ -13,6 +13,46 @@
 #include "jCppGUI/v001/headless_backend.hpp"
 #include "jCppGUI/v001/jgui.hpp"
 
+// Metrics the concept must refuse. Only the concept looks at them, so they are outside the anonymous
+// namespace below: a compiler rightly reports unused fields of a type with internal linkage.
+namespace refused_metrics {
+struct NoCloseSide {
+    static constexpr std::int32_t edge_width = 4;
+    static constexpr std::int32_t corner_length = 12;
+    static constexpr std::int32_t title_height = 24;
+};
+struct NotConstant {
+    static inline std::int32_t edge_width = 4;
+    static constexpr std::int32_t corner_length = 12;
+    static constexpr std::int32_t title_height = 24;
+    static constexpr std::int32_t close_side = 16;
+};
+struct WrongFieldType {
+    static constexpr std::int64_t edge_width = 4;
+    static constexpr std::int32_t corner_length = 12;
+    static constexpr std::int32_t title_height = 24;
+    static constexpr std::int32_t close_side = 16;
+};
+struct NoEdge {
+    static constexpr std::int32_t edge_width = 0;
+    static constexpr std::int32_t corner_length = 12;
+    static constexpr std::int32_t title_height = 24;
+    static constexpr std::int32_t close_side = 16;
+};
+struct BoxTallerThanStrip {
+    static constexpr std::int32_t edge_width = 4;
+    static constexpr std::int32_t corner_length = 12;
+    static constexpr std::int32_t title_height = 10;
+    static constexpr std::int32_t close_side = 16;
+};
+struct CornerShorterThanEdge {
+    static constexpr std::int32_t edge_width = 14;
+    static constexpr std::int32_t corner_length = 12;
+    static constexpr std::int32_t title_height = 24;
+    static constexpr std::int32_t close_side = 16;
+};
+}  // namespace refused_metrics
+
 namespace {
 
 using namespace jgui;
@@ -264,24 +304,51 @@ constexpr bool queue_keeps_arrival_order() {
 static_assert(queue_keeps_arrival_order());
 
 // --- Frame ---
+using Frame = WindowFrame<DefaultFrameMetrics>;
 constexpr Size frame_window{200, 100};
-static_assert(WindowFrame::hit(Point{-1, 0}, frame_window).region == FrameRegion::Outside);
-static_assert(WindowFrame::hit(Point{200, 0}, frame_window).region == FrameRegion::Outside);
-static_assert(WindowFrame::hit(Point{int_max, int_min}, frame_window).region == FrameRegion::Outside);
-static_assert(WindowFrame::hit(Point{0, 0}, frame_window).edge == ResizeEdge::TopLeft);
-static_assert(WindowFrame::hit(Point{199, 0}, frame_window).edge == ResizeEdge::TopRight);
-static_assert(WindowFrame::hit(Point{0, 99}, frame_window).edge == ResizeEdge::BottomLeft);
-static_assert(WindowFrame::hit(Point{199, 99}, frame_window).edge == ResizeEdge::BottomRight);
-static_assert(WindowFrame::hit(Point{100, 0}, frame_window).edge == ResizeEdge::Top);
-static_assert(WindowFrame::hit(Point{100, 99}, frame_window).edge == ResizeEdge::Bottom);
-static_assert(WindowFrame::hit(Point{0, 50}, frame_window).edge == ResizeEdge::Left);
-static_assert(WindowFrame::hit(Point{199, 50}, frame_window).edge == ResizeEdge::Right);
-static_assert(WindowFrame::hit(Point{100, 10}, frame_window).region == FrameRegion::Title);
-static_assert(WindowFrame::hit(Point{100, 50}, frame_window).region == FrameRegion::Client);
-static_assert(WindowFrame::hit(Point{WindowFrame::close_box(frame_window).x(), 10}, frame_window).region == FrameRegion::Close);
-static_assert(WindowFrame::client_rect(Size{}).empty() && WindowFrame::client_rect(Size{1, 1}).empty());
-static_assert(WindowFrame::client_rect(Size{int_max, int_max}).width() > 0);
-static_assert(WindowFrame::hit(Point{0, 0}, Size{}).region == FrameRegion::Outside);
+static_assert(Frame::hit(Point{-1, 0}, frame_window).region == FrameRegion::Outside);
+static_assert(Frame::hit(Point{200, 0}, frame_window).region == FrameRegion::Outside);
+static_assert(Frame::hit(Point{int_max, int_min}, frame_window).region == FrameRegion::Outside);
+static_assert(Frame::hit(Point{0, 0}, frame_window).edge == ResizeEdge::TopLeft);
+static_assert(Frame::hit(Point{199, 0}, frame_window).edge == ResizeEdge::TopRight);
+static_assert(Frame::hit(Point{0, 99}, frame_window).edge == ResizeEdge::BottomLeft);
+static_assert(Frame::hit(Point{199, 99}, frame_window).edge == ResizeEdge::BottomRight);
+static_assert(Frame::hit(Point{100, 0}, frame_window).edge == ResizeEdge::Top);
+static_assert(Frame::hit(Point{100, 99}, frame_window).edge == ResizeEdge::Bottom);
+static_assert(Frame::hit(Point{0, 50}, frame_window).edge == ResizeEdge::Left);
+static_assert(Frame::hit(Point{199, 50}, frame_window).edge == ResizeEdge::Right);
+static_assert(Frame::hit(Point{100, 10}, frame_window).region == FrameRegion::Title);
+static_assert(Frame::hit(Point{100, 50}, frame_window).region == FrameRegion::Client);
+static_assert(Frame::hit(Point{Frame::close_box(frame_window).x(), 10}, frame_window).region == FrameRegion::Close);
+static_assert(Frame::client_rect(Size{}).empty() && Frame::client_rect(Size{1, 1}).empty());
+static_assert(Frame::client_rect(Size{int_max, int_max}).width() > 0);
+static_assert(Frame::hit(Point{0, 0}, Size{}).region == FrameRegion::Outside);
+
+// Metrics are compile-time values, each set of them a different type, and every size follows them.
+struct ThickMetrics {
+    static constexpr std::int32_t edge_width = 8;
+    static constexpr std::int32_t corner_length = 20;
+    static constexpr std::int32_t title_height = 32;
+    static constexpr std::int32_t close_side = 20;
+};
+using ThickFrame = WindowFrame<ThickMetrics>;
+static_assert(FrameMetrics<DefaultFrameMetrics> && FrameMetrics<ThickMetrics>);
+static_assert(!std::same_as<Frame, ThickFrame>);
+static_assert(Widget<Frame> && Widget<ThickFrame>);
+static_assert(Frame::edge_width == 4 && Frame::corner_length == 12 && Frame::title_height == 24 && Frame::close_side == 16);
+static_assert(Frame::client_rect(frame_window) == Rect{4, 24, 192, 72});
+static_assert(ThickFrame::client_rect(frame_window) == Rect{8, 32, 184, 60});
+static_assert(Frame::close_box(frame_window) == Rect{176, 4, 16, 16});
+static_assert(ThickFrame::close_box(frame_window) == Rect{166, 6, 20, 20});
+static_assert(Frame::hit(Point{6, 50}, frame_window).region == FrameRegion::Client);
+static_assert(ThickFrame::hit(Point{6, 50}, frame_window).edge == ResizeEdge::Left);
+static_assert(Frame::hit(Point{100, 28}, frame_window).region == FrameRegion::Client);
+static_assert(ThickFrame::hit(Point{100, 28}, frame_window).region == FrameRegion::Title);
+
+using namespace refused_metrics;
+static_assert(!FrameMetrics<NoCloseSide> && !FrameMetrics<NotConstant> && !FrameMetrics<WrongFieldType>);
+static_assert(!FrameMetrics<NoEdge> && !FrameMetrics<BoxTallerThanStrip> && !FrameMetrics<CornerShorterThanEdge>);
+static_assert(!detail::tags_unique<Frame, ThickFrame>(), "a second frame in one window is a duplicate tag");
 
 // --- A shaper for compile time: every byte is a solid block, with the real engine's refusals ---
 struct BlockShaper {
@@ -527,7 +594,7 @@ constexpr bool demo_help_toggles_in_pixels() {
     const Rect target = core.ui().get<demo::HelpButton>().bounds();
     const Point on{target.x() + 1, target.y() + 1};
     const Rect bar = core.ui().get<MenuBarTag>().bounds();
-    const Rect below{bar.x(), bar.bottom(), bar.width(), WindowFrame::client_rect(small_window).bottom() - bar.bottom()};
+    const Rect below{bar.x(), bar.bottom(), bar.width(), Frame::client_rect(small_window).bottom() - bar.bottom()};
     const auto text_pixels = [&] {
         int count = 0;
         for (std::int32_t y = below.y(); y < below.bottom(); ++y)
@@ -570,7 +637,7 @@ constexpr bool frame_routing_and_refused_sizes() {
     if (core.size() != small_window) return false;
 
     // Press on the close box, release off it: nothing. Press and release on it: closed.
-    const Point close = Point{WindowFrame::close_box(small_window).x() + 1, WindowFrame::close_box(small_window).y() + 1};
+    const Point close = Point{Frame::close_box(small_window).x() + 1, Frame::close_box(small_window).y() + 1};
     core.backend().inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, 13});
     core.backend().inject(PointerButton{Point{60, 40}, MouseButton::Left, ButtonState::Released, 14});
     if (!core.process_pending(shaper).has_value() || core.closed()) return false;
@@ -579,6 +646,144 @@ constexpr bool frame_routing_and_refused_sizes() {
     return core.process_pending(shaper).has_value() && core.closed();
 }
 static_assert(frame_routing_and_refused_sizes());
+
+// The frame is an ordinary node: the tree finds it and what it holds, and a childless frame works.
+constexpr bool frame_is_a_node_of_the_tree() {
+    auto ui = window(window_frame<ThickMetrics>(menu_bar(button<ClickTag>("x", bump_on_click)), Counter{}));
+    const Rect whole{0, 0, 120, 80};
+    ui.set_size(whole.size());
+    const auto left = ui.layout(whole, BlockShaper{});
+    if (!left.has_value() || !left->empty()) return false;
+    if (ui.get<WindowFrameTag>().bounds() != whole) return false;
+    if (ui.get<MenuBarTag>().bounds().origin() != ThickFrame::client_rect(whole.size()).origin()) return false;
+    if (ui.get<ClickTag>().bounds().intersect(ui.get<MenuBarTag>().bounds()).empty()) return false;
+
+    auto empty = window(window_frame());
+    empty.set_size(whole.size());
+    if (!empty.layout(whole, BlockShaper{}).has_value()) return false;
+    empty.dispatch(PointerPress{Point{60, 10}, MouseButton::Left, 9});
+    return empty.take_requests().move == 9U && !empty.take_requests().move.has_value();
+}
+static_assert(frame_is_a_node_of_the_tree());
+
+// A frame of another size routes and paints at that size, all the way through the application.
+constexpr bool thick_frame_through_the_application() {
+    ApplicationCore core{HeadlessBackend{small_window}, window(window_frame<ThickMetrics>(label<ClickTag>("x")))};
+    const BlockShaper shaper;
+    if (!core.process_pending(shaper).has_value()) return false;
+    core.backend().inject(PointerButton{Point{6, 30}, MouseButton::Left, ButtonState::Pressed, 21});
+    core.backend().inject(PointerButton{Point{60, 28}, MouseButton::Left, ButtonState::Pressed, 22});
+    if (!core.process_pending(shaper).has_value()) return false;
+    if (core.backend().resize_serial() != 21U || core.backend().resize_edge() != ResizeEdge::Left) return false;
+    if (core.backend().move_serial() != 22U) return false;
+    return core.backend().pixel(Point{6, 30}) == theme::frame_strip.argb && core.backend().pixel(Point{60, 28}) == theme::frame_strip.argb;
+}
+static_assert(thick_frame_through_the_application());
+
+// The frame's rules, pinned as they were when it sat outside the tree. Each evaluation paints the
+// window several times, so they are split to stay inside the compiler's default operation limit.
+struct FrameRig {
+    ApplicationCore<HeadlessBackend, decltype(demo::make_ui<std::vector>())> core{HeadlessBackend{small_window}, demo::make_ui<std::vector>()};
+    BlockShaper shaper{};
+
+    [[nodiscard]] constexpr bool start() { return core.process_pending(shaper).has_value(); }
+    template <class E>
+    [[nodiscard]] constexpr bool send(const E& event) {
+        core.backend().inject(event);
+        return core.process_pending(shaper).has_value();
+    }
+    [[nodiscard]] constexpr bool left(Point at, ButtonState state, std::uint32_t serial) {
+        return send(PointerButton{at, MouseButton::Left, state, serial});
+    }
+    [[nodiscard]] constexpr auto& frame() { return core.ui().get<WindowFrameTag>(); }
+    [[nodiscard]] constexpr auto& help() { return core.ui().get<demo::HelpButton>(); }
+    [[nodiscard]] constexpr Point on_help() {
+        return Point{help().bounds().x() + 1, help().bounds().y() + 1};
+    }
+};
+constexpr Rect small_box = Frame::close_box(small_window);
+constexpr Point on_close{small_box.x() + 1, small_box.y() + 1};
+constexpr Point on_title{60, 10};
+constexpr Point on_client{60, 50};
+constexpr std::uint32_t right_button = 0x111;
+
+constexpr bool hovering_the_close_box_redraws_once() {
+    FrameRig rig;
+    if (!rig.start()) return false;
+    const auto frames = rig.core.frames();
+    if (!rig.send(PointerMove{on_close}) || rig.core.frames() != frames + 1 || !rig.frame().close_hovered()) return false;
+    if (rig.core.backend().pixel(Point{small_box.x() + 1, small_box.y() + 2}) != theme::close_hover.argb) return false;
+    return rig.send(PointerMove{on_close}) && rig.core.frames() == frames + 1;
+}
+static_assert(hovering_the_close_box_redraws_once());
+
+constexpr bool close_stays_armed_over_a_widget_and_back() {
+    FrameRig rig;
+    if (!rig.start() || !rig.send(PointerMove{on_close})) return false;
+    if (!rig.left(on_close, ButtonState::Pressed, 31) || !rig.frame().close_armed()) return false;
+    if (rig.core.backend().pixel(Point{small_box.x() + 1, small_box.y() + 2}) != theme::close_pressed.argb) return false;
+    if (!rig.send(PointerMove{rig.on_help()}) || !rig.frame().close_armed() || rig.frame().close_hovered()) return false;
+    if (!rig.help().hovered()) return false;
+    if (!rig.send(PointerMove{on_close}) || !rig.frame().close_armed() || rig.core.closed()) return false;
+    return rig.left(on_close, ButtonState::Released, 32) && rig.core.closed();
+}
+static_assert(close_stays_armed_over_a_widget_and_back());
+
+constexpr bool leaving_the_window_disarms_close() {
+    FrameRig rig;
+    if (!rig.start() || !rig.left(on_close, ButtonState::Pressed, 33)) return false;
+    if (!rig.send(PointerLeave{}) || rig.frame().close_armed() || rig.frame().close_hovered()) return false;
+    return rig.left(on_close, ButtonState::Released, 34) && !rig.core.closed();
+}
+static_assert(leaving_the_window_disarms_close());
+
+constexpr bool only_the_left_button_acts_on_the_frame() {
+    FrameRig rig;
+    if (!rig.start()) return false;
+    if (!rig.send(PointerButton{on_title, right_button, ButtonState::Pressed, 35})) return false;
+    if (rig.core.backend().move_serial().has_value()) return false;
+    return rig.send(PointerButton{on_close, right_button, ButtonState::Pressed, 36}) && !rig.frame().close_armed();
+}
+static_assert(only_the_left_button_acts_on_the_frame());
+
+constexpr bool a_captured_drag_over_the_frame_starts_nothing() {
+    FrameRig rig;
+    if (!rig.start()) return false;
+    const Point help = rig.on_help();
+    if (!rig.left(help, ButtonState::Pressed, 37) || !rig.core.ui().capture_active()) return false;
+    if (!rig.send(PointerMove{on_title}) || !rig.help().pressed()) return false;
+    if (!rig.left(help, ButtonState::Released, 38)) return false;
+    return !rig.core.backend().move_serial().has_value() && !rig.core.backend().resize_serial().has_value();
+}
+static_assert(a_captured_drag_over_the_frame_starts_nothing());
+
+constexpr bool only_a_client_press_takes_the_focus_away() {
+    FrameRig rig;
+    if (!rig.start()) return false;
+    const Point help = rig.on_help();
+    if (!rig.left(help, ButtonState::Pressed, 39) || !rig.left(help, ButtonState::Released, 40) || !rig.help().focused()) return false;
+    if (!rig.left(on_title, ButtonState::Pressed, 41) || !rig.help().focused()) return false;
+    if (rig.core.backend().move_serial() != 41U) return false;
+    return rig.left(on_client, ButtonState::Pressed, 42) && !rig.help().focused();
+}
+static_assert(only_a_client_press_takes_the_focus_away());
+
+constexpr bool moving_off_the_client_area_is_a_leave() {
+    FrameRig rig;
+    if (!rig.start() || !rig.send(PointerMove{rig.on_help()}) || !rig.help().hovered()) return false;
+    return rig.send(PointerMove{on_title}) && !rig.help().hovered();
+}
+static_assert(moving_off_the_client_area_is_a_leave());
+
+// A press queued behind a resize is judged at the new size, before any layout has seen it.
+constexpr bool a_press_behind_a_resize_uses_the_new_size() {
+    FrameRig rig;
+    if (!rig.start()) return false;
+    rig.core.backend().inject(ResizeEvent{Size{300, 200}});
+    if (!rig.left(Point{299, 100}, ButtonState::Pressed, 43)) return false;
+    return rig.core.backend().resize_serial() == 43U && rig.core.backend().resize_edge() == ResizeEdge::Right;
+}
+static_assert(a_press_behind_a_resize_uses_the_new_size());
 
 constexpr bool run_ends_on_close_and_empty_wait_is_an_error() {
     ApplicationCore closes{HeadlessBackend{small_window}, demo::make_ui<std::vector>()};

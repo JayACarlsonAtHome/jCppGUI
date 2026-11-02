@@ -138,6 +138,7 @@ jgui_compile_fail(receiver_without_handler "message receiver has no handler")
 jgui_compile_fail(wrong_value_type "message value has the wrong type")
 jgui_compile_fail(missing_value "wrong number of values")
 jgui_compile_fail(empty_receivers "constraints? not satisfied|not satisfied")
+jgui_compile_fail(frame_metrics_missing_field "FrameMetrics")
 
 # --- Source rules: banned type-erasure tokens, casts, paths and layering ---
 add_test(NAME source_rules

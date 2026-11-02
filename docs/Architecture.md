@@ -12,6 +12,11 @@ any name. `std::variant` is a last resort and needs a comment saying why. There 
 and requires C function pointers. The helper casts straight back to the exact type registered, and
 the pointer goes no further. The exception ends when our own Wayland client replaces libwayland.
 
+**Anything that is part of the window is a class template.** System-level classes with nothing to
+vary, such as the backends, may stay plain, as long as nothing is erased. `WaylandBackend` and
+`HeadlessBackend` are plain classes for this reason. `WaylandBackend` gets revisited when our own
+Wayland client replaces libwayland.
+
 ## The constexpr rule
 
 `constexpr` wherever possible, and `consteval` where a value must be known at compile time. Constant
@@ -43,9 +48,9 @@ Non-`constexpr` code is limited to what needs the OS or a C library:
 ```
 demo, or your program
   Application                  the real font engine and the thread check
-  ApplicationCore              event routing, frame, damage and drawing
-  Window, MenuBar, Button,     the typed tree, messages and pools
-  Label, Dynamic, Pool
+  ApplicationCore              sends events into the tree, carries out window requests, damage, drawing
+  Window, WindowFrame, MenuBar,  the typed tree, messages and pools
+  Button, Label, Dynamic, Pool
   Canvas, PixelBuffer, Geometry
 ---------------- Backend concept: nothing above this line includes a display header ----------------
   HeadlessBackend              tests inject events and read pixels back
@@ -127,3 +132,29 @@ found relative to the script or to `CMakeLists.txt`.
 GNOME does not draw title bars for Wayland clients, so the toolkit draws a minimal frame: a title
 strip with no text, a close box, and resize edges and corners. It also draws its own pointer arrow,
 because the protocol leaves the pointer's look undefined until a client sets one.
+
+`WindowFrame<Metrics, Children...>` is a widget like any other, and it holds the window's content the
+way `MenuBar` holds its buttons:
+
+```cpp
+jgui::window(jgui::window_frame(jgui::menu_bar(...), content));          // DefaultFrameMetrics
+jgui::window(jgui::window_frame<MyMetrics>(jgui::menu_bar(...), content));
+```
+
+- **Metrics.** Sizes are `static constexpr` fields of a type that satisfies the `FrameMetrics` concept,
+  so different frame sizes are different types. `WindowFrame<M>` with no children is enough to reach
+  the geometry: `WindowFrame<M>::client_rect(size)`, `close_box` and `hit`.
+- **Why a parent and not a sibling.** The frame decides which events the content sees: a left press on
+  the frame stays out of the content, motion off the client area is a leave for it, and a press in the
+  client area clears the focus first. The content paints clipped to the client area, and the frame
+  paints on top. The frame's own close-box state survives the pointer crossing a widget, which a
+  sibling could not do, because the tree tells a sibling below the widget that the pointer left.
+- **Reaching the window system.** A widget cannot see the backend. It asks the `Window` it receives as
+  `ui`: `request_move(serial)`, `request_resize(serial, edge)` or `request_close()`. These are typed
+  fields, and `ApplicationCore` carries them out through the backend when the dispatch returns, in the
+  same call that delivered the press. `PointerPress` carries the press's serial for this. Close goes
+  through the same `on(CloseEvent)` as a close from the compositor.
+- **Size.** The `Window` holds the validated window size, set as soon as a resize arrives, so a press
+  queued behind a resize is judged at the new size even before the next layout.
+- **A window with no frame** also works, with no chrome. Clearing the focus on a press is the frame's
+  job, so such a window does not do it.

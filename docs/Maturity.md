@@ -5,7 +5,8 @@
 ## What works
 
 - A native Wayland window with a toolkit-drawn frame, a menu bar and a Help button that toggles a line
-  of text. `demo --smoke` passes against a live GNOME session.
+  of text. The frame is a widget in the tree, `WindowFrame<Metrics, Children...>`, with its sizes fixed
+  at compile time by the metrics type. `demo --smoke` passes against a live GNOME session.
 - The typed tree, typed pools with deferred destruction, and compile-time message routing.
 - The same behaviour with no screen, through `HeadlessBackend`, down to rendered pixels.
 - The core logic run in `static_assert`, including the demo tree from events to pixels.

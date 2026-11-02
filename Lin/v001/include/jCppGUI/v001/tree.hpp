@@ -6,6 +6,7 @@
 #include <array>
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <expected>
 #include <optional>
@@ -280,6 +281,19 @@ template <class Tag, class T>
     return Dynamic<Tag, T>{};
 }
 
+// What widgets asked of the window system during a dispatch. ApplicationCore carries it out through
+// the backend once the dispatch has returned.
+struct ResizeRequest {
+    std::uint32_t serial{};
+    ResizeEdge edge{ResizeEdge::Top};
+};
+
+struct WindowRequests {
+    std::optional<std::uint32_t> move;  // the serial of the press that started it
+    std::optional<ResizeRequest> resize;
+    bool close{};
+};
+
 // The root of a tree. Callbacks and message handlers receive it as their "u".
 template <Widget... C>
 class Window {
@@ -325,6 +339,18 @@ public:
 
     constexpr void paint(Canvas& canvas) { detail::paint_in_order(children_, canvas); }
 
+    // The window's current size. ApplicationCore sets it, after validating it, as soon as a resize
+    // arrives, so events that follow are judged against it even before the next layout.
+    [[nodiscard]] constexpr Size size() const noexcept { return size_; }
+    constexpr void set_size(Size size) noexcept { size_ = size; }
+
+    constexpr void request_move(std::uint32_t serial) noexcept { requests_.move = serial; }
+    constexpr void request_resize(std::uint32_t serial, ResizeEdge edge) noexcept {
+        requests_.resize = ResizeRequest{serial, edge};
+    }
+    constexpr void request_close() noexcept { requests_.close = true; }
+    [[nodiscard]] constexpr WindowRequests take_requests() noexcept { return std::exchange(requests_, WindowRequests{}); }
+
 private:
     class DispatchScope {
     public:
@@ -342,6 +368,8 @@ private:
 
     children_type children_;
     std::size_t dispatch_depth_{};
+    WindowRequests requests_{};
+    Size size_{};
 };
 
 template <class... C>

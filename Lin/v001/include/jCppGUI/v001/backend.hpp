@@ -16,7 +16,6 @@
 #include "canvas.hpp"
 #include "error.hpp"
 #include "events.hpp"
-#include "frame.hpp"
 
 namespace jgui::inline v001 {
 

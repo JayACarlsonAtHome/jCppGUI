@@ -9,6 +9,9 @@
 
 namespace jgui::inline v001 {
 
+// The edge or corner a compositor resize starts from.
+enum class ResizeEdge : std::uint8_t { Top, Bottom, Left, Right, TopLeft, TopRight, BottomLeft, BottomRight };
+
 // --- Delivered by a backend ---
 
 struct CloseEvent {};
@@ -61,6 +64,7 @@ inline constexpr std::uint32_t Return = 0xff0d;
 struct PointerPress {
     Point position;
     std::uint32_t button{};
+    std::uint32_t serial{};  // the backend's serial for this press, for a compositor move or resize
 };
 
 struct PointerRelease {
