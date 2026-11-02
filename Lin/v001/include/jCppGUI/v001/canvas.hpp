@@ -1,12 +1,15 @@
 // File: include/jCppGUI/v001/canvas.hpp
 // Purpose: PixelBuffer, a validated view of ARGB8888 pixels, and Canvas, whose drawing calls are
-//          clipped so that no input can write outside the buffer. Physical pixels, scale 1.
+//          clipped so that no input can write outside the buffer. Neither can be copied or moved, so a widget
+//          cannot store what it was given, and a canvas for a frame refuses to draw once that frame is
+//          over. Physical pixels, scale 1.
 #pragma once
 
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <span>
+#include <utility>
 
 #include "error.hpp"
 #include "geometry.hpp"
@@ -21,7 +24,30 @@ struct Color {
     friend constexpr bool operator==(const Color&, const Color&) = default;
 };
 
+namespace detail {
+// Which frame is the current one. A new frame invalidates every older one, even if it then fails, and ending the
+// current frame invalidates it too. Generation 0 is never current. Both backends count their frames with this
+// rule, and the application counts what it is painting.
+class FrameLedger {
+public:
+    [[nodiscard]] constexpr std::uint64_t begin() noexcept { return ++latest_; }
+    [[nodiscard]] constexpr bool current(std::uint64_t generation) const noexcept {
+        return generation != 0 && generation == latest_;
+    }
+    constexpr void finish() noexcept { ++latest_; }
+
+private:
+    std::uint64_t latest_{};
+};
+}  // namespace detail
+
 class PixelBuffer {
+    class Validated {
+        friend class PixelBuffer;
+        friend class Canvas;
+        constexpr Validated() noexcept = default;
+    };
+
 public:
     // The byte count for a size, after checking its limit. Every size from outside goes through
     // here before it is used in any other arithmetic.
@@ -43,8 +69,15 @@ public:
             return make_error(ErrorCode::SizeLimit, "buffer stride is over the limit");
         if (pixels.size() < stride_pixels * rows)
             return make_error(ErrorCode::SizeLimit, "buffer storage is smaller than its size");
-        return PixelBuffer{pixels, size, stride_bytes};
+        return std::expected<PixelBuffer, Error>{std::in_place, Validated{}, pixels, size, stride_bytes};
     }
+
+    // Only create can make what this takes, so every buffer has passed its checks.
+    constexpr PixelBuffer(Validated, std::span<std::uint32_t> pixels, Size size, std::int32_t stride_bytes) noexcept
+        : pixels_{pixels}, size_{size}, stride_bytes_{stride_bytes} {}
+    PixelBuffer(const PixelBuffer&) = delete;
+    PixelBuffer& operator=(const PixelBuffer&) = delete;
+    constexpr ~PixelBuffer() = default;
 
     // The distance between rows when rows follow each other with no gap.
     [[nodiscard]] static constexpr std::int32_t tight_stride(Size size) noexcept {
@@ -67,9 +100,6 @@ private:
         return pixels_[row + static_cast<std::size_t>(x)];
     }
 
-    constexpr PixelBuffer(std::span<std::uint32_t> pixels, Size size, std::int32_t stride_bytes) noexcept
-        : pixels_{pixels}, size_{size}, stride_bytes_{stride_bytes} {}
-
     std::span<std::uint32_t> pixels_;
     Size size_;
     std::int32_t stride_bytes_;
@@ -77,16 +107,33 @@ private:
 
 class Canvas {
 public:
-    constexpr explicit Canvas(PixelBuffer buffer) noexcept : buffer_{buffer}, clip_{Point{}, buffer.size()} {}
+    // A canvas on memory the caller owns for as long as it draws.
+    constexpr explicit Canvas(const PixelBuffer& buffer) noexcept
+        : buffer_{PixelBuffer::Validated{}, buffer.pixels_, buffer.size_, buffer.stride_bytes_}, clip_{Point{}, buffer.size_} {}
 
-    // A canvas on the same pixels with a clip that can only be narrower than this one's.
-    [[nodiscard]] constexpr Canvas clipped(const Rect& area) const noexcept {
-        Canvas narrower{*this};
-        narrower.clip_ = clip_.intersect(area);
-        return narrower;
+    // A canvas for one frame: from when that generation ends, every draw call on it aborts.
+    constexpr Canvas(const PixelBuffer& buffer, const detail::FrameLedger& ledger, std::uint64_t generation) noexcept
+        : buffer_{PixelBuffer::Validated{}, buffer.pixels_, buffer.size_, buffer.stride_bytes_},
+          clip_{Point{}, buffer.size_},
+          ledger_{&ledger},
+          generation_{generation} {}
+
+    Canvas(const Canvas&) = delete;
+    Canvas& operator=(const Canvas&) = delete;
+
+    // Leaves nothing behind to draw with, for a pointer kept past the end of its life.
+    constexpr ~Canvas() {
+        buffer_.pixels_ = {};
+        clip_ = Rect{};
+        generation_ = 0;
     }
 
+    // A canvas on the same pixels with a clip that can only be narrower than this one's, for the same frame. The
+    // result is a new object and not a copy, so it can be used only where it is made.
+    [[nodiscard]] constexpr Canvas clipped(const Rect& area) const noexcept { return Canvas{*this, clip_.intersect(area)}; }
+
     constexpr void fill_rect(const Rect& area, Color color) const {
+        require_current();
         const Rect visible = clip_.intersect(area);
         if (visible.empty()) return;
         for (std::int32_t y = visible.top().value_; y < visible.bottom().value_; ++y)
@@ -107,6 +154,7 @@ public:
 
     // Blends a shaped line of text with its top-left corner at the given point.
     constexpr void draw_text(Point at, const TextRun& run, Color color) const {
+        require_current();
         const Rect visible = clip_.intersect(Rect{at, run.size()});
         if (visible.empty()) return;
         for (std::int32_t y = visible.top().value_; y < visible.bottom().value_; ++y) {
@@ -118,6 +166,17 @@ public:
     }
 
 private:
+    constexpr Canvas(const Canvas& parent, const Rect& clip) noexcept
+        : buffer_{PixelBuffer::Validated{}, parent.buffer_.pixels_, parent.buffer_.size_, parent.buffer_.stride_bytes_},
+          clip_{clip},
+          ledger_{parent.ledger_},
+          generation_{parent.generation_} {}
+
+    // Checked on each call, because a canvas can still be made to outlive its frame: see docs/SECURITY.md.
+    constexpr void require_current() const noexcept {
+        require(ledger_ == nullptr || ledger_->current(generation_), "a Canvas used after its frame ended");
+    }
+
     [[nodiscard]] static constexpr std::uint32_t blend(std::uint32_t under, std::uint32_t over,
                                                        std::uint32_t coverage) noexcept {
         std::uint32_t mixed = 0xFF000000U;
@@ -131,6 +190,8 @@ private:
 
     PixelBuffer buffer_;
     Rect clip_;
+    const detail::FrameLedger* ledger_{};
+    std::uint64_t generation_{};
 };
 
 }  // namespace jgui::inline v001

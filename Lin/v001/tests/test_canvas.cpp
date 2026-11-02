@@ -1,18 +1,98 @@
 // File: tests/test_canvas.cpp
 // Purpose: Tests 2 and 3: drawing outside the buffer writes nothing out of bounds, checked by a guard
-//          region, and PixelBuffer refuses oversize and multiplication-overflow sizes.
+//          region, and PixelBuffer refuses oversize and multiplication-overflow sizes. Also what a widget that
+//          keeps a canvas past its frame gets: an abort, and no write to memory that has moved.
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <array>
+#include <csignal>
 #include <cstdint>
+#include <expected>
+#include <iostream>
 #include <limits>
+#include <memory>
 #include <span>
 #include <vector>
 
+#include "app_helpers.hpp"
 #include "check.hpp"
 #include "jCppGUI/v001/canvas.hpp"
+
+// A prvalue from clipped can initialize a member, so a widget can keep a live Canvas after all. A copy or a move
+// would not compile: see tests/compile_fail/canvas_stored.cpp. This one must not work once its frame is over.
+struct KeptCanvas {
+    jgui::Canvas canvas;
+    explicit KeptCanvas(const jgui::Canvas& given) noexcept : canvas{given.clipped(jgui::Rect{jgui::Point{}, jgui::Size{jgui::Width{4}, jgui::Height{4}}})} {}
+};
+
+// Outside the anonymous namespace because only the Widget concept reads bounds, and a compiler rightly reports a
+// member nobody calls on a type with internal linkage.
+struct Keeper {
+    using tag = Keeper;
+    std::unique_ptr<KeptCanvas> kept{};
+    [[nodiscard]] constexpr jgui::Rect bounds() const noexcept { return jgui::Rect{}; }
+    void paint(const jgui::TreeKey&, jgui::Canvas& canvas) {
+        if (!kept) kept = std::make_unique<KeptCanvas>(canvas);
+        kept->canvas.fill_rect(jgui::Rect{jgui::Point{}, jgui::Size{jgui::Width{1}, jgui::Height{1}}}, jgui::Color{0xFF0000FFU});
+    }
+    template <class S>
+    std::expected<jgui::Rect, jgui::Error> layout(const jgui::TreeKey&, jgui::Rect area, const S&) { return area; }
+    template <class U, class E>
+    bool handle(const jgui::TreeKey&, U&, const E&) { return false; }
+    template <class U, class E>
+    void notify(const jgui::TreeKey&, U&, const E&) {}
+};
+
+namespace {
+
+// The reproduction of the use after free, on the path it took: a resize reallocates the pixels, and the kept
+// canvas is used after the frame it was given for. How it dies is the test: an abort, and no ASan report.
+template <class Use>
+[[nodiscard]] bool kept_canvas_aborts(Use use) {
+    std::cout.flush();
+    const pid_t child = ::fork();
+    if (child == 0) {
+        auto app = jgui::make_application(jgui::HeadlessBackend{jgui::Size{jgui::Width{8}, jgui::Height{8}}}, jgui::window(Keeper{}));
+        if (!app || !app->process_pending()) ::_exit(2);
+        // It drew once while its frame was current. That frame is over, and a kept canvas must stop here.
+        use(*app);
+        ::_exit(0);
+    }
+    int status = 0;
+    if (child < 0 || ::waitpid(child, &status, 0) != child) return false;
+    return WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT;
+}
+
+void test_kept_canvas(jgui_test::Checker& check) {
+    using jgui::Height;
+    using jgui::Width;
+    check(kept_canvas_aborts([](auto& app) {
+              app.ui().template get<Keeper>().kept->canvas.fill_rect(jgui::Rect{jgui::Point{}, jgui::Size{Width{1}, Height{1}}}, jgui::Color{1});
+          }),
+          "a kept canvas aborts as soon as its frame is over");
+    check(kept_canvas_aborts([](auto& app) {
+              app.ui().template get<Keeper>().kept->canvas.stroke_rect(jgui::Rect{jgui::Point{}, jgui::Size{Width{1}, Height{1}}}, jgui::Color{1});
+          }),
+          "so does an outline");
+    check(kept_canvas_aborts([](auto& app) {
+              app.ui().template get<Keeper>().kept->canvas.draw_text(jgui::Point{}, jgui::TextRun{}, jgui::Color{1});
+          }),
+          "and text");
+    check(kept_canvas_aborts([](auto& app) {
+              // The second frame's paint uses what the first one kept, after the pixels moved.
+              jgui_test::backend(app).inject(jgui::ResizeEvent{jgui::Size{Width{2000}, Height{2000}}});
+              static_cast<void>(app.process_pending());
+          }),
+          "and the original reproduction: the next frame reallocated the pixels");
+}
+
+}  // namespace
 
 int main() {
     using namespace jgui;
     jgui_test::Checker check;
+    test_kept_canvas(check);
     const std::int32_t hi = std::numeric_limits<std::int32_t>::max();
     const std::int32_t lo = std::numeric_limits<std::int32_t>::min();
 

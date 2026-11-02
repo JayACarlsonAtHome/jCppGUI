@@ -207,6 +207,10 @@ consteval bool buffer_create_checks() {
 }
 static_assert(buffer_create_checks());
 
+// A canvas or a buffer cannot be kept by value, or passed along as a copy.
+static_assert(!std::copy_constructible<Canvas> && !std::move_constructible<Canvas> && !std::is_copy_assignable_v<Canvas> && !std::is_move_assignable_v<Canvas>);
+static_assert(!std::copy_constructible<PixelBuffer> && !std::move_constructible<PixelBuffer> && !std::is_copy_assignable_v<PixelBuffer> && !std::is_move_assignable_v<PixelBuffer>);
+
 // --- Canvas: any write outside the buffer would stop this compiling, and the guards check the rest ---
 consteval bool canvas_stays_inside() {
     constexpr std::size_t total = 8 * 8;
@@ -254,6 +258,19 @@ consteval bool canvas_clip_and_text() {
     return storage[0] == 0xFF000000U && storage[5] == 0xFF112233U;
 }
 static_assert(canvas_clip_and_text());
+
+// A canvas for a frame draws while that frame is current, its clipped children too. Afterwards it aborts: see
+// tests/test_canvas.cpp, because in constant evaluation that would stop this file compiling.
+consteval bool canvas_draws_during_its_frame() {
+    std::array<std::uint32_t, 4> storage{};
+    detail::FrameLedger ledger;
+    const auto generation = ledger.begin();
+    const auto buffer = PixelBuffer::create(storage, Size{Width{2}, Height{2}}, 8);
+    const Canvas canvas{buffer.value(), ledger, generation};
+    canvas.clipped(Rect{Point{}, Size{Width{1}, Height{1}}}).fill_rect(Rect{Point{}, Size{Width{9}, Height{9}}}, Color{7});
+    return storage == std::array<std::uint32_t, 4>{7, 0, 0, 0};
+}
+static_assert(canvas_draws_during_its_frame());
 
 consteval bool glyph_blit_is_clipped() {
     const std::array<std::uint8_t, 4> glyph{10, 20, 30, 40};

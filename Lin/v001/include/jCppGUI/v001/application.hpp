@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <thread>
 #include <utility>
@@ -22,7 +23,8 @@ class ApplicationCore {
     static_assert(Backend<B>, "this type is not a backend");
 
 public:
-    constexpr ApplicationCore(B backend, Root root) : backend_{std::move(backend)}, root_{std::move(root)} {}
+    constexpr ApplicationCore(B backend, Root root)
+        : backend_{std::move(backend)}, root_{std::move(root)}, painting_{std::make_unique<detail::FrameLedger>()} {}
 
     // Runs until the window is closed or something fails. Sleeps in the backend's wait.
     template <TextShaper Shaper>
@@ -147,6 +149,17 @@ private:
         return draw(text);
     }
 
+    // Every canvas of this frame stops working when this returns, before the pixels leave for the display.
+    constexpr void paint(const PixelBuffer& pixels, const Rect& whole) {
+        const std::uint64_t generation = painting_->begin();
+        {
+            Canvas canvas{pixels, *painting_, generation};
+            canvas.fill_rect(whole, theme::background);
+            root_.paint(canvas);
+        }
+        painting_->finish();
+    }
+
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> draw(const Shaper& text) {
         const Rect whole{Point{}, root_.size()};
@@ -155,9 +168,7 @@ private:
         if (!frame) return std::unexpected(std::move(frame.error()));
         auto pixels = backend_.frame_pixels(*frame);
         if (!pixels) return std::unexpected(std::move(pixels.error()));
-        Canvas canvas{*pixels};
-        canvas.fill_rect(whole, theme::background);
-        root_.paint(canvas);
+        paint(*pixels, whole);
         if (auto presented = backend_.present(std::move(*frame), whole); !presented) return std::unexpected(std::move(presented.error()));
         root_.clear_damage();
         damaged_ = false;
@@ -167,6 +178,8 @@ private:
 
     B backend_;
     Root root_;
+    // On the heap, so a canvas can hold its address while this object moves.
+    std::unique_ptr<detail::FrameLedger> painting_;
     std::optional<Error> failure_{};
     std::uint64_t frames_{};
     bool have_size_{};

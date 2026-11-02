@@ -116,20 +116,6 @@ struct HeldBuffers {
     if (!reuses_a_buffer && held.count >= max_buffers) return FrameRoom::Wait;
     return held.bytes > budget - frame_bytes * 2 ? FrameRoom::Wait : FrameRoom::Ready;
 }
-
-// Which frame is the current one. Both backends use this one rule: a new acquire invalidates every older
-// frame, even if it then fails, and presenting ends the current one. Generation 0 is never current.
-class FrameLedger {
-public:
-    [[nodiscard]] constexpr std::uint64_t begin() noexcept { return ++latest_; }
-    [[nodiscard]] constexpr bool current(std::uint64_t generation) const noexcept {
-        return generation != 0 && generation == latest_;
-    }
-    constexpr void finish() noexcept { ++latest_; }
-
-private:
-    std::uint64_t latest_{};
-};
 }  // namespace detail
 
 // One frame being drawn, which only its own backend type can make or read. It holds no pointer, only which

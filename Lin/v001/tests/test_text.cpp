@@ -24,7 +24,7 @@ constexpr Size buffer_size{Width{200}, Height{60}};
 struct Target {
     std::vector<std::uint32_t> storage = std::vector<std::uint32_t>(200U * 60U, background);
 
-    [[nodiscard]] PixelBuffer buffer() { return PixelBuffer::create(storage, buffer_size, 200 * 4).value(); }
+    [[nodiscard]] Canvas canvas() { return Canvas{PixelBuffer::create(storage, buffer_size, 200 * 4).value()}; }
     [[nodiscard]] int count_inked(const Rect& area, bool inside) const {
         int count = 0;
         for (std::int32_t y = 0; y < jgui_test::number(buffer_size.height()); ++y) {
@@ -45,19 +45,19 @@ void test_help_text(jgui_test::Checker& check, const TextEngine& engine) {
 
     Target whole;
     const Point at{Left{10}, Top{10}};
-    Canvas{whole.buffer()}.draw_text(at, *run, ink);
+    whole.canvas().draw_text(at, *run, ink);
     const Rect measured{at, run->size()};
     check(whole.count_inked(measured, true) > 0, "non-background pixels inside its measured bounds");
     check(whole.count_inked(measured, false) == 0, "none outside its measured bounds");
 
     Target clipped;
     const Rect clip{Point{Left{12}, Top{12}}, Size{Width{6}, Height{6}}};
-    Canvas{clipped.buffer()}.clipped(clip).draw_text(at, *run, ink);
+    clipped.canvas().clipped(clip).draw_text(at, *run, ink);
     check(clipped.count_inked(clip, false) == 0, "none outside the clip");
     check(clipped.count_inked(clip, true) > 0, "some inside the clip");
 
     Target off;
-    Canvas{off.buffer()}.draw_text(Point{Left{-1000}, Top{-1000}}, *run, ink);
+    off.canvas().draw_text(Point{Left{-1000}, Top{-1000}}, *run, ink);
     check(off.count_inked(Rect{Point{}, buffer_size}, true) == 0, "off the buffer draws nothing");
 }
 
