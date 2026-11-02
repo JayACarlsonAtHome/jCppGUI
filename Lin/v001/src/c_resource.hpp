@@ -1,14 +1,17 @@
 // File: src/c_resource.hpp
 // Purpose: RAII for C library objects: a unique_ptr with a stateless deleter that calls the library's
 //          own release function, so nothing is erased and nothing has to be freed by hand. Also the
-//          one helper that reads a C pointer and count, into memory we own.
+//          helpers that read a C pointer and count, and a C string, into memory we own.
 #pragma once
 
+#include <concepts>
 #include <cstddef>
 #include <expected>
+#include <iterator>
 #include <memory>
 #include <ranges>
 #include <span>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -41,6 +44,24 @@ template <class T>
     if (count > limit) return make_error(ErrorCode::SizeLimit, "a C library gave a count over the limit");
     const std::span<const T> source = std::views::counted(data, saturate_to<std::ptrdiff_t>(count));
     return std::vector<T>(source.begin(), source.end());
+}
+
+// The only place a C string is walked. It stops at the terminator or at the limit, whichever comes first, so
+// a string with no terminator cannot take the walk further than the limit. A string over the limit is refused.
+template <class Char>
+    requires(std::same_as<Char, char> || std::same_as<Char, unsigned char>)
+[[nodiscard]] constexpr std::expected<std::string, Error> string_from_c(const Char* text, std::size_t limit) {
+    if (text == nullptr) return make_error(ErrorCode::System, "a C library gave a null string");
+    std::string out;
+    for (const Char* at = text; *at != Char{0}; at = std::next(at)) {
+        if (out.size() == limit) return make_error(ErrorCode::SizeLimit, "a C library gave a string over the limit");
+        if constexpr (std::same_as<Char, char>) {
+            out.push_back(*at);
+        } else {
+            out.push_back(static_cast<char>(*at));
+        }
+    }
+    return out;
 }
 
 }  // namespace jgui::inline v001::detail

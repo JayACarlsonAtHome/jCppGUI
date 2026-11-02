@@ -33,12 +33,7 @@ using FtFace = detail::CResource<FT_FaceRec_, FT_Done_Face>;
 using HbFont = detail::CResource<hb_font_t, hb_font_destroy>;
 using HbBuffer = detail::CResource<hb_buffer_t, hb_buffer_destroy>;
 
-// fontconfig's text type is unsigned char, and FreeType wants char.
-std::string to_string(const FcChar8* text) {
-    std::string out;
-    for (const FcChar8 unit : std::basic_string_view<FcChar8>{text}) out.push_back(static_cast<char>(unit));
-    return out;
-}
+constexpr std::size_t max_font_path_bytes = 4096;  // Linux's own limit on a path
 
 // The font file and face index of the default sans-serif font.
 struct FontFile {
@@ -66,7 +61,9 @@ std::expected<FontFile, Error> find_default_font(FcConfig* config) {
         return make_error(ErrorCode::Font, "the matched font names no file");
     int index = 0;
     if (FcPatternGetInteger(match.get(), FC_INDEX, 0, &index) != FcResultMatch) index = 0;
-    return FontFile{to_string(file), index};
+    auto path = detail::string_from_c(file, max_font_path_bytes);
+    if (!path) return std::unexpected(std::move(path.error()));
+    return FontFile{std::move(*path), index};
 }
 
 }  // namespace

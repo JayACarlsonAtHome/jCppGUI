@@ -115,6 +115,17 @@ static_assert(copy_from_c<int>(nullptr, 0, 0).value().empty());
 static_assert(copy_from_c(c_side.data(), 0, 0).value().empty());
 static_assert(copy_from_c<int>(nullptr, 1, 3).error().code == ErrorCode::System, "null with a count");
 static_assert(copy_from_c(c_side.data(), 3, 2).error().code == ErrorCode::SizeLimit, "over the limit");
+
+// --- The one helper that walks a C string. Reading past the end of these would not compile. ---
+constexpr std::array<char, 4> c_string{'a', 'b', 'c', '\0'};
+constexpr std::array<char, 3> c_no_terminator{'a', 'b', 'c'};
+constexpr std::array<unsigned char, 3> c_font_path{'x', 'y', '\0'};
+static_assert(string_from_c(c_string.data(), 3).value() == "abc", "exactly at the limit");
+static_assert(string_from_c(c_string.data(), 2).error().code == ErrorCode::SizeLimit, "one over the limit");
+static_assert(string_from_c(c_no_terminator.data(), 2).error().code == ErrorCode::SizeLimit, "no terminator: the walk stops at the limit");
+static_assert(string_from_c(c_font_path.data(), 2).value() == "xy", "fontconfig's text type");
+static_assert(string_from_c("", 0).value().empty(), "the empty string needs no room");
+static_assert(string_from_c(static_cast<const char*>(nullptr), 9).error().code == ErrorCode::System);
 // Reading these would be out of bounds, which constant evaluation rejects, so they are refused before any read.
 static_assert(!copy_from_c(c_side.data(), 1000, 3).has_value());
 static_assert(!copy_from_c(c_side.data(), std::numeric_limits<std::size_t>::max(), 3).has_value());
@@ -146,6 +157,18 @@ void test_program_arguments(jgui_test::Checker& check) {
     check(!program_arguments(saturate_to<int>(max_program_arguments + 1), two.data()).has_value(), "a count over the limit is refused before any read");
     const std::array<const char*, 2> holed{"demo", nullptr};
     check(!program_arguments(2, holed.data()).has_value(), "a null argument is refused");
+    const std::string longest(max_program_argument_bytes, 'x');
+    const std::string too_long(max_program_argument_bytes + 1, 'x');
+    const std::array<const char*, 1> at_limit{longest.c_str()};
+    const std::array<const char*, 1> over_limit{too_long.c_str()};
+    check(program_arguments(1, at_limit.data()).has_value(), "an argument at its limit is accepted");
+    check(!program_arguments(1, over_limit.data()).has_value(), "and one over it is refused");
+    // What comes back owns its text: the argument's memory can change, or go, and the copy stays.
+    std::array<char, 3> changing{'a', 'b', '\0'};
+    const std::array<const char*, 1> pointing{changing.data()};
+    const auto copied = program_arguments(1, pointing.data());
+    changing[0] = 'z';
+    check(copied.has_value() && copied->at(0) == "ab", "an argument is a copy");
 }
 
 void test_buffer_file(jgui_test::Checker& check) {
@@ -244,7 +267,8 @@ int main() {
         const CResource<char, [](char* p) { std::free(p); }> text{xkb_keymap_get_as_string(source.get(), XKB_KEYMAP_FORMAT_TEXT_V1)};
         check(text != nullptr, "the keymap as text");
         if (text) {
-            const std::string_view view{text.get(), std::char_traits<char>::length(text.get()) + 1};
+            std::string view = string_from_c(text.get(), max_keymap_bytes).value_or("");
+            view.push_back('\0');
             UniqueFd fd = file_with(view);
             const int raw = fd.get();
             const auto loaded = load_keymap(context.get(), keymap_format_xkb_v1, std::move(fd),
@@ -253,7 +277,7 @@ int main() {
             check(is_closed(raw), "and its descriptor is closed");
 
             // Bytes past the terminator stay out of the compiler, and so do bytes past the stated size.
-            std::string with_tail{view};
+            std::string with_tail = view;
             with_tail += "this tail is not a keymap";
             check(load_keymap(context.get(), keymap_format_xkb_v1, file_with(with_tail),
                               static_cast<std::uint32_t>(with_tail.size())).has_value(), "a tail after the terminator is ignored");

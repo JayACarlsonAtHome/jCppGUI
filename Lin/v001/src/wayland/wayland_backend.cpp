@@ -43,6 +43,7 @@ constexpr std::uint32_t shm_version = 1;
 constexpr std::uint32_t wm_base_version = 2;
 constexpr std::uint32_t seat_version = 5;  // for release requests and pointer frames
 
+constexpr std::size_t max_wire_string_bytes = 4096;  // libwayland refuses a longer message
 constexpr std::size_t max_frame_buffers = 4;
 constexpr std::int32_t min_window_side = 120;
 
@@ -323,7 +324,19 @@ namespace detail {
 
 void WaylandImpl::on_global(wl_registry* object, std::uint32_t name, const char* interface,
                             std::uint32_t version) noexcept {
-    const std::string_view kind{interface};
+    // Each name it is compared with is a constant from the generated glue, built into this program.
+    std::string kind;
+    try {
+        auto announced = string_from_c(interface, max_wire_string_bytes);
+        if (!announced) {
+            fail(announced.error().code, "the compositor announced a global with an unusable name");
+            return;
+        }
+        kind = std::move(*announced);
+    } catch (const std::bad_alloc&) {
+        fail(ErrorCode::System, "out of memory while reading a global's name");
+        return;
+    }
     if (kind == wl_compositor_interface.name && !compositor && version >= compositor_version) {
         compositor.reset(bind_global<wl_compositor>(object, name, &wl_compositor_interface, compositor_version));
     } else if (kind == wl_shm_interface.name && !shm) {
@@ -466,8 +479,9 @@ Error WaylandImpl::connection_error() const {
         const wl_interface* interface = nullptr;
         std::uint32_t id = 0;
         const std::uint32_t protocol_code = wl_display_get_protocol_error(display.get(), &interface, &id);
+        // This name comes from the generated glue, not from the compositor, through libwayland's own table.
         message += ", protocol error " + std::to_string(protocol_code) + " on " +
-                   (interface != nullptr ? interface->name : "an unknown interface");
+                   (interface != nullptr ? string_from_c(interface->name, max_wire_string_bytes).value_or("an unnamed interface") : "an unknown interface");
     }
     message += ")";
     return Error{code == EPROTO ? ErrorCode::Protocol : ErrorCode::Connect, std::move(message)};

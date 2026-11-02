@@ -10,15 +10,16 @@
 
 namespace jgui::inline v001 {
 
-std::expected<std::vector<std::string_view>, Error> program_arguments(int argc, const char* const* argv) {
+std::expected<std::vector<std::string>, Error> program_arguments(int argc, const char* const* argv) {
     if (argc < 0) return make_error(ErrorCode::SizeLimit, "the argument count is negative");
     auto pointers = detail::copy_from_c(argv, saturate_to<std::size_t>(argc), max_program_arguments);
     if (!pointers) return std::unexpected(std::move(pointers.error()));
-    std::vector<std::string_view> arguments;
+    std::vector<std::string> arguments;
     arguments.reserve(pointers->size());
     for (const char* argument : *pointers) {
-        if (argument == nullptr) return make_error(ErrorCode::System, "an argument is a null pointer");
-        arguments.emplace_back(argument);
+        auto copied = detail::string_from_c(argument, max_program_argument_bytes);
+        if (!copied) return std::unexpected(std::move(copied.error()));
+        arguments.push_back(std::move(*copied));
     }
     return arguments;
 }

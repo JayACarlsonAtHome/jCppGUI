@@ -5,7 +5,7 @@
 
 #include <cstddef>
 #include <expected>
-#include <string_view>
+#include <string>
 #include <vector>
 
 #include "error.hpp"
@@ -13,9 +13,10 @@
 namespace jgui::inline v001 {
 
 inline constexpr std::size_t max_program_arguments = 4096;
+inline constexpr std::size_t max_program_argument_bytes = std::size_t{128} * 1024;  // Linux's own limit on one argument
 
-// Refuses a negative count, a count over the limit and a null argument. The views look at the argument
-// strings themselves, which stay valid for the whole of main.
-[[nodiscard]] std::expected<std::vector<std::string_view>, Error> program_arguments(int argc, const char* const* argv);
+// Refuses a negative count, a count over the limit, a null argument and an argument over its limit. Each
+// argument is copied, so nothing keeps looking at what the C side gave.
+[[nodiscard]] std::expected<std::vector<std::string>, Error> program_arguments(int argc, const char* const* argv);
 
 }  // namespace jgui::inline v001
