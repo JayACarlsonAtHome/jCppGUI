@@ -3,7 +3,7 @@
 //          deferred destruction. Nothing here is behind a base pointer.
 #pragma once
 
-#include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <expected>
@@ -20,6 +20,14 @@ namespace jgui::inline v001 {
 // cannot be used in constant evaluation, so static_assert tests use std::vector to run this same logic.
 template <class T, template <class...> class Slots = std::deque>
 class Pool;
+
+namespace detail {
+// Vector slots move their items as they grow, so a pool of them is for compile time only: see Pool::emplace.
+template <template <class...> class Slots>
+inline constexpr bool compile_time_slots = false;
+template <>
+inline constexpr bool compile_time_slots<std::vector> = true;
+}  // namespace detail
 
 // A reference to one item of one Pool<T>. Only that pool can make one, it has no default value, and
 // a handle for one type cannot be passed to a pool of another.
@@ -48,26 +56,17 @@ public:
     constexpr explicit Pool(std::uint32_t max_generation) : max_generation_{max_generation} {}
 
     template <class... A>
+        requires(!detail::compile_time_slots<Slots>)
     [[nodiscard]] constexpr std::expected<Handle<T>, Error> emplace(A&&... args) {
-        if constexpr (std::same_as<Slots<Slot>, std::vector<Slot>>) {
-            if !consteval {
-                require(false, "a vector-backed pool is for constant evaluation only");
-            }
-        }
-        std::uint32_t index{};
-        if (!free_.empty()) {
-            index = free_.back();
-            free_.pop_back();
-        } else {
-            if (slots_.size() >= std::size_t{std::numeric_limits<std::uint32_t>::max()})
-                return make_error(ErrorCode::PoolExhausted, "the pool has no slot index left");
-            index = static_cast<std::uint32_t>(slots_.size());
-            slots_.emplace_back();
-        }
-        Slot& slot = slots_[index];
-        slot.value.emplace(std::forward<A>(args)...);
-        slot.dying = false;
-        return Handle<T>{index, slot.generation};
+        return place(std::forward<A>(args)...);
+    }
+
+    // consteval, so using a vector-backed pool at run time does not compile. Any function template that calls
+    // this, such as Dynamic::create and everything above it, becomes immediate too, under C++23's rules.
+    template <class... A>
+        requires detail::compile_time_slots<Slots>
+    [[nodiscard]] consteval std::expected<Handle<T>, Error> emplace(A&&... args) {
+        return place(std::forward<A>(args)...);
     }
 
     // Empty for a stale or out-of-range handle, and for an item already marked for destruction.
@@ -114,6 +113,24 @@ private:
         std::uint32_t generation{};
         bool dying{};
     };
+
+    template <class... A>
+    constexpr std::expected<Handle<T>, Error> place(A&&... args) {
+        std::uint32_t index{};
+        if (!free_.empty()) {
+            index = free_.back();
+            free_.pop_back();
+        } else {
+            if (slots_.size() >= std::size_t{std::numeric_limits<std::uint32_t>::max()})
+                return make_error(ErrorCode::PoolExhausted, "the pool has no slot index left");
+            index = static_cast<std::uint32_t>(slots_.size());
+            slots_.emplace_back();
+        }
+        Slot& slot = slots_[index];
+        slot.value.emplace(std::forward<A>(args)...);
+        slot.dying = false;
+        return Handle<T>{index, slot.generation};
+    }
 
     template <class Self>
     [[nodiscard]] constexpr auto* live_slot(this Self& self, Handle<T> handle) noexcept {

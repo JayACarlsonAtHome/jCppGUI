@@ -56,10 +56,20 @@ private:
     jgui::Dynamic<Tag, jgui::Label<Tag>, Slots> line_;
 };
 
+// What Help does. A generic lambda works in a real window. This is a named type because the compile-time
+// tests run this tree on a vector-backed pool, where the call becomes immediate, and clang 22 refuses that for
+// a generic lambda with a stated return type ("used before it is defined"). g++ accepts both.
+struct ToggleOnClick {
+    template <class U>
+    constexpr void operator()(U& u) const {
+        u.template send<ToggleHelp>();
+    }
+};
+
 template <template <class...> class Slots = std::deque>
 [[nodiscard]] constexpr auto make_ui() {
     return jgui::window(jgui::window_frame(
-        jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto& u) -> void { u.template send<ToggleHelp>(); })),
+        jgui::menu_bar(jgui::button<HelpButton>("Help", ToggleOnClick{})),
         HelpPanel<HelpLine, Slots>{}));
 }
 

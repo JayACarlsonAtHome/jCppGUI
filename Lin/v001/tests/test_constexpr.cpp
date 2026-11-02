@@ -116,7 +116,7 @@ static_assert(!valid_utf8("\xC3") && !valid_utf8("\xE2\x82") && !valid_utf8("\xF
 static_assert(!valid_utf8("a\xC3") && !valid_utf8("\xC3(") && !valid_utf8("\xE2(\xA1"), "bad continuation");
 
 // --- Limits ---
-constexpr bool refused(Size size) { return !PixelBuffer::byte_size(size).has_value(); }
+consteval bool refused(Size size) { return !PixelBuffer::byte_size(size).has_value(); }
 static_assert(PixelBuffer::byte_size(Size{}).value() == 0);
 static_assert(PixelBuffer::byte_size(Size{0, max_buffer_side}).value() == 0);
 static_assert(PixelBuffer::byte_size(Size{1, 1}).value() == 4);
@@ -151,7 +151,7 @@ static_assert(!detail::coverage_fits(Size{int_max, int_max}, std::numeric_limits
 static_assert(TextRun{Size{2, 2}, std::vector<std::uint8_t>(4, 7)}.coverage_at(1, 1) == 7);
 static_assert(TextRun{Size{}, std::vector<std::uint8_t>{}}.size().empty());
 
-constexpr bool buffer_create_checks() {
+consteval bool buffer_create_checks() {
     std::array<std::uint32_t, 12> storage{};
     const auto accepted = [&storage](Size size, std::int32_t stride) {
         return PixelBuffer::create(storage, size, stride).has_value();
@@ -168,7 +168,7 @@ constexpr bool buffer_create_checks() {
 static_assert(buffer_create_checks());
 
 // --- Canvas: any write outside the buffer would stop this compiling, and the guards check the rest ---
-constexpr bool canvas_stays_inside() {
+consteval bool canvas_stays_inside() {
     constexpr std::size_t total = 8 * 8;
     constexpr std::uint32_t guard = 0xDEADBEEFU;
     std::array<std::uint32_t, total> storage{};
@@ -197,7 +197,7 @@ constexpr bool canvas_stays_inside() {
 }
 static_assert(canvas_stays_inside());
 
-constexpr bool canvas_clip_and_text() {
+consteval bool canvas_clip_and_text() {
     std::array<std::uint32_t, 16> storage{};
     const Canvas canvas{PixelBuffer::create(storage, Size{4, 4}, 16).value()};
     const TextRun run{Size{4, 4}, std::vector<std::uint8_t>(16, 255)};
@@ -215,7 +215,7 @@ constexpr bool canvas_clip_and_text() {
 }
 static_assert(canvas_clip_and_text());
 
-constexpr bool glyph_blit_is_clipped() {
+consteval bool glyph_blit_is_clipped() {
     const std::array<std::uint8_t, 4> glyph{10, 20, 30, 40};
     const detail::GlyphBitmap bitmap{glyph, 2, 2, 2};
     std::array<std::uint8_t, 9> out{};
@@ -234,7 +234,7 @@ static_assert(glyph_blit_is_clipped());
 template <class T>
 using TestPool = Pool<T, std::vector>;
 
-constexpr bool pool_basics() {
+consteval bool pool_basics() {
     TestPool<int> pool;
     const Handle<int> first = pool.emplace(10).value();
     const Handle<int> second = pool.emplace(20).value();
@@ -255,7 +255,7 @@ constexpr bool pool_basics() {
 }
 static_assert(pool_basics());
 
-constexpr bool pool_stale_and_foreign_handles() {
+consteval bool pool_stale_and_foreign_handles() {
     TestPool<int> big;
     const Handle<int> far = [&] {
         Handle<int> last = big.emplace(0).value();
@@ -267,7 +267,7 @@ constexpr bool pool_stale_and_foreign_handles() {
 }
 static_assert(pool_stale_and_foreign_handles());
 
-constexpr bool pool_retires_at_max_generation() {
+consteval bool pool_retires_at_max_generation() {
     TestPool<int> pool{2};
     Handle<int> handle = pool.emplace(0).value();  // generation 0
     for (int cycle = 0; cycle < 2; ++cycle) {
@@ -284,7 +284,7 @@ constexpr bool pool_retires_at_max_generation() {
 }
 static_assert(pool_retires_at_max_generation());
 
-constexpr bool pool_top_generation_does_not_wrap() {
+consteval bool pool_top_generation_does_not_wrap() {
     TestPool<int> pool{0};
     const Handle<int> handle = pool.emplace(1).value();
     pool.destroy(handle);
@@ -294,7 +294,7 @@ constexpr bool pool_top_generation_does_not_wrap() {
 static_assert(pool_top_generation_does_not_wrap());
 
 // A destroyed item's storage stays valid until collect. Reading it after that would not compile.
-constexpr bool pool_deferred_destruction() {
+consteval bool pool_deferred_destruction() {
     TestPool<std::string> pool;
     const Handle<std::string> handle = pool.emplace("a long enough string to be on the heap").value();
     std::string* item = pool.find(handle);
@@ -317,7 +317,7 @@ struct OrderSink {
     constexpr void on(const KeyEvent&) { seen[count++] = 6; }
 };
 
-constexpr bool queue_keeps_arrival_order() {
+consteval bool queue_keeps_arrival_order() {
     BackendEventQueue queue;
     if (!queue.push(PointerMove{}) || !queue.push(KeyEvent{}) || !queue.push(PointerMove{}) || !queue.push(CloseEvent{}))
         return false;
@@ -345,7 +345,7 @@ static_assert((Modifier::Shift | Modifier::Ctrl) == (Modifier::Ctrl | Modifier::
 static_assert(!std::constructible_from<Rect, int, int, int, int> && std::constructible_from<Rect, Point, Size>);
 
 // --- A frame being drawn. The rule is one FrameLedger, which the Wayland backend shares. ---
-constexpr bool the_current_frame_works() {
+consteval bool the_current_frame_works() {
     HeadlessBackend backend{Size{2, 2}};
     auto frame = backend.acquire_frame(Size{2, 2});
     if (!frame.has_value() || !backend.frame_pixels(*frame).has_value()) return false;
@@ -354,7 +354,7 @@ constexpr bool the_current_frame_works() {
 }
 static_assert(the_current_frame_works());
 
-constexpr bool a_newer_acquire_invalidates_a_frame() {
+consteval bool a_newer_acquire_invalidates_a_frame() {
     HeadlessBackend backend{Size{2, 2}};
     auto older = backend.acquire_frame(Size{2, 2});
     auto newer = backend.acquire_frame(Size{3, 3});
@@ -368,7 +368,7 @@ constexpr bool a_newer_acquire_invalidates_a_frame() {
 static_assert(a_newer_acquire_invalidates_a_frame());
 
 // The old dangling-buffer path: acquire one size, then fail to acquire another, then use the first.
-constexpr bool a_failed_acquire_still_invalidates() {
+consteval bool a_failed_acquire_still_invalidates() {
     HeadlessBackend backend{Size{2, 2}};
     auto older = backend.acquire_frame(Size{2, 2});
     if (!older.has_value() || backend.acquire_frame(Size{int_max, int_max}).has_value()) return false;
@@ -377,7 +377,7 @@ constexpr bool a_failed_acquire_still_invalidates() {
 }
 static_assert(a_failed_acquire_still_invalidates());
 
-constexpr bool a_frame_moved_from_is_refused() {
+consteval bool a_frame_moved_from_is_refused() {
     HeadlessBackend backend{Size{2, 2}};
     auto frame = backend.acquire_frame(Size{2, 2});
     if (!frame.has_value()) return false;
@@ -392,7 +392,7 @@ constexpr bool a_frame_moved_from_is_refused() {
 }
 static_assert(a_frame_moved_from_is_refused());
 
-constexpr bool a_presented_frame_ends() {
+consteval bool a_presented_frame_ends() {
     HeadlessBackend backend{Size{2, 2}};
     auto frame = backend.acquire_frame(Size{2, 2});
     if (!frame.has_value()) return false;
@@ -511,7 +511,7 @@ struct Silent {
 static_assert(Widget<Counter> && Widget<Silent>);
 static_assert(std::same_as<std::tuple_element_t<0, decltype(window(Counter{}, Silent{}).send<Quiet>())>, NoReply>);
 
-constexpr bool messages_reach_receivers_in_order() {
+consteval bool messages_reach_receivers_in_order() {
     auto ui = window(Counter{}, Silent{});
     auto [bumped] = ui.send<Bump>();
     if (bumped != 1) return false;
@@ -524,7 +524,7 @@ constexpr bool messages_reach_receivers_in_order() {
 static_assert(messages_reach_receivers_in_order());
 
 // Receivers are whole widgets, which the tree lays out and paints like any other.
-constexpr bool receivers_are_widgets() {
+consteval bool receivers_are_widgets() {
     auto ui = window(Counter{}, Silent{});
     const Rect area{Point{0, 0}, Size{2, 2}};
     const auto left = ui.layout(area, BlockShaper{});
@@ -541,7 +541,7 @@ constexpr std::string_view caption = "OK";
 
 constexpr auto bump_on_click = [](auto& u) -> void { u.template send<Bump>(); };
 
-constexpr bool button_click_rules() {
+consteval bool button_click_rules() {
     auto ui = window(menu_bar(button<ClickTag>(caption, bump_on_click)), Counter{});
     static_cast<void>(ui.layout(Rect{Point{0, 0}, Size{100, 40}}, BlockShaper{}));
     auto& target = ui.get<ClickTag>();
@@ -570,7 +570,7 @@ static_assert(button_click_rules());
 
 // A dynamic button whose callback destroys itself and then reads its own captured state. If the
 // storage were freed at once, this read would stop the file compiling.
-constexpr bool self_destruction_is_deferred() {
+consteval bool self_destruction_is_deferred() {
     int observed = 0;
     auto kill = [&observed, text = std::string("state long enough to be held on the heap")](auto& u) -> void {
         u.template get<ItemTag>().hide();
@@ -593,7 +593,7 @@ constexpr bool self_destruction_is_deferred() {
 }
 static_assert(self_destruction_is_deferred());
 
-constexpr bool capture_and_focus_go_inert() {
+consteval bool capture_and_focus_go_inert() {
     int fired = 0;
     auto fire = [&fired](auto&) -> void { ++fired; };
     using FireButton = Button<ItemTag, decltype(fire)>;
@@ -650,7 +650,7 @@ struct Recorder {
 };
 static_assert(Widget<Recorder>);
 
-constexpr bool dynamic_routes_to_the_holder_only() {
+consteval bool dynamic_routes_to_the_holder_only() {
     auto ui = window(Dynamic<ItemTag, Recorder, std::vector>{});
     auto& node = ui.get<ItemTag>();
     const Handle<Recorder> upper = node.create().value();
@@ -695,14 +695,14 @@ constexpr bool dynamic_routes_to_the_holder_only() {
 }
 static_assert(dynamic_routes_to_the_holder_only());
 
-constexpr bool shaper_errors_reach_layout() {
+consteval bool shaper_errors_reach_layout() {
     auto ui = window(label<ClickTag>("\xFF"));
     const auto result = ui.layout(Rect{Point{0, 0}, Size{10, 10}}, BlockShaper{});
     return !result.has_value() && result.error().code == ErrorCode::InvalidUtf8;
 }
 static_assert(shaper_errors_reach_layout());
 
-constexpr bool label_new_text_is_checked_by_layout() {
+consteval bool label_new_text_is_checked_by_layout() {
     auto ui = window(label<ClickTag>("good"));
     if (!ui.layout(Rect{Point{0, 0}, Size{40, 40}}, BlockShaper{}).has_value() || ui.damaged()) return false;
     ui.get<ClickTag>().set_text("\xC0\x80");
@@ -716,7 +716,7 @@ static_assert(label_new_text_is_checked_by_layout());
 // --- The real demo tree and application logic, from injected events to pixels, during compilation ---
 constexpr Size small_window{120, 60};
 
-constexpr bool demo_help_toggles_in_pixels() {
+consteval bool demo_help_toggles_in_pixels() {
     ApplicationCore core{HeadlessBackend{small_window}, demo::make_ui<std::vector>()};
     const BlockShaper shaper;
     if (!core.process_pending(shaper).has_value() || core.frames() != 1) return false;
@@ -744,7 +744,7 @@ constexpr bool demo_help_toggles_in_pixels() {
 }
 static_assert(demo_help_toggles_in_pixels());
 
-constexpr bool frame_routing_and_refused_sizes() {
+consteval bool frame_routing_and_refused_sizes() {
     ApplicationCore core{HeadlessBackend{small_window}, demo::make_ui<std::vector>()};
     const BlockShaper shaper;
     if (!core.process_pending(shaper).has_value()) return false;
@@ -778,7 +778,7 @@ constexpr bool frame_routing_and_refused_sizes() {
 static_assert(frame_routing_and_refused_sizes());
 
 // The frame is an ordinary node: the tree finds it and what it holds, and a childless frame works.
-constexpr bool frame_is_a_node_of_the_tree() {
+consteval bool frame_is_a_node_of_the_tree() {
     auto ui = window(window_frame<ThickMetrics>(menu_bar(button<ClickTag>("x", bump_on_click)), Counter{}));
     const Rect whole{Point{0, 0}, Size{120, 80}};
     ui.set_size(whole.size());
@@ -797,7 +797,7 @@ constexpr bool frame_is_a_node_of_the_tree() {
 static_assert(frame_is_a_node_of_the_tree());
 
 // A frame of another size routes and paints at that size, all the way through the application.
-constexpr bool thick_frame_through_the_application() {
+consteval bool thick_frame_through_the_application() {
     ApplicationCore core{HeadlessBackend{small_window}, window(window_frame<ThickMetrics>(label<ClickTag>("x")))};
     const BlockShaper shaper;
     if (!core.process_pending(shaper).has_value()) return false;
@@ -816,13 +816,13 @@ struct FrameRig {
     ApplicationCore<HeadlessBackend, decltype(demo::make_ui<std::vector>())> core{HeadlessBackend{small_window}, demo::make_ui<std::vector>()};
     BlockShaper shaper{};
 
-    [[nodiscard]] constexpr bool start() { return core.process_pending(shaper).has_value(); }
+    [[nodiscard]] consteval bool start() { return core.process_pending(shaper).has_value(); }
     template <class E>
-    [[nodiscard]] constexpr bool send(const E& event) {
+    [[nodiscard]] consteval bool send(const E& event) {
         core.backend().inject(event);
         return core.process_pending(shaper).has_value();
     }
-    [[nodiscard]] constexpr bool left(Point at, ButtonState state, std::uint32_t serial) {
+    [[nodiscard]] consteval bool left(Point at, ButtonState state, std::uint32_t serial) {
         return send(PointerButton{at, MouseButton::Left, state, Serial{serial}});
     }
     [[nodiscard]] constexpr auto& frame() { return core.ui().get<WindowFrameTag>(); }
@@ -837,7 +837,7 @@ constexpr Point on_title{60, 10};
 constexpr Point on_client{60, 50};
 constexpr PointerButtonCode right_button{0x111};
 
-constexpr bool hovering_the_close_box_redraws_once() {
+consteval bool hovering_the_close_box_redraws_once() {
     FrameRig rig;
     if (!rig.start()) return false;
     const auto frames = rig.core.frames();
@@ -847,7 +847,7 @@ constexpr bool hovering_the_close_box_redraws_once() {
 }
 static_assert(hovering_the_close_box_redraws_once());
 
-constexpr bool close_stays_armed_over_a_widget_and_back() {
+consteval bool close_stays_armed_over_a_widget_and_back() {
     FrameRig rig;
     if (!rig.start() || !rig.send(PointerMove{on_close})) return false;
     if (!rig.left(on_close, ButtonState::Pressed, 31) || !rig.frame().close_armed()) return false;
@@ -859,7 +859,7 @@ constexpr bool close_stays_armed_over_a_widget_and_back() {
 }
 static_assert(close_stays_armed_over_a_widget_and_back());
 
-constexpr bool leaving_the_window_disarms_close() {
+consteval bool leaving_the_window_disarms_close() {
     FrameRig rig;
     if (!rig.start() || !rig.left(on_close, ButtonState::Pressed, 33)) return false;
     if (!rig.send(PointerLeave{}) || rig.frame().close_armed() || rig.frame().close_hovered()) return false;
@@ -867,7 +867,7 @@ constexpr bool leaving_the_window_disarms_close() {
 }
 static_assert(leaving_the_window_disarms_close());
 
-constexpr bool only_the_left_button_acts_on_the_frame() {
+consteval bool only_the_left_button_acts_on_the_frame() {
     FrameRig rig;
     if (!rig.start()) return false;
     if (!rig.send(PointerButton{on_title, right_button, ButtonState::Pressed, Serial{35}})) return false;
@@ -876,7 +876,7 @@ constexpr bool only_the_left_button_acts_on_the_frame() {
 }
 static_assert(only_the_left_button_acts_on_the_frame());
 
-constexpr bool a_captured_drag_over_the_frame_starts_nothing() {
+consteval bool a_captured_drag_over_the_frame_starts_nothing() {
     FrameRig rig;
     if (!rig.start()) return false;
     const Point help = rig.on_help();
@@ -887,7 +887,7 @@ constexpr bool a_captured_drag_over_the_frame_starts_nothing() {
 }
 static_assert(a_captured_drag_over_the_frame_starts_nothing());
 
-constexpr bool only_a_client_press_takes_the_focus_away() {
+consteval bool only_a_client_press_takes_the_focus_away() {
     FrameRig rig;
     if (!rig.start()) return false;
     const Point help = rig.on_help();
@@ -898,7 +898,7 @@ constexpr bool only_a_client_press_takes_the_focus_away() {
 }
 static_assert(only_a_client_press_takes_the_focus_away());
 
-constexpr bool moving_off_the_client_area_is_a_leave() {
+consteval bool moving_off_the_client_area_is_a_leave() {
     FrameRig rig;
     if (!rig.start() || !rig.send(PointerMove{rig.on_help()}) || !rig.help().hovered()) return false;
     return rig.send(PointerMove{on_title}) && !rig.help().hovered();
@@ -906,7 +906,7 @@ constexpr bool moving_off_the_client_area_is_a_leave() {
 static_assert(moving_off_the_client_area_is_a_leave());
 
 // A press queued behind a resize is judged at the new size, before any layout has seen it.
-constexpr bool a_press_behind_a_resize_uses_the_new_size() {
+consteval bool a_press_behind_a_resize_uses_the_new_size() {
     FrameRig rig;
     if (!rig.start()) return false;
     rig.core.backend().inject(ResizeEvent{Size{300, 200}});
@@ -915,7 +915,7 @@ constexpr bool a_press_behind_a_resize_uses_the_new_size() {
 }
 static_assert(a_press_behind_a_resize_uses_the_new_size());
 
-constexpr bool run_ends_on_close_and_empty_wait_is_an_error() {
+consteval bool run_ends_on_close_and_empty_wait_is_an_error() {
     ApplicationCore closes{HeadlessBackend{small_window}, demo::make_ui<std::vector>()};
     closes.backend().inject(CloseEvent{});
     if (!closes.run(BlockShaper{}).has_value()) return false;

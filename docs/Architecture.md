@@ -32,7 +32,11 @@ Three design choices exist to make this possible:
   `constexpr` model that makes the same refusals.
 - `Pool` and `Dynamic` take a `Slots` template parameter. It is always `std::deque` in real use, for
   stable references, but `std::deque` cannot be used in constant evaluation. The tests pass
-  `std::vector` to run the same logic. A vector-backed pool aborts if used at run time.
+  `std::vector` to run the same logic. A vector-backed pool's `emplace` is `consteval`, so using one at run
+  time does not compile, directly or through anything above it: under C++23's rules, each function template
+  that calls it becomes immediate too. So a test that runs such a tree must itself be `consteval`. One limit:
+  clang 22 refuses this for a generic lambda with a stated return type, so a callback in a vector-backed tree
+  that reaches `emplace` must be a named type with a template `operator()`. Real trees are unaffected.
 
 Non-`constexpr` code is limited to what needs the OS or a C library:
 

@@ -186,6 +186,7 @@ jgui_compile_fail(keysym_as_modifier "no matching|could not convert|cannot conve
 jgui_compile_fail(four_int_rect "no matching|no viable")
 jgui_compile_fail(frame_copied "deleted")
 jgui_compile_fail(frame_presented_without_move "deleted")
+jgui_compile_fail(vector_pool_at_run_time "consteval|immediate|constant expression|not a constant")
 jgui_compile_fail(warn_narrowing "conversion\\]")
 jgui_compile_fail(warn_sign_conversion "sign-conversion\\]")
 jgui_compile_fail(warn_shadow "shadow[-a-z]*\\]")
