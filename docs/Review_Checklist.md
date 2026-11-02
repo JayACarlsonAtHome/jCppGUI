@@ -24,5 +24,9 @@ Check each of these:
 3. **Hidden forms:** look for untyped results held through `auto*`, implicit conversions to `void*`,
    `const_cast`, and any new C library call that takes or returns `void*`. Each new case must be
    removed or justified to the owner. Do not allow one quietly.
-4. **New helpers:** a new wrapper around an untyped interface needs the owner's approval. It must not
+4. **C pointer and count pairs:** these are read only through `detail::copy_from_c` in
+   `src/c_resource.hpp`, into a vector we own, and nothing works through a view of C-owned memory. Look
+   for spans or pointer walks over library memory, however they are spelled. A text search for
+   `views::counted` is not enough.
+5. **New helpers:** a new wrapper around an untyped interface needs the owner's approval. It must not
    become a second general-purpose route around the rule.

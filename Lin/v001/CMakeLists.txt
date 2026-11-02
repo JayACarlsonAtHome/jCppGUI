@@ -28,8 +28,9 @@ add_library(jgui_hardening INTERFACE)
 target_compile_definitions(jgui_hardening INTERFACE _GLIBCXX_ASSERTIONS)
 target_compile_options(jgui_hardening INTERFACE
   -fstack-protector-strong -fstack-clash-protection -fcf-protection -fPIE
-  $<$<CONFIG:Release>:-O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3>)
-target_link_options(jgui_hardening INTERFACE -pie -Wl,-z,relro,-z,now)
+  -ftrivial-auto-var-init=zero -fstrict-flex-arrays=3 -fno-delete-null-pointer-checks
+  $<$<CONFIG:Release>:-O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fno-strict-overflow -fno-strict-aliasing>)
+target_link_options(jgui_hardening INTERFACE -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack -Wl,-z,nodlopen)
 if(JGUI_SANITIZE)
   target_compile_options(jgui_hardening INTERFACE -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
   target_link_options(jgui_hardening INTERFACE -fsanitize=address,undefined -fno-sanitize-recover=all)
@@ -101,9 +102,13 @@ target_link_libraries(jgui_wayland
   PUBLIC jgui_hardening PkgConfig::XKBCOMMON jgui_xdg_glue
   PRIVATE jgui_warnings)
 
+add_library(jgui_program STATIC src/program_arguments.cpp)
+target_include_directories(jgui_program PUBLIC include)
+target_link_libraries(jgui_program PUBLIC jgui_hardening PRIVATE jgui_warnings)
+
 # --- Demo ---
 add_executable(jcppgui-demo demo/demo.cpp)
-target_link_libraries(jcppgui-demo PRIVATE jgui_wayland jgui_text jgui_warnings)
+target_link_libraries(jcppgui-demo PRIVATE jgui_wayland jgui_text jgui_program jgui_warnings)
 
 # --- Tests ---
 enable_testing()
@@ -136,7 +141,7 @@ jgui_test(test_thread)
 
 jgui_test(test_untrusted)
 target_include_directories(test_untrusted PRIVATE src/wayland)
-target_link_libraries(test_untrusted PRIVATE jgui_wayland)
+target_link_libraries(test_untrusted PRIVATE jgui_wayland jgui_program)
 
 add_test(NAME demo_smoke COMMAND jcppgui-demo --smoke)
 set_tests_properties(demo_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)

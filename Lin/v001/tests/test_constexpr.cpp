@@ -126,6 +126,31 @@ static_assert(refused(Size{max_buffer_side + 1, 1}) && refused(Size{1, max_buffe
 static_assert(refused(Size{int_max, int_max}) && refused(Size{46341, 46341}) && refused(Size{65536, 65536}));
 static_assert(max_caption_bytes == 4096 && max_run_width > 0 && max_run_area > 0);
 
+// A shaped run's glyph count, at the limit.
+static_assert(max_run_glyphs == 8192);
+static_assert(detail::check_run_glyphs(0).has_value() && detail::check_run_glyphs(max_run_glyphs).has_value());
+static_assert(detail::check_run_glyphs(max_run_glyphs + 1).error().code == ErrorCode::GlyphTooLarge);
+static_assert(!detail::check_run_glyphs(std::numeric_limits<std::size_t>::max()).has_value());
+static_assert(std::int64_t{max_run_glyphs} * int_max < std::numeric_limits<std::int64_t>::max() / 2, "what bounds the advance sum");
+
+// A glyph bitmap's pitch, limited before anything multiplies it.
+static_assert(detail::glyph_pitch_fits(0, 0) && detail::glyph_pitch_fits(16, 16) && detail::glyph_pitch_fits(20, 16));
+static_assert(detail::glyph_pitch_fits(detail::max_glyph_pitch, max_glyph_side));
+static_assert(!detail::glyph_pitch_fits(detail::max_glyph_pitch + 1, max_glyph_side), "over the limit");
+static_assert(!detail::glyph_pitch_fits(15, 16), "a row shorter than its pixels");
+static_assert(!detail::glyph_pitch_fits(-16, 16), "a negative pitch");
+static_assert(!detail::glyph_pitch_fits(int_max, int_max) && !detail::glyph_pitch_fits(int_min, 0));
+static_assert(detail::max_glyph_bytes == 512U * 2048U);
+
+// A run's coverage must hold one byte per pixel. A violation aborts: see tests/test_text.cpp.
+static_assert(detail::coverage_fits(Size{}, 0) && detail::coverage_fits(Size{3, 4}, 12));
+static_assert(!detail::coverage_fits(Size{3, 4}, 11) && !detail::coverage_fits(Size{3, 4}, 13) && !detail::coverage_fits(Size{}, 1));
+static_assert(!detail::coverage_fits(Size{int_max, int_max}, 0));
+static_assert(detail::coverage_fits(Size{int_max, int_max}, std::size_t{2147483647} * std::size_t{2147483647}));
+static_assert(!detail::coverage_fits(Size{int_max, int_max}, std::numeric_limits<std::size_t>::max()));
+static_assert(TextRun{Size{2, 2}, std::vector<std::uint8_t>(4, 7)}.coverage_at(1, 1) == 7);
+static_assert(TextRun{Size{}, std::vector<std::uint8_t>{}}.size().empty());
+
 constexpr bool buffer_create_checks() {
     std::array<std::uint32_t, 12> storage{};
     const auto accepted = [&storage](Size size, std::int32_t stride) {

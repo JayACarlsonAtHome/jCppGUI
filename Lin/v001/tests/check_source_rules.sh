@@ -36,6 +36,11 @@ report "memory mapping" "$(grep -nE '\b(mmap(64)?|munmap|mremap|msync|mprotect)\
 report "positioned file I/O outside the helper" \
   "$(grep -nE '\bp(read|write)(v2?|64|64v2?)?\b' "${sources[@]}" | grep -v '^src/wayland/file_io\.hpp:')"
 
+# A C pointer and count are read in one helper only, and the helper it replaced stays gone.
+report "views::counted outside the helper" \
+  "$(grep -n 'views::counted' "${sources[@]}" | grep -v '^src/c_resource\.hpp:')"
+report "the removed view of C-owned memory" "$(grep -nE '\bc_array\b' "${sources[@]}")"
+
 # std::variant needs a reason on the same or the previous line. There are none today.
 report "std::variant without a comment" "$(grep -n 'std::variant' "${sources[@]}" | grep -v '//')"
 

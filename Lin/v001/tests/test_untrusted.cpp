@@ -2,6 +2,7 @@
 // Purpose: The checks on compositor-supplied values, without a compositor: window sizes at compile
 //          time, and keymaps through real file descriptors at run time. Also the typed file helper.
 #include <sys/mman.h>  // for memfd_create
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <fcntl.h>
@@ -15,9 +16,11 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "check.hpp"
 #include "file_io.hpp"
+#include "jCppGUI/v001/program_arguments.hpp"
 #include "untrusted.hpp"
 
 namespace {
@@ -93,6 +96,32 @@ static_assert(Readable<char> && Readable<std::uint32_t> && Writable<std::uint32_
 static_assert(!Readable<std::string> && !Writable<std::string>);
 static_assert(!Readable<const char>);
 
+// The longest string that fits libwayland's 4096-byte message, tried against the live compositor.
+static_assert(max_window_string_bytes == 4083);
+static_assert(check_window_string("").has_value() && check_window_string("jCppGUI").has_value());
+static_assert(check_window_string("caf\xC3\xA9").has_value(), "real UTF-8 is fine");
+static_assert(check_window_string("\xFF").error().code == ErrorCode::InvalidUtf8);
+static_assert(check_window_string("\xC0\x80").error().code == ErrorCode::InvalidUtf8);
+static_assert(check_window_string(std::string_view{"a\0b", 3}).error().code == ErrorCode::InvalidUtf8, "a NUL would cut it short");
+static_assert(check_window_string(std::string(max_window_string_bytes, 't')).has_value());
+static_assert(check_window_string(std::string(max_window_string_bytes + 1, 't')).error().code == ErrorCode::TextTooLong);
+
+// --- The one helper that reads a C pointer and count ---
+constexpr std::array<int, 3> c_side{10, 20, 30};
+static_assert(copy_from_c(c_side.data(), 3, 3).value() == std::vector<int>{10, 20, 30}, "at the limit");
+static_assert(copy_from_c(c_side.data(), 2, 3).value() == std::vector<int>{10, 20}, "only what was counted");
+static_assert(copy_from_c<int>(nullptr, 0, 3).value().empty(), "a zero count never touches the pointer");
+static_assert(copy_from_c<int>(nullptr, 0, 0).value().empty());
+static_assert(copy_from_c(c_side.data(), 0, 0).value().empty());
+static_assert(copy_from_c<int>(nullptr, 1, 3).error().code == ErrorCode::System, "null with a count");
+static_assert(copy_from_c(c_side.data(), 3, 2).error().code == ErrorCode::SizeLimit, "over the limit");
+// Reading these would be out of bounds, which constant evaluation rejects, so they are refused before any read.
+static_assert(!copy_from_c(c_side.data(), 1000, 3).has_value());
+static_assert(!copy_from_c(c_side.data(), std::numeric_limits<std::size_t>::max(), 3).has_value());
+
+// A keyboard with no keymap is its own format, handled before load_keymap, which refuses it as any other.
+static_assert(keymap_format_none == 0 && !check_keymap_header(keymap_format_none, 1).has_value());
+
 static_assert(evdev_to_xkb(0) == 8U && evdev_to_xkb(1) == 9U);
 static_assert(evdev_to_xkb(std::numeric_limits<std::uint32_t>::max() - 8) == std::numeric_limits<std::uint32_t>::max());
 static_assert(!evdev_to_xkb(std::numeric_limits<std::uint32_t>::max() - 7).has_value());
@@ -105,6 +134,43 @@ UniqueFd file_with(std::string_view content) {
 }
 
 bool is_closed(int fd) { return ::fcntl(fd, F_GETFD) == -1; }
+
+void test_program_arguments(jgui_test::Checker& check) {
+    const std::array<const char*, 2> two{"demo", "--smoke"};
+    const auto parsed = program_arguments(2, two.data());
+    check(parsed.has_value() && parsed->size() == 2 && parsed->at(0) == "demo" && parsed->at(1) == "--smoke", "both arguments");
+    check(program_arguments(0, nullptr).has_value() && program_arguments(0, nullptr)->empty(), "none, without touching the pointer");
+    check(!program_arguments(-1, two.data()).has_value(), "a negative count is refused");
+    check(!program_arguments(1, nullptr).has_value(), "a null argv with a count is refused");
+    // The array has 2 entries, so ASan would report any read of this many.
+    check(!program_arguments(saturate_to<int>(max_program_arguments + 1), two.data()).has_value(), "a count over the limit is refused before any read");
+    const std::array<const char*, 2> holed{"demo", nullptr};
+    check(!program_arguments(2, holed.data()).has_value(), "a null argument is refused");
+}
+
+void test_buffer_file(jgui_test::Checker& check) {
+    constexpr std::size_t bytes = 4096;
+    auto file = create_buffer_file(bytes);
+    check(file.has_value(), "a buffer file");
+    if (!file) return;
+    const int fd = file->get();
+    const int seals = ::fcntl(fd, F_GET_SEALS);
+    check(seals >= 0 && (seals & F_SEAL_SHRINK) != 0 && (seals & F_SEAL_GROW) != 0 && (seals & F_SEAL_SEAL) != 0, "it is sealed");
+    check((seals & F_SEAL_WRITE) == 0, "and the seals allow writing");
+    struct stat info {};
+    check(::fstat(fd, &info) == 0 && info.st_size == 4096, "it has its size");
+    check((info.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0, "it is not executable");
+    check((::fcntl(fd, F_GETFD) & FD_CLOEXEC) != 0, "it closes on exec");
+    check(::ftruncate(fd, 0) != 0 && errno == EPERM, "it cannot be truncated");
+    check(::ftruncate(fd, 8192) != 0 && errno == EPERM, "or extended");
+    check(::posix_fallocate(fd, 0, 8192) == EPERM, "or reserved past its end");
+    check(::fcntl(fd, F_ADD_SEALS, F_SEAL_WRITE) != 0, "and no more seals can be added");
+    const std::array<std::uint32_t, 2> out{1U, 2U};
+    std::array<std::uint32_t, 2> in{};
+    check(write_at<std::uint32_t>(fd, out, 4088).has_value(), "a write inside it works");
+    check(read_at<std::uint32_t>(fd, in, 4088).has_value() && in == out, "and reads back");
+    check(!write_at<std::uint32_t>(fd, out, 4092).has_value(), "a write past its end is an Error");
+}
 
 void test_file_helper(jgui_test::Checker& check) {
     const UniqueFd fd = file_with("");
@@ -132,8 +198,12 @@ void test_file_helper(jgui_test::Checker& check) {
 int main() {
     jgui_test::Checker check;
     test_file_helper(check);
-    const XkbContext context{xkb_context_new(XKB_CONTEXT_NO_FLAGS)};
-    check(context != nullptr, "an xkb context");
+    test_buffer_file(check);
+    test_program_arguments(check);
+    const XkbContext context = make_keymap_context();
+    check(context != nullptr, "the xkb context for compositor keymaps");
+    const XkbContext system_context{xkb_context_new(XKB_CONTEXT_NO_FLAGS)};
+    check(system_context != nullptr, "an xkb context that can read the system's keymap data");
 
     const auto refused = [&](std::uint32_t format, UniqueFd fd, std::uint32_t size) {
         const int raw = fd.get();
@@ -152,9 +222,23 @@ int main() {
     check(refused(keymap_format_xkb_v1, file_with(std::string{"terminator past the size"} + '\0'), 10), "the terminator is past the stated size");
     check(refused(keymap_format_xkb_v1, file_with(std::string_view{"\0xxx", 4}), 4), "a terminator and no text");
 
+    // A keymap that includes files found only on the default search path. The same text compiles under a
+    // default context, so the refusal comes from the compositor context and not from the text.
+    const std::string including = std::string{
+        "xkb_keymap {\n"
+        "  xkb_keycodes { include \"evdev+aliases(qwerty)\" };\n"
+        "  xkb_types { include \"complete\" };\n"
+        "  xkb_compat { include \"complete\" };\n"
+        "  xkb_symbols { include \"pc+us+inet(evdev)\" };\n"
+        "};\n"} + '\0';
+    const auto including_size = static_cast<std::uint32_t>(including.size());
+    check(load_keymap(system_context.get(), keymap_format_xkb_v1, file_with(including), including_size).has_value(),
+          "a default context follows the include statements");
+    check(refused(keymap_format_xkb_v1, file_with(including), including_size), "the compositor context refuses them");
+
     // A real keymap, made by xkbcommon itself, is accepted. It depends on the system's xkb data.
     const xkb_rule_names names{};
-    const XkbKeymap source{xkb_keymap_new_from_names(context.get(), &names, XKB_KEYMAP_COMPILE_NO_FLAGS)};
+    const XkbKeymap source{xkb_keymap_new_from_names(system_context.get(), &names, XKB_KEYMAP_COMPILE_NO_FLAGS)};
     check(source != nullptr, "the system has keymap data");
     if (source) {
         const CResource<char, [](char* p) { std::free(p); }> text{xkb_keymap_get_as_string(source.get(), XKB_KEYMAP_FORMAT_TEXT_V1)};

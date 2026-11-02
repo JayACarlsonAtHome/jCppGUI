@@ -15,6 +15,7 @@
 #include "menu_bar.hpp"
 #include "message.hpp"
 #include "pool.hpp"
+#include "program_arguments.hpp"
 #include "text.hpp"
 #include "tree.hpp"
 #include "widget.hpp"

@@ -1,6 +1,10 @@
 // File: tests/test_text.cpp
 // Purpose: Tests 15 and 16 with the real font: "Help" draws inside its measured bounds and nowhere
 //          outside the clip, and invalid UTF-8 and over-long captions return an Error and draw nothing.
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <csignal>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -70,10 +74,27 @@ void test_refusals(jgui_test::Checker& check, const TextEngine& engine) {
     check(engine.shape("caf\xC3\xA9 \xE2\x82\xAC").has_value(), "valid multi-byte text is accepted");
 }
 
+// A coverage vector that does not match the size must abort, in every build.
+template <class Make>
+void test_aborts(jgui_test::Checker& check, Make make, const char* what) {
+    const pid_t child = ::fork();
+    check(child >= 0, "fork");
+    if (child == 0) {
+        static_cast<void>(make());
+        ::_exit(0);  // reached only if the check did not fire
+    }
+    int status = 0;
+    check(::waitpid(child, &status, 0) == child, "waitpid");
+    check(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT, what);
+}
+
 }  // namespace
 
 int main() {
     jgui_test::Checker check;
+    test_aborts(check, [] { return TextRun{Size{2, 2}, std::vector<std::uint8_t>(3)}; }, "too little coverage aborts");
+    test_aborts(check, [] { return TextRun{Size{2, 2}, std::vector<std::uint8_t>(5)}; }, "too much coverage aborts");
+    test_aborts(check, [] { return TextRun{Size{46341, 46341}, std::vector<std::uint8_t>(1)}; }, "a size whose area would overflow 32 bits aborts");
     auto engine = TextEngine::create();
     check(engine.has_value(), "a default sans-serif font was found");
     if (engine) {

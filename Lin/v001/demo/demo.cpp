@@ -3,9 +3,6 @@
 //          configure, presents one frame and exits 0, for testing against a live compositor.
 #include <cstdlib>
 #include <iostream>
-#include <ranges>
-#include <span>
-#include <string_view>
 #include <utility>
 
 #include "help_ui.hpp"
@@ -25,12 +22,12 @@ int report(const jgui::Error& error) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    // The one place the program's arguments, a C pointer and count, become a span.
-    const std::span arguments = std::views::counted(argv, argc);
+    const auto arguments = jgui::program_arguments(argc, argv);
+    if (!arguments) return report(arguments.error());
     bool smoke = false;
-    if (arguments.size() == 2 && std::string_view{arguments[1]} == "--smoke") {
+    if (arguments->size() == 2 && arguments->at(1) == "--smoke") {
         smoke = true;
-    } else if (arguments.size() != 1) {
+    } else if (arguments->size() != 1) {
         std::cerr << "usage: jcppgui-demo [--smoke]\n";
         return exit_usage;
     }

@@ -4,9 +4,7 @@
 //          happened; the toolkit sees it after dispatch has returned.
 #include "jCppGUI/v001/wayland_backend.hpp"
 
-#include <fcntl.h>
 #include <poll.h>
-#include <sys/mman.h>  // for memfd_create
 #include <unistd.h>
 
 #include <algorithm>
@@ -34,6 +32,7 @@ namespace jgui::inline v001 {
 
 static_assert(Keysym::Return == XKB_KEY_Return && Keysym::Space == XKB_KEY_space);
 static_assert(detail::keymap_format_xkb_v1 == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1);
+static_assert(detail::keymap_format_none == WL_KEYBOARD_KEYMAP_FORMAT_NO_KEYMAP);
 
 namespace {
 
@@ -101,22 +100,16 @@ std::expected<std::unique_ptr<ShmBuffer>, Error> ShmBuffer::create(wl_shm* shm, 
     if (!bytes) return std::unexpected(std::move(bytes.error()));
     if (*bytes == 0) return make_error(ErrorCode::SizeLimit, "a window buffer cannot be empty");
 
-    detail::UniqueFd fd{::memfd_create("jcppgui-frame", MFD_CLOEXEC)};
-    if (fd.get() < 0) return make_error(ErrorCode::System, "memfd_create failed");
-    // Reserves the space now, so running out of memory is an Error here and not a failure later.
-    int reserve_failure = 0;
-    do {
-        reserve_failure = ::posix_fallocate(fd.get(), 0, saturate_to<::off_t>(*bytes));
-    } while (reserve_failure == EINTR);
-    if (reserve_failure != 0) return make_error(ErrorCode::System, "the buffer file could not be sized");
+    auto file = detail::create_buffer_file(*bytes);
+    if (!file) return std::unexpected(std::move(file.error()));
 
-    const ShmPool pool{wl_shm_create_pool(shm, fd.get(), saturate_to<std::int32_t>(*bytes))};
+    const ShmPool pool{wl_shm_create_pool(shm, file->get(), saturate_to<std::int32_t>(*bytes))};
     if (!pool) return make_error(ErrorCode::System, "wl_shm_create_pool failed");
     WaylandBuffer object{wl_shm_pool_create_buffer(pool.get(), 0, size.width(), size.height(),
                                                    sat_mul(size.width(), 4), WL_SHM_FORMAT_ARGB8888)};
     if (!object) return make_error(ErrorCode::System, "wl_shm_pool_create_buffer failed");
 
-    auto buffer = std::make_unique<ShmBuffer>(std::move(fd), std::move(object), size, *bytes / sizeof(std::uint32_t));
+    auto buffer = std::make_unique<ShmBuffer>(std::move(*file), std::move(object), size, *bytes / sizeof(std::uint32_t));
     detail::listen<wl_buffer_add_listener>(buffer->object(), buffer_listener, *buffer);
     return buffer;
 }
@@ -314,9 +307,17 @@ void WaylandImpl::on_global(wl_registry* object, std::uint32_t name, const char*
         shm.reset(bind_global<wl_shm>(object, name, &wl_shm_interface, shm_version));
     } else if (kind == xdg_wm_base_interface.name && !wm_base) {
         wm_base.reset(bind_global<xdg_wm_base>(object, name, &xdg_wm_base_interface, std::min(version, wm_base_version)));
+        if (!wm_base) {
+            fail(ErrorCode::System, "xdg_wm_base could not be bound");
+            return;
+        }
         listen<xdg_wm_base_add_listener>(wm_base.get(), wm_base_listener, *this);
     } else if (kind == wl_seat_interface.name && !seat && version >= seat_version) {
         seat.reset(bind_global<wl_seat>(object, name, &wl_seat_interface, seat_version));
+        if (!seat) {
+            fail(ErrorCode::System, "wl_seat could not be bound");
+            return;
+        }
         seat_name = name;
         listen<wl_seat_add_listener>(seat.get(), seat_listener, *this);
     }
@@ -327,6 +328,7 @@ void WaylandImpl::on_global_remove(wl_registry*, std::uint32_t name) noexcept {
         pointer.reset();
         keyboard.reset();
         seat.reset();
+        record(PointerLeave{});
     }
 }
 
@@ -346,14 +348,22 @@ void WaylandImpl::on_seat_capabilities(wl_seat* object, std::uint32_t capabiliti
     const bool has_keyboard = (capabilities & WL_SEAT_CAPABILITY_KEYBOARD) != 0;
     if (has_pointer && !pointer) {
         pointer.reset(wl_seat_get_pointer(object));
-        listen<wl_pointer_add_listener>(pointer.get(), pointer_listener, *this);
+        if (pointer) {
+            listen<wl_pointer_add_listener>(pointer.get(), pointer_listener, *this);
+        } else {
+            fail(ErrorCode::System, "wl_pointer could not be created");
+        }
     } else if (!has_pointer && pointer) {
         pointer.reset();
         record(PointerLeave{});
     }
     if (has_keyboard && !keyboard) {
         keyboard.reset(wl_seat_get_keyboard(object));
-        listen<wl_keyboard_add_listener>(keyboard.get(), keyboard_listener, *this);
+        if (keyboard) {
+            listen<wl_keyboard_add_listener>(keyboard.get(), keyboard_listener, *this);
+        } else {
+            fail(ErrorCode::System, "wl_keyboard could not be created");
+        }
     } else if (!has_keyboard && keyboard) {
         keyboard.reset();
         xkb_state_object.reset();
@@ -385,6 +395,8 @@ void WaylandImpl::on_keymap(wl_keyboard*, std::uint32_t format, std::int32_t raw
     UniqueFd fd{raw_fd};
     xkb_state_object.reset();
     xkb_keymap_object.reset();
+    // The protocol allows a keyboard with no keymap. It is treated as having no keys.
+    if (format == keymap_format_none) return;
     try {
         auto keymap = load_keymap(xkb_context_object.get(), format, std::move(fd), size);
         if (!keymap) {
@@ -459,7 +471,7 @@ std::expected<void, Error> WaylandImpl::create_cursor() {
 }
 
 std::expected<void, Error> WaylandImpl::connect(const WaylandOptions& options) {
-    xkb_context_object.reset(xkb_context_new(XKB_CONTEXT_NO_FLAGS));
+    xkb_context_object = make_keymap_context();
     if (!xkb_context_object) return make_error(ErrorCode::Keymap, "xkb could not create a context");
 
     display.reset(wl_display_connect(nullptr));
@@ -536,6 +548,8 @@ WaylandBackend::WaylandBackend(std::unique_ptr<BackendEventQueue> events,
     : events_{std::move(events)}, impl_{std::move(impl)} {}
 
 std::expected<WaylandBackend, Error> WaylandBackend::create(const WaylandOptions& options) {
+    if (auto title = detail::check_window_string(options.title); !title) return std::unexpected(std::move(title.error()));
+    if (auto app_id = detail::check_window_string(options.app_id); !app_id) return std::unexpected(std::move(app_id.error()));
     if (auto bytes = PixelBuffer::byte_size(options.size); !bytes || *bytes == 0)
         return make_error(ErrorCode::SizeLimit, "the requested window size is out of range");
     auto events = std::make_unique<BackendEventQueue>();
@@ -553,6 +567,8 @@ bool WaylandBackend::can_present() const noexcept {
 }
 
 std::expected<PixelBuffer, Error> WaylandBackend::acquire_frame(Size size) {
+    // Cleared first: what follows may free the buffer an earlier acquire chose, and may then fail.
+    impl_->current = nullptr;
     auto bytes = PixelBuffer::byte_size(size);
     if (!bytes) return std::unexpected(std::move(bytes.error()));
     auto& buffers = impl_->buffers;

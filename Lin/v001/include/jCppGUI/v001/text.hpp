@@ -23,6 +23,33 @@ inline constexpr std::size_t max_caption_bytes = 4096;
 inline constexpr std::int32_t max_glyph_side = 512;
 inline constexpr std::int32_t max_run_width = 1 << 18;
 inline constexpr std::int64_t max_run_area = std::int64_t{64} * 1024 * 1024;
+inline constexpr std::size_t max_run_glyphs = 8192;
+
+namespace detail {
+
+// A font's substitution rules can expand one character into many glyphs, so the caption's length does not
+// limit the shaped run. This does, before anything adds up or renders its glyphs.
+[[nodiscard]] constexpr std::expected<void, Error> check_run_glyphs(std::size_t count) {
+    if (count > max_run_glyphs) return make_error(ErrorCode::GlyphTooLarge, "the shaped line has too many glyphs");
+    return {};
+}
+
+// A glyph bitmap's row stride, limited before it is multiplied by anything.
+inline constexpr std::int64_t max_glyph_pitch = std::int64_t{max_glyph_side} * 4;
+inline constexpr std::size_t max_glyph_bytes = static_cast<std::size_t>(max_glyph_side) * static_cast<std::size_t>(max_glyph_pitch);
+
+// True when each row holds its pixels and the pitch is within the limit. A negative pitch is refused.
+[[nodiscard]] constexpr bool glyph_pitch_fits(std::int64_t pitch, std::int64_t width) noexcept {
+    return pitch >= width && width >= 0 && pitch <= max_glyph_pitch;
+}
+
+// True when the byte count is exactly one per pixel. Both sides of a Size are at most 2^31 - 1, so the
+// product fits in 64 bits.
+[[nodiscard]] constexpr bool coverage_fits(Size size, std::size_t bytes) noexcept {
+    return std::cmp_equal(std::int64_t{size.width()} * std::int64_t{size.height()}, bytes);
+}
+
+}  // namespace detail
 
 // Strict UTF-8: no overlong forms, no surrogates, nothing above U+10FFFF.
 [[nodiscard]] constexpr bool valid_utf8(std::string_view text) noexcept {
@@ -64,7 +91,10 @@ inline constexpr std::int64_t max_run_area = std::int64_t{64} * 1024 * 1024;
 class TextRun {
 public:
     constexpr TextRun() = default;
-    constexpr TextRun(Size size, std::vector<std::uint8_t> coverage) : size_{size}, coverage_{std::move(coverage)} {}
+    // The coverage must hold exactly one byte per pixel of the size. Anything else aborts.
+    constexpr TextRun(Size size, std::vector<std::uint8_t> coverage) : size_{size}, coverage_{std::move(coverage)} {
+        require(detail::coverage_fits(size_, coverage_.size()), "TextRun coverage does not match its size");
+    }
 
     [[nodiscard]] constexpr Size size() const noexcept { return size_; }
 

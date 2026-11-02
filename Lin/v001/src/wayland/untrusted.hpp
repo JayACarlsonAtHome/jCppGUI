@@ -12,6 +12,7 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <utility>
 
 #include <xkbcommon/xkbcommon.h>
@@ -20,6 +21,7 @@
 #include "jCppGUI/v001/canvas.hpp"
 #include "jCppGUI/v001/error.hpp"
 #include "jCppGUI/v001/geometry.hpp"
+#include "jCppGUI/v001/text.hpp"
 
 namespace jgui::inline v001::detail {
 
@@ -54,8 +56,17 @@ using XkbContext = CResource<xkb_context, xkb_context_unref>;
 using XkbKeymap = CResource<xkb_keymap, xkb_keymap_unref>;
 using XkbState = CResource<xkb_state, xkb_state_unref>;
 
+inline constexpr std::uint32_t keymap_format_none = 0;    // WL_KEYBOARD_KEYMAP_FORMAT_NO_KEYMAP
 inline constexpr std::uint32_t keymap_format_xkb_v1 = 1;  // WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1
 inline constexpr std::uint32_t max_keymap_bytes = 1024 * 1024;
+
+// The context every compositor-supplied keymap compiles under. It has no include path and reads no names
+// from the environment, so the keymap's text cannot make xkbcommon read any file.
+[[nodiscard]] XkbContext make_keymap_context() noexcept;
+
+// A new file for one window buffer: not executable, with its space reserved, so a shortage is an Error
+// here and not a failure later. It is sealed at that size, so nobody can truncate it under the compositor.
+[[nodiscard]] std::expected<UniqueFd, Error> create_buffer_file(std::size_t bytes);
 
 // The checks made on a keymap before anything is read.
 [[nodiscard]] constexpr std::expected<void, Error> check_keymap_header(std::uint32_t format, std::uint32_t size) {
@@ -78,6 +89,18 @@ inline constexpr std::uint32_t max_keymap_bytes = 1024 * 1024;
 // shorter than the stated size is refused. The descriptor is taken by value, so it is closed on every path.
 [[nodiscard]] std::expected<XkbKeymap, Error> load_keymap(xkb_context* context, std::uint32_t format, UniqueFd fd,
                                                           std::uint32_t size);
+
+// libwayland refuses a message over 4096 bytes and the connection ends. A title or app id is sent with an
+// 8-byte header, a 4-byte length and a terminating NUL.
+inline constexpr std::size_t max_window_string_bytes = 4096 - 8 - 4 - 1;
+
+// The checks on a window title or app id before it reaches libwayland. libwayland sends it up to its
+// first NUL, so one inside the string would silently cut it short.
+[[nodiscard]] constexpr std::expected<void, Error> check_window_string(std::string_view text) {
+    if (text.size() > max_window_string_bytes) return make_error(ErrorCode::TextTooLong, "a window title or app id is too long");
+    if (!valid_utf8(text) || text.contains('\0')) return make_error(ErrorCode::InvalidUtf8, "a window title or app id is not valid text");
+    return {};
+}
 
 // What a configure's width and height mean. Zero means the client chooses: the fallback. A negative
 // value is treated the same way, and a value over the buffer limit is clamped to it.

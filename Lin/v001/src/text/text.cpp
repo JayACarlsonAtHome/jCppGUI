@@ -140,15 +140,20 @@ std::expected<TextRun, Error> TextEngine::shape(std::string_view text) const {
     hb_shape(impl_->font.get(), buffer, nullptr, 0);
     if (hb_buffer_allocation_successful(buffer) == 0) return make_error(ErrorCode::Font, "HarfBuzz ran out of memory");
 
-    unsigned int glyph_count = 0;
-    const hb_glyph_info_t* info_data = hb_buffer_get_glyph_infos(buffer, &glyph_count);
-    const hb_glyph_position_t* position_data = hb_buffer_get_glyph_positions(buffer, &glyph_count);
-    const std::span infos = detail::c_array(info_data, glyph_count);
-    const std::span positions = detail::c_array(position_data, glyph_count);
+    unsigned int info_count = 0;
+    unsigned int position_count = 0;
+    const hb_glyph_info_t* info_data = hb_buffer_get_glyph_infos(buffer, &info_count);
+    const hb_glyph_position_t* position_data = hb_buffer_get_glyph_positions(buffer, &position_count);
+    if (info_count != position_count) return make_error(ErrorCode::Font, "HarfBuzz gave different glyph and position counts");
+    if (auto glyphs = detail::check_run_glyphs(info_count); !glyphs) return std::unexpected(std::move(glyphs.error()));
+    auto infos = detail::copy_from_c(info_data, info_count, max_run_glyphs);
+    if (!infos) return std::unexpected(std::move(infos.error()));
+    auto positions = detail::copy_from_c(position_data, position_count, max_run_glyphs);
+    if (!positions) return std::unexpected(std::move(positions.error()));
 
-    // At most 4096 advances of 32 bits each, so the sum cannot overflow 64 bits.
+    // At most max_run_glyphs advances, each under 2^31, so the sum is under 2^44 and cannot overflow 64 bits.
     std::int64_t advance_sum = 0;
-    for (const hb_glyph_position_t& position : positions) advance_sum += std::max(position.x_advance, 0);
+    for (const hb_glyph_position_t& position : *positions) advance_sum += std::max(position.x_advance, 0);
     const std::int32_t width = detail::ceil_pixels(advance_sum);
     if (width > max_run_width) return make_error(ErrorCode::GlyphTooLarge, "the shaped line is over the width limit");
     const Size size{width, impl_->line_height};
@@ -158,9 +163,9 @@ std::expected<TextRun, Error> TextEngine::shape(std::string_view text) const {
     std::vector<std::uint8_t> coverage(static_cast<std::size_t>(area), 0);
     FT_Face face = impl_->face.get();
     std::int64_t pen = 0;
-    for (std::size_t i = 0; i < infos.size(); ++i) {
-        const hb_glyph_position_t& position = positions[i];
-        if (FT_Load_Glyph(face, infos[i].codepoint, glyph_load_flags) != 0)
+    for (std::size_t i = 0; i < infos->size(); ++i) {
+        const hb_glyph_position_t& position = positions->at(i);
+        if (FT_Load_Glyph(face, infos->at(i).codepoint, glyph_load_flags) != 0)
             return make_error(ErrorCode::Font, "FreeType could not load a glyph");
         const FT_GlyphSlot slot = face->glyph;
         const std::int64_t limit = std::int64_t{max_glyph_side} * 64;
@@ -173,14 +178,16 @@ std::expected<TextRun, Error> TextEngine::shape(std::string_view text) const {
             bitmap.rows > static_cast<unsigned int>(max_glyph_side))
             return make_error(ErrorCode::GlyphTooLarge, "a glyph bitmap is over the size limit");
         if (bitmap.rows != 0 && bitmap.width != 0) {
-            if (bitmap.pixel_mode != FT_PIXEL_MODE_GRAY || bitmap.pitch < 0 ||
-                static_cast<unsigned int>(bitmap.pitch) < bitmap.width)
+            if (bitmap.pixel_mode != FT_PIXEL_MODE_GRAY ||
+                !detail::glyph_pitch_fits(std::int64_t{bitmap.pitch}, std::int64_t{bitmap.width}))
                 return make_error(ErrorCode::Font, "a glyph bitmap has an unsupported layout");
             const std::int64_t left = (pen + position.x_offset) / 64 + slot->bitmap_left;
             const std::int64_t top = std::int64_t{impl_->ascent} - position.y_offset / 64 - slot->bitmap_top;
-            const std::span<const std::uint8_t> rows = detail::c_array<const std::uint8_t>(
-                bitmap.buffer, static_cast<std::size_t>(bitmap.rows) * static_cast<std::size_t>(bitmap.pitch));
-            detail::blit_glyph(detail::GlyphBitmap{rows, std::int64_t{bitmap.rows}, std::int64_t{bitmap.width}, bitmap.pitch},
+            // The pitch is checked above and the rows earlier, so this product is small.
+            auto rows = detail::copy_from_c<std::uint8_t>(
+                bitmap.buffer, static_cast<std::size_t>(bitmap.rows) * static_cast<std::size_t>(bitmap.pitch), detail::max_glyph_bytes);
+            if (!rows) return std::unexpected(std::move(rows.error()));
+            detail::blit_glyph(detail::GlyphBitmap{*rows, std::int64_t{bitmap.rows}, std::int64_t{bitmap.width}, bitmap.pitch},
                                left, top, size, coverage);
         }
         pen += std::max(position.x_advance, 0);
