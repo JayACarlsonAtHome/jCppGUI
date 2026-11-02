@@ -6,6 +6,8 @@
 #include <unistd.h>
 
 #include <fcntl.h>
+#include <linux/magic.h>
+#include <sys/vfs.h>
 
 #include <array>
 #include <cerrno>
@@ -45,6 +47,15 @@ static_assert(!check_keymap_header(keymap_format_xkb_v1, max_keymap_bytes + 1).h
 static_assert(!check_keymap_header(keymap_format_xkb_v1, 0).has_value());
 static_assert(!check_keymap_header(0, 1).has_value() && !check_keymap_header(2, 1).has_value());
 static_assert(!check_keymap_header(keymap_format_xkb_v1, std::numeric_limits<std::uint32_t>::max()).has_value());
+
+static_assert(tmpfs_filesystem_type == TMPFS_MAGIC);
+static_assert(check_keymap_file(true, tmpfs_filesystem_type, 10, 10).has_value());
+static_assert(check_keymap_file(true, tmpfs_filesystem_type, 11, 10).has_value(), "a longer file is fine");
+static_assert(!check_keymap_file(true, tmpfs_filesystem_type, 9, 10).has_value(), "a shorter one is not");
+static_assert(!check_keymap_file(false, tmpfs_filesystem_type, 10, 10).has_value(), "not a regular file");
+static_assert(!check_keymap_file(true, 0x65735546, 10, 10).has_value(), "a FUSE mount");
+static_assert(!check_keymap_file(true, 0, 10, 10).has_value());
+static_assert(!check_keymap_file(true, tmpfs_filesystem_type, -1, 1).has_value());
 
 constexpr std::array<char, 3> no_nul{'a', 'b', 'c'};
 constexpr std::array<char, 3> nul_last{'a', 'b', '\0'};
@@ -239,6 +250,27 @@ int main() {
     check(refused(keymap_format_xkb_v1, file_with("x"), 0), "size zero");
     check(refused(keymap_format_xkb_v1, file_with("x"), max_keymap_bytes + 1), "a size over the limit");
     check(refused(keymap_format_xkb_v1, file_with("short"), 4096), "a file shorter than its stated size");
+    {
+        std::array<int, 2> pipe_ends{-1, -1};
+        check(::pipe(pipe_ends.data()) == 0, "a pipe");
+        const UniqueFd writer{pipe_ends[1]};
+        check(refused(keymap_format_xkb_v1, UniqueFd{pipe_ends[0]}, 16), "a pipe is refused, and the read that would hang never starts");
+        check(refused(keymap_format_xkb_v1, UniqueFd{::open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC)}, 16), "a directory");
+        check(refused(keymap_format_xkb_v1, UniqueFd{-1}, 16), "a bad descriptor");
+    }
+    {
+        // A regular file on a file system that is not tmpfs, if the test runs on one. Most build trees are not on tmpfs.
+        constexpr std::string_view name = "jcppgui-test-keymap-file";
+        const UniqueFd made{::open(name.data(), O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, S_IRUSR | S_IWUSR)};
+        struct statfs where {};
+        check(made.get() >= 0 && ::fstatfs(made.get(), &where) == 0, "a file in the working directory");
+        if (std::cmp_not_equal(where.f_type, tmpfs_filesystem_type)) {
+            const std::string text = std::string{"x"} + '\0';
+            check(write_at(made.get(), std::span{text}, 0).has_value(), "with something in it");
+            check(refused(keymap_format_xkb_v1, UniqueFd{::dup(made.get())}, 2), "a regular file that is not on tmpfs is refused");
+        }
+        check(::unlink(name.data()) == 0, "removed again");
+    }
     const std::string garbage = std::string{"this is not a keymap"} + '\0';
     check(refused(keymap_format_xkb_v1, file_with(garbage), static_cast<std::uint32_t>(garbage.size())), "garbage does not compile");
     check(refused(keymap_format_xkb_v1, file_with("no terminator"), 13), "no terminator in the file");

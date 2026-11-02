@@ -76,6 +76,18 @@ inline constexpr std::uint32_t max_keymap_bytes = 1024 * 1024;
     return {};
 }
 
+// What a keymap descriptor must be: a regular file on tmpfs, where a read cannot wait on anything outside this
+// machine's memory. A pipe, a directory or a file on a FUSE mount could otherwise hold the whole program up.
+inline constexpr std::uint64_t tmpfs_filesystem_type = 0x01021994;  // TMPFS_MAGIC, which memfd_create's files report too
+
+[[nodiscard]] constexpr std::expected<void, Error> check_keymap_file(bool regular_file, std::uint64_t filesystem_type,
+                                                                     std::int64_t file_bytes, std::uint32_t size) {
+    if (!regular_file) return make_error(ErrorCode::Keymap, "keymap descriptor is not a regular file");
+    if (filesystem_type != tmpfs_filesystem_type) return make_error(ErrorCode::Keymap, "keymap file is not on tmpfs");
+    if (file_bytes < std::int64_t{size}) return make_error(ErrorCode::Keymap, "keymap file is shorter than its stated size");
+    return {};
+}
+
 // The length of the keymap's text: everything before its first NUL, which must be inside the bytes
 // the compositor announced. Nothing after that NUL is ever given to xkbcommon.
 [[nodiscard]] constexpr std::expected<std::size_t, Error> keymap_text_length(std::span<const char> bytes) {
@@ -85,9 +97,9 @@ inline constexpr std::uint32_t max_keymap_bytes = 1024 * 1024;
     return static_cast<std::size_t>(end - bytes.begin());
 }
 
-// Accepts only the xkb v1 format and a size within the limit, reads the bytes into a private copy, so
-// that the compositor cannot change them after they are checked, and compiles that copy. A file
-// shorter than the stated size is refused. The descriptor is taken by value, so it is closed on every path.
+// Accepts only the xkb v1 format and a size within the limit, and only a regular file on tmpfs, reads the bytes
+// into a private copy, so that the compositor cannot change them after they are checked, and compiles that copy. A
+// file shorter than the stated size is refused. The descriptor is taken by value, so it is closed on every path.
 [[nodiscard]] std::expected<XkbKeymap, Error> load_keymap(xkb_context* context, std::uint32_t format, UniqueFd fd,
                                                           std::uint32_t size);
 

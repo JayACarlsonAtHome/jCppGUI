@@ -5,6 +5,8 @@
 
 #include <fcntl.h>
 #include <sys/mman.h>  // for memfd_create
+#include <sys/stat.h>
+#include <sys/vfs.h>
 
 #include <cerrno>
 #include <span>
@@ -36,6 +38,13 @@ std::expected<UniqueFd, Error> create_buffer_file(std::size_t bytes) {
 std::expected<XkbKeymap, Error> load_keymap(xkb_context* context, std::uint32_t format, UniqueFd fd,
                                             std::uint32_t size) {
     if (auto header = check_keymap_header(format, size); !header) return std::unexpected(std::move(header.error()));
+
+    struct stat file_status {};
+    struct statfs file_system {};
+    if (::fstat(fd.get(), &file_status) != 0 || ::fstatfs(fd.get(), &file_system) != 0)
+        return make_error(ErrorCode::Keymap, "keymap descriptor could not be examined");
+    if (auto file = check_keymap_file(S_ISREG(file_status.st_mode), static_cast<std::uint64_t>(file_system.f_type), file_status.st_size, size); !file)
+        return std::unexpected(std::move(file.error()));
 
     std::vector<char> bytes(size);
     if (auto copied = read_at(fd.get(), std::span{bytes}, 0); !copied)
