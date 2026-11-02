@@ -139,9 +139,9 @@ find_program(JGUI_BASH bash REQUIRED)
 # --- Fuzzing: this preset builds the harnesses and a tiny smoke run of each, and nothing else ---
 if(JGUI_FUZZ)
   enable_testing()
-  foreach(harness utf8 keymap font)
+  foreach(harness utf8 keymap font backend)
     add_executable(fuzz_${harness} tests/fuzz/fuzz_${harness}.cpp)
-    target_include_directories(fuzz_${harness} PRIVATE src src/wayland)
+    target_include_directories(fuzz_${harness} PRIVATE src src/wayland tests)
     target_link_libraries(fuzz_${harness} PRIVATE jgui_wayland jgui_text jgui_warnings)
     target_link_options(fuzz_${harness} PRIVATE -fsanitize=fuzzer)
     add_test(NAME fuzz_smoke_${harness}
@@ -214,6 +214,13 @@ foreach(scenario ${JGUI_FAKE_SCENARIOS})
   set_tests_properties(fake_${scenario} PROPERTIES TIMEOUT 300
     ENVIRONMENT "JGUI_TEST_KEYMAP=${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/seeds/keymap/minimal.xkb")
 endforeach()
+# One C call failing at a time, through the real implementation. It goes against the compositor above.
+jgui_test(test_injection)
+target_include_directories(test_injection PRIVATE src src/wayland)
+target_link_libraries(test_injection PRIVATE jgui_wayland)
+set_tests_properties(test_injection PROPERTIES TIMEOUT 300
+  ENVIRONMENT "JGUI_TEST_KEYMAP=${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/seeds/keymap/minimal.xkb")
+
 jgui_test(test_fake_compositor_rules)
 target_include_directories(test_fake_compositor_rules PRIVATE src src/wayland)
 target_link_libraries(test_fake_compositor_rules PRIVATE jgui_wayland)
