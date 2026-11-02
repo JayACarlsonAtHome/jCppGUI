@@ -141,5 +141,6 @@ jgui_compile_fail(empty_receivers "constraints? not satisfied|not satisfied")
 jgui_compile_fail(frame_metrics_missing_field "FrameMetrics")
 
 # --- Source rules: banned type-erasure tokens, casts, paths and layering ---
+find_program(JGUI_BASH bash REQUIRED)
 add_test(NAME source_rules
-  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_source_rules.sh)
+  COMMAND ${JGUI_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_source_rules.sh)

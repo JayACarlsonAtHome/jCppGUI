@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
 # File: tests/check_source_rules.sh
-# Purpose: Fails on banned type-erasure tokens in all our source, on raw new and delete and C-style
-#          casts, on absolute paths anywhere in the repository, and on Wayland leaking above its line.
+# Purpose: Fails on banned type-erasure tokens and memory mapping in all our source, on file I/O outside
+#          its helper, on raw new and delete and C-style casts, on absolute paths and shebangs anywhere
+#          in the repository, and on Wayland leaking above its line. Run it as: bash tests/check_source_rules.sh
 set -u
 VERSION_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_DIR="$(cd "$VERSION_DIR/../.." && pwd)"
@@ -29,6 +29,13 @@ report "void pointer outside the trampoline helper" \
 report "reinterpret_cast outside src/wayland" \
   "$(grep -n 'reinterpret_cast' "${sources[@]}" | grep -v '^src/wayland/')"
 
+# Nothing is mapped into this process by our code.
+report "memory mapping" "$(grep -nE '\b(mmap(64)?|munmap|mremap|msync|mprotect)\b' "${sources[@]}")"
+
+# Typed memory meets the OS's untyped byte interface in one helper only.
+report "positioned file I/O outside the helper" \
+  "$(grep -nE '\bp(read|write)(v2?|64|64v2?)?\b' "${sources[@]}" | grep -v '^src/wayland/file_io\.hpp:')"
+
 # std::variant needs a reason on the same or the previous line. There are none today.
 report "std::variant without a comment" "$(grep -n 'std::variant' "${sources[@]}" | grep -v '//')"
 
@@ -53,15 +60,19 @@ report "Wayland or xkb header above the backend line" \
 report "font library header outside src/text" \
   "$(grep -nE '#include.*(ft2build|fontconfig|hb\.h|hb-ft)' "${sources[@]}" | grep -v '^src/text/')"
 
-# --- No absolute paths in the repository. The two allowed are system contracts, not locations. ---
+# --- No absolute paths in the repository, with no exceptions, and so no shebangs ---
 cd "$REPO_DIR" || exit 2
-paths="$(git ls-files --cached --others --exclude-standard \
-  | grep -v '^LICENSE$' \
-  | while IFS= read -r file; do
-      [ -f "$file" ] && grep -nHE '(^|[^[:alnum:]_.~}/-])/(home|mnt|usr|tmp|etc|opt|var|root|run|srv)/' "$file"
-    done \
-  | grep -vE '#!/usr/bin/env|/etc/os-release')"
+paths=""
+shebangs=""
+while IFS= read -r file; do
+  [ -f "$file" ] || continue
+  found="$(grep -nHE '(^|[^[:alnum:]_.~}/-])/(home|mnt|usr|tmp|etc|opt|var|root|run|srv|bin|sbin|lib|lib64|dev|proc|sys|boot|media)/' "$file")"
+  [ -n "$found" ] && paths+="$found"$'\n'
+  found="$(grep -nH '^#!' "$file")"
+  [ -n "$found" ] && shebangs+="$found"$'\n'
+done < <(git ls-files --cached --others --exclude-standard)
 report "absolute path" "$paths"
+report "shebang" "$shebangs"
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures rule(s) broken"

@@ -1,17 +1,19 @@
 // File: src/wayland/wayland_backend.cpp
-// Purpose: The Wayland backend: connection, window, shared-memory buffers, seat and event loop. Every
+// Purpose: The Wayland backend: connection, window, buffer files, seat and event loop. Every
 //          value from the compositor is treated as untrusted. Listener handlers only record what
 //          happened; the toolkit sees it after dispatch has returned.
 #include "jCppGUI/v001/wayland_backend.hpp"
 
+#include <fcntl.h>
 #include <poll.h>
-#include <sys/mman.h>
+#include <sys/mman.h>  // for memfd_create
 #include <unistd.h>
 
 #include <algorithm>
 #include <array>
 #include <cerrno>
 #include <limits>
+#include <new>
 #include <optional>
 #include <span>
 #include <string>
@@ -23,6 +25,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 #include "../c_resource.hpp"
+#include "file_io.hpp"
 #include "trampoline.hpp"
 #include "untrusted.hpp"
 #include "xdg-shell-client-protocol.h"
@@ -56,14 +59,15 @@ using Surface = detail::CResource<wl_surface, wl_surface_destroy>;
 using XdgSurface = detail::CResource<xdg_surface, xdg_surface_destroy>;
 using Toplevel = detail::CResource<xdg_toplevel, xdg_toplevel_destroy>;
 
-// One ARGB8888 buffer in shared memory. It is never resized: a new size is a new buffer, and an old
-// one goes away only after the compositor has released it.
+// One ARGB8888 buffer: a file the compositor reads, which this process never maps. Frames are drawn in
+// ordinary memory and copied in. It is never resized: a new size is a new buffer, and an old one goes
+// away only after the compositor has released it.
 class ShmBuffer {
 public:
     [[nodiscard]] static std::expected<std::unique_ptr<ShmBuffer>, Error> create(wl_shm* shm, Size size);
 
-    ShmBuffer(detail::Mapped<std::uint32_t> mapping, WaylandBuffer buffer, Size size) noexcept
-        : mapping_{std::move(mapping)}, buffer_{std::move(buffer)}, size_{size} {}
+    ShmBuffer(detail::UniqueFd file, WaylandBuffer buffer, Size size, std::size_t pixel_count) noexcept
+        : file_{std::move(file)}, buffer_{std::move(buffer)}, size_{size}, pixel_count_{pixel_count} {}
 
     void on_release(wl_buffer*) noexcept { busy_ = false; }
 
@@ -71,14 +75,19 @@ public:
     [[nodiscard]] bool busy() const noexcept { return busy_; }
     void mark_busy() noexcept { busy_ = true; }
     [[nodiscard]] wl_buffer* object() const noexcept { return buffer_.get(); }
-    [[nodiscard]] std::span<std::uint32_t> pixels() const noexcept {
-        return std::span{mapping_.data(), mapping_.bytes() / sizeof(std::uint32_t)};
+
+    // Copies one whole picture to the file. Refused while the compositor still holds the file.
+    [[nodiscard]] std::expected<void, Error> write(std::span<const std::uint32_t> pixels) const {
+        if (busy_) return make_error(ErrorCode::System, "a buffer the compositor holds cannot be written");
+        if (pixels.size() != pixel_count_) return make_error(ErrorCode::SizeLimit, "the picture does not fit this buffer");
+        return detail::write_at(file_.get(), pixels, 0);
     }
 
 private:
-    detail::Mapped<std::uint32_t> mapping_;
+    detail::UniqueFd file_;
     WaylandBuffer buffer_;
     Size size_;
+    std::size_t pixel_count_;
     bool busy_{};
 };
 
@@ -92,11 +101,14 @@ std::expected<std::unique_ptr<ShmBuffer>, Error> ShmBuffer::create(wl_shm* shm, 
     if (!bytes) return std::unexpected(std::move(bytes.error()));
     if (*bytes == 0) return make_error(ErrorCode::SizeLimit, "a window buffer cannot be empty");
 
-    const detail::UniqueFd fd{::memfd_create("jcppgui-frame", MFD_CLOEXEC)};
+    detail::UniqueFd fd{::memfd_create("jcppgui-frame", MFD_CLOEXEC)};
     if (fd.get() < 0) return make_error(ErrorCode::System, "memfd_create failed");
-    if (::ftruncate(fd.get(), static_cast<off_t>(*bytes)) != 0) return make_error(ErrorCode::System, "ftruncate failed");
-    auto mapping = detail::Mapped<std::uint32_t>::map(fd.get(), *bytes, PROT_READ | PROT_WRITE, MAP_SHARED);
-    if (!mapping) return std::unexpected(std::move(mapping.error()));
+    // Reserves the space now, so running out of memory is an Error here and not a failure later.
+    int reserve_failure = 0;
+    do {
+        reserve_failure = ::posix_fallocate(fd.get(), 0, saturate_to<::off_t>(*bytes));
+    } while (reserve_failure == EINTR);
+    if (reserve_failure != 0) return make_error(ErrorCode::System, "the buffer file could not be sized");
 
     const ShmPool pool{wl_shm_create_pool(shm, fd.get(), saturate_to<std::int32_t>(*bytes))};
     if (!pool) return make_error(ErrorCode::System, "wl_shm_create_pool failed");
@@ -104,7 +116,7 @@ std::expected<std::unique_ptr<ShmBuffer>, Error> ShmBuffer::create(wl_shm* shm, 
                                                    sat_mul(size.width(), 4), WL_SHM_FORMAT_ARGB8888)};
     if (!object) return make_error(ErrorCode::System, "wl_shm_pool_create_buffer failed");
 
-    auto buffer = std::make_unique<ShmBuffer>(std::move(*mapping), std::move(object), size);
+    auto buffer = std::make_unique<ShmBuffer>(std::move(fd), std::move(object), size, *bytes / sizeof(std::uint32_t));
     detail::listen<wl_buffer_add_listener>(buffer->object(), buffer_listener, *buffer);
     return buffer;
 }
@@ -222,6 +234,7 @@ struct WaylandImpl {
 
     std::vector<std::unique_ptr<ShmBuffer>> buffers;
     ShmBuffer* current{};
+    std::vector<std::uint32_t> frame_pixels;  // the picture being drawn, one for all the buffers
 
     XkbContext xkb_context_object;
     XkbKeymap xkb_keymap_object;
@@ -430,11 +443,12 @@ std::expected<void, Error> WaylandImpl::create_cursor() {
     if (!buffer) return std::unexpected(std::move(buffer.error()));
     cursor_buffer = std::move(*buffer);
 
-    const std::span<std::uint32_t> pixels = cursor_buffer->pixels();
-    std::size_t next = 0;
+    std::vector<std::uint32_t> pixels;
+    pixels.reserve(cursor_shape.size() * cursor_shape.front().size());
     for (const std::string_view row : cursor_shape) {
-        for (const char cell : row) pixels[next++] = cursor_colour(cell);
+        for (const char cell : row) pixels.push_back(cursor_colour(cell));
     }
+    if (auto written = cursor_buffer->write(pixels); !written) return written;
 
     cursor_surface.reset(wl_compositor_create_surface(compositor.get()));
     if (!cursor_surface) return make_error(ErrorCode::System, "the cursor surface could not be created");
@@ -539,6 +553,8 @@ bool WaylandBackend::can_present() const noexcept {
 }
 
 std::expected<PixelBuffer, Error> WaylandBackend::acquire_frame(Size size) {
+    auto bytes = PixelBuffer::byte_size(size);
+    if (!bytes) return std::unexpected(std::move(bytes.error()));
     auto& buffers = impl_->buffers;
     // Buffers of another size go away only once the compositor no longer holds them.
     std::erase_if(buffers, [&](const std::unique_ptr<ShmBuffer>& buffer) {
@@ -556,13 +572,20 @@ std::expected<PixelBuffer, Error> WaylandBackend::acquire_frame(Size size) {
         chosen = created->get();
         buffers.push_back(std::move(*created));
     }
+    try {
+        impl_->frame_pixels.resize(*bytes / sizeof(std::uint32_t));
+    } catch (const std::bad_alloc&) {
+        return make_error(ErrorCode::System, "out of memory for the frame's pixels");
+    }
     impl_->current = chosen;
-    return PixelBuffer::create(chosen->pixels(), size, sat_mul(size.width(), 4));
+    return PixelBuffer::create(impl_->frame_pixels, size, sat_mul(size.width(), 4));
 }
 
 std::expected<void, Error> WaylandBackend::present(Rect damage) {
     ShmBuffer* buffer = impl_->current;
     if (buffer == nullptr) return make_error(ErrorCode::System, "present without an acquired frame");
+    impl_->current = nullptr;
+    if (auto written = buffer->write(impl_->frame_pixels); !written) return written;
     wl_surface* surface = impl_->surface.get();
     if (impl_->geometry != buffer->size()) {
         impl_->geometry = buffer->size();
@@ -572,7 +595,6 @@ std::expected<void, Error> WaylandBackend::present(Rect damage) {
     wl_surface_attach(surface, buffer->object(), 0, 0);
     wl_surface_damage_buffer(surface, damage.x(), damage.y(), damage.width(), damage.height());
     wl_surface_commit(surface);
-    impl_->current = nullptr;
     return {};
 }
 

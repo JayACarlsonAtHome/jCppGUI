@@ -38,8 +38,9 @@ Non-`constexpr` code is limited to what needs the OS or a C library:
 
 | Code | Why |
 |---|---|
-| `src/wayland/wayland_backend.cpp` | libwayland, sockets, `poll`, `memfd_create`, `mmap` |
-| `load_keymap`, `UniqueFd`, `Mapped` in `src/wayland/untrusted` | `fstat`, `mmap`, `close`, xkbcommon. The checks on values are `constexpr` |
+| `src/wayland/wayland_backend.cpp` | libwayland, sockets, `poll`, `memfd_create`, `posix_fallocate` |
+| `load_keymap`, `UniqueFd` in `src/wayland/untrusted` | `close`, xkbcommon. The checks on values are `constexpr` |
+| `read_at`, `write_at` in `src/wayland/file_io.hpp` | `pread`, `pwrite`. Their loop and arithmetic are `constexpr` and tested with made-up system calls |
 | `TextEngine` in `src/text/text.cpp` | fontconfig, HarfBuzz, FreeType. Validation, rounding and glyph copying are `constexpr` |
 | `Application` | `std::this_thread::get_id`, and it owns a `TextEngine` |
 
@@ -116,6 +117,17 @@ only record the event in `EventQueue`, a tuple of per-type queues with arrival s
 delivered to `sink.on(...)` in order after dispatch returns. This is input buffering at the system
 boundary and has nothing to do with messages, which never pass through it.
 
+**The owner accepted `EventQueue` as input buffering at the system boundary only. It is not a message
+queue, and it should go away if our own Wayland client delivers events directly.**
+
+## No shared mapping
+
+Our code maps nothing, and no mapping call may appear in our source. A frame is drawn in a
+`std::vector<std::uint32_t>` we own and written to the `memfd_create` buffer file with `write_at`. The
+file is sized with `posix_fallocate`, and a file the compositor still holds is never written. The
+keymap is read with `read_at` into a private copy. The C libraries we link may map things of their own:
+see `SECURITY.md`.
+
 ## OS and version layout
 
 ```
@@ -126,6 +138,11 @@ Lin/v001/   C++23, self-contained: bsir.sh, CMakeLists.txt, CMakePresets.json, S
 The namespace is `jgui::inline v001`, so `jgui::Button` works for consumers. Toolkit code is header
 templates, and the parts that need C libraries stay in `src/` to limit compile time. All paths are
 found relative to the script or to `CMakeLists.txt`.
+
+**The paths rule.** Every location derives from one base directory, the script's own directory or the
+CMake source directory, plus relative paths. No absolute path is allowed in the repository, with no
+allowlist, which also rules out shebangs. Scripts run as `bash bsir.sh` and
+`bash tests/check_source_rules.sh`.
 
 ## The window frame
 

@@ -1,16 +1,14 @@
-#!/usr/bin/env bash
-#
 # File: bsir.sh
 # Purpose: Bootstrap, Setup, Install and Run for jCppGUI Lin/v001.
 #
-#   1. Detect the OS family.
+#   1. Detect the package manager.
 #   2. Check each component with its `check` line in Setup/recipes.conf.
 #   3. Run the system update on every run, without asking.
 #   4. Offer anything missing, once, and install it from Setup/recipes.conf.
 #   5. Build and test with one compiler and then the other, never at the same time.
 #   6. Open the demo, if there is a Wayland session (skip with --no-demo).
 #
-# Everything is found from this script's own directory. Re-run it any time.
+# Run it as: bash bsir.sh. Everything is found from this script's own directory. Re-run it any time.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -24,7 +22,7 @@ for arg in "$@"; do
     -y|--yes) ASSUME_YES=1 ;;
     --no-demo) WANT_DEMO=0 ;;
     -h|--help)
-      echo "usage: ./bsir.sh [--yes] [--no-demo]"
+      echo "usage: bash bsir.sh [--yes] [--no-demo]"
       echo "  --yes      install everything that is missing without asking"
       echo "  --no-demo  build and test only, and do not open the window"
       exit 0 ;;
@@ -32,23 +30,14 @@ for arg in "$@"; do
   esac
 done
 
-# --- 1. the OS family (tokens match Setup/recipes.conf) ---
+# --- 1. the package manager (tokens match Setup/recipes.conf) ---
 family=unknown
-if [ -r /etc/os-release ]; then
-  # shellcheck disable=SC1091
-  . /etc/os-release
-  case "${ID:-}" in
-    fedora) family=fedora ;;
-    rhel|centos|rocky|almalinux|ol) family=rhel ;;
-    debian|ubuntu|linuxmint|pop) family=apt ;;
-    *)
-      case "${ID_LIKE:-}" in
-        *rhel*|*fedora*) family=rhel ;;
-        *debian*|*ubuntu*) family=apt ;;
-      esac ;;
-  esac
+if [ -n "$(command -v dnf)" ]; then
+  family=dnf
+elif [ -n "$(command -v apt-get)" ]; then
+  family=apt
 fi
-echo "Platform family: $family"
+echo "Package manager: $family"
 
 # A recipe value, joining backslash-continued lines: recipe <component> <field>
 recipe() {
@@ -71,7 +60,7 @@ recipe() {
 
 present() {
   check="$(recipe "$1" check)"
-  [ -n "$check" ] && sh -c "$check" >/dev/null 2>&1
+  [ -n "$check" ] && output="$(sh -c "$check" 2>&1)"
 }
 
 find_missing() {
@@ -89,7 +78,7 @@ echo "Missing:${missing:- nothing}"
 echo
 echo "=== system update ==="
 case "$family" in
-  fedora|rhel) sudo dnf -y upgrade --refresh || echo "  [FAIL] system update; going on" ;;
+  dnf) sudo dnf -y upgrade --refresh || echo "  [FAIL] system update; going on" ;;
   apt) { sudo apt-get update && sudo apt-get -y upgrade; } || echo "  [FAIL] system update; going on" ;;
   *) echo "  (no update command for '$family'; skipped)" ;;
 esac
@@ -99,7 +88,7 @@ find_missing
 if [ -n "$missing" ]; then
   if [ "$ASSUME_YES" = 0 ]; then
     if [ ! -t 0 ]; then
-      echo "Missing:$missing. Run ./bsir.sh in a terminal, or ./bsir.sh --yes" >&2
+      echo "Missing:$missing. Run bash bsir.sh in a terminal, or bash bsir.sh --yes" >&2
       exit 1
     fi
     printf "Install%s? [Y/n] " "$missing"
@@ -120,7 +109,7 @@ if [ -n "$missing" ]; then
   done
   find_missing
   if [ -n "$missing" ]; then
-    echo "Still missing:$missing. Fix the errors above, then re-run ./bsir.sh" >&2
+    echo "Still missing:$missing. Fix the errors above, then re-run bash bsir.sh" >&2
     exit 1
   fi
 fi
@@ -140,6 +129,8 @@ DEMO="$ROOT/build/gcc-debug/jcppgui-demo"
 echo
 echo "Bootstrap complete. The demo: $DEMO"
 if [ "$WANT_DEMO" = 1 ] && [ -n "${WAYLAND_DISPLAY:-}" ]; then
-  ( setsid "$DEMO" >/dev/null 2>&1 </dev/null & )
-  echo "Opened the demo. It keeps running when this terminal is closed."
+  DEMO_LOG="$ROOT/build/demo.log"
+  : > "$DEMO_LOG"
+  ( setsid "$DEMO" >"$DEMO_LOG" 2>&1 <"$DEMO_LOG" & )
+  echo "Opened the demo. It keeps running when this terminal is closed. Its output: $DEMO_LOG"
 fi

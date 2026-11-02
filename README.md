@@ -10,8 +10,9 @@ works and what does not.
 ## Build
 
 Linux, with a C++23 compiler, CMake, Ninja, and the Wayland, xkbcommon, FreeType, HarfBuzz and
-fontconfig development files. `Lin/v001/bsir.sh` checks for all of these, offers what is missing,
-builds, tests and opens the demo. It runs a system update on every run and needs sudo.
+fontconfig development files. From `Lin/v001`, `bash bsir.sh` checks for all of these, offers what is
+missing, builds, tests and opens the demo. It runs a system update on every run and needs sudo. The
+scripts have no shebang and no executable bit, because a shebang cannot be a relative path.
 
 To build by hand, with the tools already installed:
 
@@ -32,12 +33,12 @@ one compiler at a time.
 struct HelpButton;
 struct HelpLine;
 
-auto ui = jgui::window(
+auto ui = jgui::window(jgui::window_frame(
     jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto& u) -> void {
         auto& line = u.template get<HelpLine>();
         if (line.shown()) line.hide(); else line.show("Some help");
     })),
-    jgui::dynamic<HelpLine, jgui::Label<HelpLine>>());
+    jgui::dynamic<HelpLine, jgui::Label<HelpLine>>()));
 ```
 
 Callbacks are generic lambdas with an explicit `-> void`. `docs/Architecture.md` explains why.

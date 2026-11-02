@@ -1,9 +1,8 @@
 // File: src/wayland/untrusted.hpp
-// Purpose: Handling of what the compositor sends that could do harm: file descriptors, memory maps,
-//          the keymap and window sizes. Kept apart from the connection so tests can reach it directly.
+// Purpose: Handling of what the compositor sends that could do harm: file descriptors, the keymap
+//          and window sizes. Kept apart from the connection so tests can reach it directly.
 #pragma once
 
-#include <sys/mman.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -12,7 +11,7 @@
 #include <expected>
 #include <limits>
 #include <optional>
-#include <type_traits>
+#include <span>
 #include <utility>
 
 #include <xkbcommon/xkbcommon.h>
@@ -51,34 +50,6 @@ private:
     int fd_{-1};
 };
 
-// A memory map of a known element type, unmapped by RAII.
-template <class T>
-class Mapped {
-public:
-    [[nodiscard]] static std::expected<Mapped, Error> map(int fd, std::size_t bytes, int protection, int flags) {
-        auto* address = ::mmap(nullptr, bytes, protection, flags, fd, 0);
-        if (address == MAP_FAILED) return make_error(ErrorCode::System, "mmap failed");
-        return Mapped{static_cast<T*>(address), bytes};
-    }
-
-    Mapped(Mapped&& other) noexcept
-        : data_{std::exchange(other.data_, nullptr)}, bytes_{std::exchange(other.bytes_, 0)} {}
-    Mapped& operator=(Mapped&&) = delete;
-    Mapped(const Mapped&) = delete;
-    Mapped& operator=(const Mapped&) = delete;
-    ~Mapped() {
-        if (data_ != nullptr) static_cast<void>(::munmap(const_cast<std::remove_const_t<T>*>(data_), bytes_));
-    }
-
-    [[nodiscard]] T* data() const noexcept { return data_; }
-    [[nodiscard]] std::size_t bytes() const noexcept { return bytes_; }
-
-private:
-    Mapped(T* data, std::size_t bytes) noexcept : data_{data}, bytes_{bytes} {}
-    T* data_;
-    std::size_t bytes_;
-};
-
 using XkbContext = CResource<xkb_context, xkb_context_unref>;
 using XkbKeymap = CResource<xkb_keymap, xkb_keymap_unref>;
 using XkbState = CResource<xkb_state, xkb_state_unref>;
@@ -86,20 +57,25 @@ using XkbState = CResource<xkb_state, xkb_state_unref>;
 inline constexpr std::uint32_t keymap_format_xkb_v1 = 1;  // WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1
 inline constexpr std::uint32_t max_keymap_bytes = 1024 * 1024;
 
-// The checks made on a keymap before any mapping. The file's real size is compared with the size the
-// compositor claimed, because a shorter file would fault when read.
+// The checks made on a keymap before anything is read.
 [[nodiscard]] constexpr std::expected<void, Error> check_keymap_header(std::uint32_t format, std::uint32_t size) {
     if (format != keymap_format_xkb_v1) return make_error(ErrorCode::Keymap, "keymap is not in xkb v1 format");
     if (size == 0 || size > max_keymap_bytes) return make_error(ErrorCode::Keymap, "keymap size is out of range");
     return {};
 }
-[[nodiscard]] constexpr std::expected<void, Error> check_keymap_file(std::int64_t file_bytes, std::uint32_t size) {
-    if (file_bytes < std::int64_t{size}) return make_error(ErrorCode::Keymap, "keymap file is shorter than its stated size");
-    return {};
+
+// The length of the keymap's text: everything before its first NUL, which must be inside the bytes
+// the compositor announced. Nothing after that NUL is ever given to xkbcommon.
+[[nodiscard]] constexpr std::expected<std::size_t, Error> keymap_text_length(std::span<const char> bytes) {
+    const auto end = std::ranges::find(bytes, '\0');
+    if (end == bytes.end()) return make_error(ErrorCode::Keymap, "keymap has no terminator inside its stated size");
+    if (end == bytes.begin()) return make_error(ErrorCode::Keymap, "keymap is empty");
+    return static_cast<std::size_t>(end - bytes.begin());
 }
 
-// Accepts only the xkb v1 format and a size within the limit that the file really has, then maps it
-// private and compiles it. The descriptor is taken by value, so it is closed on every path.
+// Accepts only the xkb v1 format and a size within the limit, reads the bytes into a private copy, so
+// that the compositor cannot change them after they are checked, and compiles that copy. A file
+// shorter than the stated size is refused. The descriptor is taken by value, so it is closed on every path.
 [[nodiscard]] std::expected<XkbKeymap, Error> load_keymap(xkb_context* context, std::uint32_t format, UniqueFd fd,
                                                           std::uint32_t size);
 

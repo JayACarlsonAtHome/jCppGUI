@@ -25,6 +25,9 @@
 - One font, one size, one line. No text editing, input methods or font selection. No bidirectional
   text ordering beyond what HarfBuzz does for one segment.
 - A damaged window repaints in full, and the frame is not throttled to `wl_surface.frame`.
+- **Each frame is copied once more than it must be.** A frame is drawn in ordinary memory and written
+  to the buffer file with a system call, because nothing of ours is mapped. Secure first, efficient
+  second. The cost has not been measured.
 - Layout is a simple flow, not a layout manager. Overlapping widgets are possible but untested.
 - Scale is fixed at 1, so the window is upscaled on HiDPI outputs.
 - The frame has no maximize or minimize control, and the resize edges show no resize cursor.

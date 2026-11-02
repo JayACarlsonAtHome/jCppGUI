@@ -56,7 +56,8 @@ Anything that is part of the window is a class template; system-level classes wi
 `void* data` and requires C function pointers. This is allowed only in one templated trampoline
 helper in `src/wayland/`, which casts straight back to the exact type it was registered with. The
 pointer never leaves that helper. The exception ends when our own Wayland client replaces libwayland,
-which is the step after this prototype.
+which is the step after this prototype. It stays the only `void*` we write: `pread` and `pwrite` take
+typed pointers that convert at the call, in `src/wayland/file_io.hpp` only, and nothing casts back.
 
 This design is proven by a prototype compiled with g++ 16 and clang 22 under ASan and UBSan:
 tag lookup, generic callbacks, self-destruction during a callback, and compile-time rejection of a
@@ -97,7 +98,8 @@ jCppGUI/
   `Lin/v002` or any C++26 code.
 - Each `<OS>/<version>` is a self-contained world. Do not add a shared source directory.
 - Namespace: `namespace jgui::inline v001`, so `jgui::Button` works for consumers.
-- No absolute paths anywhere. Everything is found relative to the script or `CMAKE_SOURCE_DIR`.
+- No absolute paths anywhere, with no allowlist, so no shebangs: scripts run as `bash <script>`.
+  Everything is found relative to the script or `CMAKE_SOURCE_DIR`.
 - Textual headers only in this slice. A modules front-end comes later.
 - The repository exists, with branches `main`, `test-work` and `dev-work` and a remote named
   `gitlab`. Work only on `dev-work`. Commit there when done. Do not push, and do not touch `main` or
@@ -154,13 +156,13 @@ shape is known to the compiler. Each widget has a `Tag` type naming it:
 ```cpp
 struct HelpButton; struct HelpLine;
 
-auto ui = jgui::window(
+auto ui = jgui::window(jgui::window_frame(
     jgui::menu_bar(
         jgui::button<HelpButton>("Help", [](auto& u) -> void {
             auto& line = u.template get<HelpLine>();
             if (line.shown()) line.hide(); else line.show("...");
         })),
-    jgui::dynamic<HelpLine, jgui::Label<HelpLine>>());
+    jgui::dynamic<HelpLine, jgui::Label<HelpLine>>()));
 ```
 
 - `u.get<Tag>()` is resolved at compile time. An unknown tag is a compile error, through a
@@ -284,10 +286,12 @@ such as the Wayland and text wrappers, stay in `src/` to limit compile time.
   configure means "choose": use a default size.
 - Treat every compositor value as untrusted. Oversized or negative sizes are clamped or refused
   through `PixelBuffer` validation, never used in arithmetic first.
-- Shared memory: `memfd_create` with `MFD_CLOEXEC`, unmapped and closed by RAII. Never resize a
-  buffer the compositor still holds: track `wl_buffer.release`.
-- Keymap: accept only the xkb v1 format, check the size against a limit (1 MiB) before mapping,
-  map `MAP_PRIVATE`, and always close the received file descriptor.
+- Buffer files: `memfd_create` with `MFD_CLOEXEC`, sized with `posix_fallocate`, closed by RAII, and
+  written with `write_at` from memory we own. Our code maps nothing. Never write or resize a buffer the
+  compositor still holds: track `wl_buffer.release`.
+- Keymap: accept only the xkb v1 format, check the size against a limit (1 MiB), read it with `read_at`
+  into a private copy, require a NUL inside the stated size, and always close the received file
+  descriptor.
 - Loop: `wl_display_prepare_read` / `poll` / `wl_display_read_events` / `dispatch_pending`, with
   correct flush, `EINTR` and `EAGAIN` handling. A protocol error ends `run()` with an `Error` that
   includes `wl_display_get_error`.
@@ -348,9 +352,9 @@ Tiny runs only: no soak or benchmark runs in this slice.
 
 ## bsir.sh
 
-Follows the pattern in `jText_GUI/v001/bsir.sh`, reading that script only for its flow: detect OS,
+Follows the pattern in `jText_GUI/v001/bsir.sh`, reading that script only for its flow: detect the package manager,
 check components with `Setup/recipes.conf`, run the system upgrade on every run without asking,
-offer anything missing, build, test, open the demo. Fedora and apt recipes for
+offer anything missing, build, test, open the demo. dnf and apt recipes for
 wayland-protocols, wayland-client development files, xkbcommon development files, FreeType,
 HarfBuzz and fontconfig development files, CMake, Ninja and a C++23 compiler.
 
