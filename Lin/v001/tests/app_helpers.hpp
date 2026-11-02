@@ -9,7 +9,7 @@
 
 namespace jgui_test {
 
-inline constexpr std::uint32_t test_serial = 77;
+inline constexpr jgui::Serial test_serial{77};
 
 template <class App>
 void move_to(App& app, jgui::Point at) {

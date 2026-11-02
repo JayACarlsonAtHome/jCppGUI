@@ -110,7 +110,7 @@ struct ProbeSink {
 // buffer is held by the display, and sync waits until the display has processed all requests so far.
 template <class B>
 concept Backend = requires(B& backend, const B& constant, detail::ProbeSink& sink, Size size, Rect damage,
-                           std::uint32_t serial, ResizeEdge edge) {
+                           Serial serial, ResizeEdge edge) {
     { backend.process_pending(sink) } -> std::same_as<std::expected<void, Error>>;
     { backend.wait(sink) } -> std::same_as<std::expected<void, Error>>;
     { constant.can_present() } -> std::same_as<bool>;

@@ -35,7 +35,7 @@ public:
         const std::int32_t wanted_width = sat_add(run_->size().width(), sat_mul(theme::button_pad_x, 2));
         const std::int32_t wanted_height = sat_add(run_->size().height(), sat_mul(theme::button_pad_y, 2));
         bounds_ = area.intersect(Rect{area.origin(), Size{wanted_width, wanted_height}});
-        return Rect{bounds_.right(), area.y(), sat_sub(area.width(), bounds_.width()), area.height()};
+        return Rect{Point{bounds_.right(), area.y()}, Size{sat_sub(area.width(), bounds_.width()), area.height()}};
     }
 
     constexpr void paint(Canvas& canvas) {
@@ -96,7 +96,7 @@ public:
     template <class U>
     constexpr bool handle(U& ui, const KeyEvent& event) {
         if (!focused_ || !event.pressed) return false;
-        if (event.keysym != Keysym::Return && event.keysym != Keysym::Space) return false;
+        if (event.keysym != Key::Return && event.keysym != Key::Space) return false;
         on_click_(ui);
         return true;
     }

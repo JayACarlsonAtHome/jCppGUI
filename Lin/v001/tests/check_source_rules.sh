@@ -41,6 +41,10 @@ report "views::counted outside the helper" \
   "$(grep -n 'views::counted' "${sources[@]}" | grep -v '^src/c_resource\.hpp:')"
 report "the removed view of C-owned memory" "$(grep -nE '\bc_array\b' "${sources[@]}")"
 
+# The number inside a wire value can be read only below the backend line.
+report "wire access above the backend line" \
+  "$(grep -n 'WireAccess' "${sources[@]}" | grep -vE '^(src/wayland/|include/jCppGUI/v001/events\.hpp:)')"
+
 # std::variant needs a reason on the same or the previous line. There are none today.
 report "std::variant without a comment" "$(grep -n 'std::variant' "${sources[@]}" | grep -v '//')"
 

@@ -50,13 +50,13 @@ void test_click_rules(Checker& check) {
     check(fired == 2, "press on, drag away and back, release on fires");
 
     // Keyboard: the button took focus from the click.
-    app->backend().inject(jgui::KeyEvent{jgui::Keysym::Return, 0, true});
+    app->backend().inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, true});
     check(app->process_pending().has_value() && fired == 3, "Return on the focused button fires");
-    app->backend().inject(jgui::KeyEvent{jgui::Keysym::Return, 0, false});
+    app->backend().inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, false});
     check(app->process_pending().has_value() && fired == 3, "a key release does not fire");
     press(*app, off);
     release(*app, off);
-    app->backend().inject(jgui::KeyEvent{jgui::Keysym::Return, 0, true});
+    app->backend().inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, true});
     check(app->process_pending().has_value() && fired == 3, "a press elsewhere took the focus away");
 }
 
@@ -106,7 +106,7 @@ void test_capture_and_focus(Checker& check) {
     check(node.focused() == nullptr, "focus is inert at once");
     check(!app->ui().capture_active(), "the tree no longer reports a capture");
     release(*app, on);
-    app->backend().inject(jgui::KeyEvent{jgui::Keysym::Return, 0, true});
+    app->backend().inject(jgui::KeyEvent{jgui::Key::Return, jgui::ModifierMask{}, true});
     check(app->process_pending().has_value(), "events after the death are handled");
     check(fired == 0, "neither release nor key reached the dead item");
 

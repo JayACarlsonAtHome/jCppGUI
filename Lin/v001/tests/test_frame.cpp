@@ -20,7 +20,7 @@ using jgui_test::release;
 struct Overflowing {
     using tag = Overflowing;
     [[nodiscard]] constexpr jgui::Rect bounds() const noexcept { return jgui::Rect{}; }
-    constexpr void paint(jgui::Canvas& canvas) { canvas.fill_rect(jgui::Rect{-100, -100, 10000, 10000}, jgui::Color{0xFF00FF00U}); }
+    constexpr void paint(jgui::Canvas& canvas) { canvas.fill_rect(jgui::Rect{jgui::Point{-100, -100}, jgui::Size{10000, 10000}}, jgui::Color{0xFF00FF00U}); }
     template <class Shaper>
     constexpr std::expected<jgui::Rect, jgui::Error> layout(jgui::Rect area, const Shaper&) { return area; }
     template <class U, class E>
@@ -73,13 +73,13 @@ void test_move_and_resize_requests(Checker& check) {
     auto app = make_app();
     check(app.has_value() && app->process_pending().has_value(), "first frame");
     const auto press_with = [&](jgui::Point at, std::uint32_t serial) {
-        app->backend().inject(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Pressed, serial});
+        app->backend().inject(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Pressed, jgui::Serial{serial}});
         check(app->process_pending().has_value(), "press handled");
     };
     press_with(jgui::Point{300, 12}, 101);
-    check(app->backend().move_serial() == 101U, "the title strip starts a move with the press's serial");
+    check(app->backend().move_serial() == jgui::Serial{101}, "the title strip starts a move with the press's serial");
     press_with(jgui::Point{1, 240}, 102);
-    check(app->backend().resize_serial() == 102U && app->backend().resize_edge() == jgui::ResizeEdge::Left, "left edge");
+    check(app->backend().resize_serial() == jgui::Serial{102} && app->backend().resize_edge() == jgui::ResizeEdge::Left, "left edge");
     press_with(jgui::Point{639, 240}, 103);
     check(app->backend().resize_edge() == jgui::ResizeEdge::Right, "right edge");
     press_with(jgui::Point{320, 0}, 104);
@@ -90,7 +90,7 @@ void test_move_and_resize_requests(Checker& check) {
     check(app->backend().resize_edge() == jgui::ResizeEdge::TopLeft, "top-left corner");
     press_with(jgui::Point{639, 479}, 107);
     check(app->backend().resize_edge() == jgui::ResizeEdge::BottomRight, "bottom-right corner");
-    check(app->backend().move_serial() == 101U, "edges did not start a move");
+    check(app->backend().move_serial() == jgui::Serial{101}, "edges did not start a move");
 }
 
 void test_content_stays_inside(Checker& check) {

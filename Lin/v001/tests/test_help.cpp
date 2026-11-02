@@ -18,7 +18,7 @@ template <class App>
 jgui::Rect area_below_bar(App& app) {
     const jgui::Rect bar = app.ui().template get<jgui::MenuBarTag>().bounds();
     const jgui::Rect client = jgui::WindowFrame<jgui::DefaultFrameMetrics>::client_rect(window_size);
-    return jgui::Rect{client.x(), bar.bottom(), client.width(), client.bottom() - bar.bottom()};
+    return jgui::Rect{jgui::Point{client.x(), bar.bottom()}, jgui::Size{client.width(), client.bottom() - bar.bottom()}};
 }
 
 void test_toggle(Checker& check) {

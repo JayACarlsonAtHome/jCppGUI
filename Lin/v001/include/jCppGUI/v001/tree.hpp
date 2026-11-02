@@ -6,7 +6,6 @@
 #include <array>
 #include <concepts>
 #include <cstddef>
-#include <cstdint>
 #include <deque>
 #include <expected>
 #include <optional>
@@ -291,12 +290,12 @@ template <class Tag, class T>
 // What widgets asked of the window system during a dispatch. ApplicationCore carries it out through
 // the backend once the dispatch has returned.
 struct ResizeRequest {
-    std::uint32_t serial{};
+    Serial serial{};
     ResizeEdge edge{ResizeEdge::Top};
 };
 
 struct WindowRequests {
-    std::optional<std::uint32_t> move;  // the serial of the press that started it
+    std::optional<Serial> move;  // the serial of the press that started it
     std::optional<ResizeRequest> resize;
     bool close{};
 };
@@ -358,8 +357,8 @@ public:
     [[nodiscard]] constexpr Size size() const noexcept { return size_; }
     constexpr void set_size(Size size) noexcept { size_ = size; }
 
-    constexpr void request_move(std::uint32_t serial) noexcept { requests_.move = serial; }
-    constexpr void request_resize(std::uint32_t serial, ResizeEdge edge) noexcept {
+    constexpr void request_move(Serial serial) noexcept { requests_.move = serial; }
+    constexpr void request_resize(Serial serial, ResizeEdge edge) noexcept {
         requests_.resize = ResizeRequest{serial, edge};
     }
     constexpr void request_close() noexcept { requests_.close = true; }

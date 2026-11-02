@@ -33,13 +33,13 @@ public:
         bounds_ = area.intersect(Rect{area.origin(), Size{area.width(), strip}});
         if (auto used = detail::layout_in_order(children_, bounds_.inset(theme::bar_pad), text); !used)
             return std::unexpected(std::move(used.error()));
-        return Rect{area.x(), bounds_.bottom(), area.width(), sat_sub(area.height(), bounds_.height())};
+        return Rect{Point{area.x(), bounds_.bottom()}, Size{area.width(), sat_sub(area.height(), bounds_.height())}};
     }
 
     constexpr void paint(Canvas& canvas) {
         const Canvas local = canvas.clipped(bounds_);
         local.fill_rect(bounds_, theme::bar);
-        local.fill_rect(Rect{bounds_.x(), sat_sub(bounds_.bottom(), 1), bounds_.width(), 1}, theme::bar_edge);
+        local.fill_rect(Rect{Point{bounds_.x(), sat_sub(bounds_.bottom(), 1)}, Size{bounds_.width(), 1}}, theme::bar_edge);
         Canvas inner{local};
         detail::paint_in_order(children_, inner);
     }

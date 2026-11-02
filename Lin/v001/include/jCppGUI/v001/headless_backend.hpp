@@ -55,8 +55,8 @@ public:
 
     constexpr std::expected<void, Error> sync() { return {}; }
 
-    constexpr void begin_move(std::uint32_t serial) noexcept { move_serial_ = serial; }
-    constexpr void begin_resize(std::uint32_t serial, ResizeEdge edge) noexcept {
+    constexpr void begin_move(Serial serial) noexcept { move_serial_ = serial; }
+    constexpr void begin_resize(Serial serial, ResizeEdge edge) noexcept {
         resize_serial_ = serial;
         resize_edge_ = edge;
     }
@@ -68,8 +68,8 @@ public:
     }
     [[nodiscard]] constexpr Size size() const noexcept { return size_; }
     [[nodiscard]] constexpr std::size_t presented() const noexcept { return presented_; }
-    [[nodiscard]] constexpr std::optional<std::uint32_t> move_serial() const noexcept { return move_serial_; }
-    [[nodiscard]] constexpr std::optional<std::uint32_t> resize_serial() const noexcept { return resize_serial_; }
+    [[nodiscard]] constexpr std::optional<Serial> move_serial() const noexcept { return move_serial_; }
+    [[nodiscard]] constexpr std::optional<Serial> resize_serial() const noexcept { return resize_serial_; }
     [[nodiscard]] constexpr std::optional<ResizeEdge> resize_edge() const noexcept { return resize_edge_; }
 
 private:
@@ -77,8 +77,8 @@ private:
     std::vector<std::uint32_t> pixels_;
     Size size_{};
     std::size_t presented_{};
-    std::optional<std::uint32_t> move_serial_;
-    std::optional<std::uint32_t> resize_serial_;
+    std::optional<Serial> move_serial_;
+    std::optional<Serial> resize_serial_;
     std::optional<ResizeEdge> resize_edge_;
 };
 

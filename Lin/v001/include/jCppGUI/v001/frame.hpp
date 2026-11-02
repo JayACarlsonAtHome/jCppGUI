@@ -69,14 +69,12 @@ public:
     constexpr explicit WindowFrame(Children... children) : children_{std::move(children)...} {}
 
     [[nodiscard]] static constexpr Rect client_rect(Size window) noexcept {
-        return Rect{edge_width, title_height, sat_sub(window.width(), sat_mul(edge_width, 2)),
-                    sat_sub(window.height(), sat_add(title_height, edge_width))};
+        return Rect{Point{edge_width, title_height}, Size{sat_sub(window.width(), sat_mul(edge_width, 2)), sat_sub(window.height(), sat_add(title_height, edge_width))}};
     }
 
     [[nodiscard]] static constexpr Rect close_box(Size window) noexcept {
         const std::int32_t inset = (title_height - close_side) / 2;
-        return Rect{sat_sub(window.width(), sat_add(close_side, sat_add(inset, edge_width))), inset, close_side,
-                    close_side};
+        return Rect{Point{sat_sub(window.width(), sat_add(close_side, sat_add(inset, edge_width))), inset}, Size{close_side, close_side}};
     }
 
     [[nodiscard]] static constexpr FrameHit hit(Point p, Size window) noexcept {
@@ -115,7 +113,7 @@ public:
         bounds_ = area;
         if (auto used = detail::layout_in_order(children_, client_rect(area.size()), text); !used)
             return std::unexpected(std::move(used.error()));
-        return Rect{area.x(), area.bottom(), area.width(), 0};
+        return Rect{Point{area.x(), area.bottom()}, Size{area.width(), 0}};
     }
 
     // The content first and clipped to the client area, so that the frame is always on top.
@@ -210,20 +208,20 @@ private:
 
     constexpr void paint_frame(const Canvas& canvas, Size window) const {
         const Rect whole{Point{}, window};
-        canvas.fill_rect(Rect{0, 0, window.width(), title_height}, theme::frame_strip);
+        canvas.fill_rect(Rect{Point{0, 0}, Size{window.width(), title_height}}, theme::frame_strip);
         Color fill = theme::close_normal;
         if (close_hover_) fill = close_armed_ ? theme::close_pressed : theme::close_hover;
         const Rect box = close_box(window);
         canvas.fill_rect(box, fill);
         canvas.stroke_rect(box, theme::frame_edge);
         for (std::int32_t i = 4; i < close_side - 4; ++i) {
-            canvas.fill_rect(Rect{sat_add(box.x(), i), sat_add(box.y(), i), 1, 1}, theme::close_mark);
-            canvas.fill_rect(Rect{sat_add(box.x(), close_side - 1 - i), sat_add(box.y(), i), 1, 1}, theme::close_mark);
+            canvas.fill_rect(Rect{Point{sat_add(box.x(), i), sat_add(box.y(), i)}, Size{1, 1}}, theme::close_mark);
+            canvas.fill_rect(Rect{Point{sat_add(box.x(), close_side - 1 - i), sat_add(box.y(), i)}, Size{1, 1}}, theme::close_mark);
         }
-        canvas.fill_rect(Rect{0, title_height, edge_width, window.height()}, theme::frame_strip);
-        canvas.fill_rect(Rect{sat_sub(window.width(), edge_width), title_height, edge_width, window.height()},
+        canvas.fill_rect(Rect{Point{0, title_height}, Size{edge_width, window.height()}}, theme::frame_strip);
+        canvas.fill_rect(Rect{Point{sat_sub(window.width(), edge_width), title_height}, Size{edge_width, window.height()}},
                          theme::frame_strip);
-        canvas.fill_rect(Rect{0, sat_sub(window.height(), edge_width), window.width(), edge_width}, theme::frame_strip);
+        canvas.fill_rect(Rect{Point{0, sat_sub(window.height(), edge_width)}, Size{window.width(), edge_width}}, theme::frame_strip);
         canvas.stroke_rect(whole, theme::frame_edge);
     }
 

@@ -61,8 +61,6 @@ class Rect {
 public:
     constexpr Rect() noexcept = default;
     constexpr Rect(Point origin, Size size) noexcept : origin_{origin}, size_{size} {}
-    constexpr Rect(std::int32_t x, std::int32_t y, std::int32_t w, std::int32_t h) noexcept
-        : origin_{x, y}, size_{w, h} {}
 
     [[nodiscard]] constexpr Point origin() const noexcept { return origin_; }
     [[nodiscard]] constexpr Size size() const noexcept { return size_; }
@@ -89,14 +87,12 @@ public:
         const std::int64_t far_x = std::min(std::int64_t{origin_.x} + width(), std::int64_t{other.origin_.x} + other.width());
         const std::int64_t far_y = std::min(std::int64_t{origin_.y} + height(), std::int64_t{other.origin_.y} + other.height());
         if (far_x <= left || far_y <= top) return Rect{origin_, Size{}};
-        return Rect{saturate_to<std::int32_t>(left), saturate_to<std::int32_t>(top),
-                    saturate_to<std::int32_t>(far_x - left), saturate_to<std::int32_t>(far_y - top)};
+        return Rect{Point{saturate_to<std::int32_t>(left), saturate_to<std::int32_t>(top)}, Size{saturate_to<std::int32_t>(far_x - left), saturate_to<std::int32_t>(far_y - top)}};
     }
 
     // Shrinks every side by the margin. The size never goes below zero.
     [[nodiscard]] constexpr Rect inset(std::int32_t margin) const noexcept {
-        return Rect{sat_add(origin_.x, margin), sat_add(origin_.y, margin),
-                    sat_sub(width(), sat_mul(margin, 2)), sat_sub(height(), sat_mul(margin, 2))};
+        return Rect{Point{sat_add(origin_.x, margin), sat_add(origin_.y, margin)}, Size{sat_sub(width(), sat_mul(margin, 2)), sat_sub(height(), sat_mul(margin, 2))}};
     }
 
     friend constexpr bool operator==(const Rect&, const Rect&) = default;

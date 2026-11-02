@@ -38,7 +38,7 @@ public:
         }
         const std::int32_t row = sat_add(run_->size().height(), sat_mul(theme::label_pad_y, 2));
         bounds_ = area.intersect(Rect{area.origin(), Size{area.width(), row}});
-        return Rect{area.x(), bounds_.bottom(), area.width(), sat_sub(area.height(), bounds_.height())};
+        return Rect{Point{area.x(), bounds_.bottom()}, Size{area.width(), sat_sub(area.height(), bounds_.height())}};
     }
 
     constexpr void paint(Canvas& canvas) {

@@ -24,14 +24,14 @@ int main() {
     auto buffer = PixelBuffer::create(inner, Size{16, 16}, 32 * 4);
     check(buffer.has_value(), "buffer inside the guard region");
     const Canvas canvas{*buffer};
-    const std::array shapes{Rect{lo, lo, hi, hi},  Rect{hi, hi, hi, hi},     Rect{-100, -100, 100, 100},
-                            Rect{16, 0, 50, 50},   Rect{0, 16, 50, 50},      Rect{-5, 3, 10, 2},
-                            Rect{15, 15, hi, hi},  Rect{-1, -1, 18, 18},     Rect{lo, 0, hi, 16},
-                            Rect{0, hi - 1, 8, 8}, Rect{hi - 1, 0, 8, 8},    Rect{4, 4, 0, 0}};
+    const std::array shapes{Rect{Point{lo, lo}, Size{hi, hi}},  Rect{Point{hi, hi}, Size{hi, hi}},     Rect{Point{-100, -100}, Size{100, 100}},
+                            Rect{Point{16, 0}, Size{50, 50}},   Rect{Point{0, 16}, Size{50, 50}},      Rect{Point{-5, 3}, Size{10, 2}},
+                            Rect{Point{15, 15}, Size{hi, hi}},  Rect{Point{-1, -1}, Size{18, 18}},     Rect{Point{lo, 0}, Size{hi, 16}},
+                            Rect{Point{0, hi - 1}, Size{8, 8}}, Rect{Point{hi - 1, 0}, Size{8, 8}},    Rect{Point{4, 4}, Size{0, 0}}};
     for (const Rect& shape : shapes) {
         canvas.fill_rect(shape, Color{0xFF010203U});
         canvas.stroke_rect(shape, Color{0xFF040506U});
-        canvas.clipped(Rect{2, 2, 4, 4}).fill_rect(shape, Color{0xFF070809U});
+        canvas.clipped(Rect{Point{2, 2}, Size{4, 4}}).fill_rect(shape, Color{0xFF070809U});
     }
     int guards_broken = 0;
     for (std::size_t y = 0; y < 32; ++y) {

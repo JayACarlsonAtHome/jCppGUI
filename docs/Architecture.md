@@ -62,6 +62,15 @@ The backend is a template parameter chosen at compile time. There are exactly tw
 `static_assert` checks each against the concept. `src/text/` is the only place that uses FreeType,
 HarfBuzz and fontconfig.
 
+## Wire values
+
+A serial, a pointer button, a keysym and a modifier mask are each their own type: `Serial`,
+`PointerButtonCode`, `Keysym` and `ModifierMask`. There is no implicit conversion in or out, so one cannot be
+passed as another. The toolkit can make one explicitly and compare them. Only `src/wayland/` can read the
+number back, through `detail::WireAccess`, which is defined only there. `Rect` is made only from a `Point` and
+a `Size`. `Point` and `Size` still take two plain integers, so a swapped width and height is still possible at
+each place one is written.
+
 ## The typed tree
 
 A window is one composite type built from `std::tuple`s, so the compiler knows its whole shape.

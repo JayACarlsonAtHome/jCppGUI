@@ -81,23 +81,23 @@ static_assert(Size{-1, -1} == Size{0, 0} && Size{int_min, 5}.width() == 0 && Siz
 static_assert(Size{int_max, int_max}.width() == int_max);
 static_assert((Point{int_max, int_min} + Point{1, -1}) == Point{int_max, int_min});
 static_assert((Point{int_min, int_max} - Point{1, -1}) == Point{int_min, int_max});
-static_assert(Rect{int_max, int_max, 10, 10}.right() == int_max && Rect{int_max, int_max, 10, 10}.bottom() == int_max);
-static_assert(Rect{int_max - 1, 0, 10, 10}.contains(Point{int_max, 5}));
-static_assert(!Rect{int_max, 0, 0, 10}.contains(Point{int_max, 5}));
-static_assert(Rect{int_min, int_min, int_max, int_max}.contains(Point{int_min, int_min}));
-static_assert(!Rect{int_min, int_min, int_max, int_max}.contains(Point{-1, -1}));
-static_assert(Rect{int_min, int_min, int_max, int_max}.contains(Point{-2, -2}));
-static_assert(!Rect{0, 0, 10, 10}.contains(Point{10, 0}) && !Rect{0, 0, 10, 10}.contains(Point{-1, 0}));
+static_assert(Rect{Point{int_max, int_max}, Size{10, 10}}.right() == int_max && Rect{Point{int_max, int_max}, Size{10, 10}}.bottom() == int_max);
+static_assert(Rect{Point{int_max - 1, 0}, Size{10, 10}}.contains(Point{int_max, 5}));
+static_assert(!Rect{Point{int_max, 0}, Size{0, 10}}.contains(Point{int_max, 5}));
+static_assert(Rect{Point{int_min, int_min}, Size{int_max, int_max}}.contains(Point{int_min, int_min}));
+static_assert(!Rect{Point{int_min, int_min}, Size{int_max, int_max}}.contains(Point{-1, -1}));
+static_assert(Rect{Point{int_min, int_min}, Size{int_max, int_max}}.contains(Point{-2, -2}));
+static_assert(!Rect{Point{0, 0}, Size{10, 10}}.contains(Point{10, 0}) && !Rect{Point{0, 0}, Size{10, 10}}.contains(Point{-1, 0}));
 static_assert(!Rect{}.contains(Point{}));
-static_assert(Rect{0, 0, 10, 10}.intersect(Rect{5, 5, 10, 10}) == Rect{5, 5, 5, 5});
-static_assert(Rect{0, 0, 10, 10}.intersect(Rect{10, 0, 10, 10}).empty());
-static_assert(Rect{0, 0, 10, 10}.intersect(Rect{-5, -5, 3, 3}).empty());
-static_assert(Rect{int_max, int_max, int_max, int_max}.intersect(Rect{int_min, int_min, int_max, int_max}).empty());
-static_assert(Rect{int_min, int_min, int_max, int_max}.intersect(Rect{int_min, int_min, int_max, int_max}) == Rect{int_min, int_min, int_max, int_max});
-static_assert(Rect{int_max - 1, 0, int_max, 4}.intersect(Rect{0, 0, int_max, 4}) == Rect{int_max - 1, 0, 1, 4});
-static_assert(Rect{int_max - 2, 0, int_max, 4}.intersect(Rect{0, 0, int_max, 4}) == Rect{int_max - 2, 0, 2, 4});
-static_assert(Rect{0, 0, 4, 4}.inset(3).empty() && Rect{0, 0, 10, 10}.inset(2) == Rect{2, 2, 6, 6});
-static_assert(Rect{int_max, int_min, 4, 4}.inset(int_max).empty());
+static_assert(Rect{Point{0, 0}, Size{10, 10}}.intersect(Rect{Point{5, 5}, Size{10, 10}}) == Rect{Point{5, 5}, Size{5, 5}});
+static_assert(Rect{Point{0, 0}, Size{10, 10}}.intersect(Rect{Point{10, 0}, Size{10, 10}}).empty());
+static_assert(Rect{Point{0, 0}, Size{10, 10}}.intersect(Rect{Point{-5, -5}, Size{3, 3}}).empty());
+static_assert(Rect{Point{int_max, int_max}, Size{int_max, int_max}}.intersect(Rect{Point{int_min, int_min}, Size{int_max, int_max}}).empty());
+static_assert(Rect{Point{int_min, int_min}, Size{int_max, int_max}}.intersect(Rect{Point{int_min, int_min}, Size{int_max, int_max}}) == Rect{Point{int_min, int_min}, Size{int_max, int_max}});
+static_assert(Rect{Point{int_max - 1, 0}, Size{int_max, 4}}.intersect(Rect{Point{0, 0}, Size{int_max, 4}}) == Rect{Point{int_max - 1, 0}, Size{1, 4}});
+static_assert(Rect{Point{int_max - 2, 0}, Size{int_max, 4}}.intersect(Rect{Point{0, 0}, Size{int_max, 4}}) == Rect{Point{int_max - 2, 0}, Size{2, 4}});
+static_assert(Rect{Point{0, 0}, Size{4, 4}}.inset(3).empty() && Rect{Point{0, 0}, Size{10, 10}}.inset(2) == Rect{Point{2, 2}, Size{6, 6}});
+static_assert(Rect{Point{int_max, int_min}, Size{4, 4}}.inset(int_max).empty());
 
 // --- UTF-8 ---
 static_assert(valid_utf8("") && valid_utf8("Help") && valid_utf8("caf\xC3\xA9"));
@@ -176,16 +176,16 @@ constexpr bool canvas_stays_inside() {
     // A 4x4 buffer in the middle of the storage, with rows 8 pixels apart.
     const std::span<std::uint32_t> inner = std::span{storage}.subspan(18);
     const Canvas canvas{PixelBuffer::create(inner, Size{4, 4}, 32).value()};
-    const std::array<Rect, 12> shapes{Rect{int_min, int_min, int_max, int_max}, Rect{int_max, int_max, int_max, int_max},
-                                      Rect{-100, -100, 100, 100},               Rect{4, 0, 10, 10},
-                                      Rect{0, 4, 10, 10},                       Rect{-5, 1, 6, 1},
-                                      Rect{3, 3, int_max, int_max},             Rect{1, 1, 0, 0},
-                                      Rect{-1, -1, 6, 6},                       Rect{int_min, 0, int_max, 2},
-                                      Rect{0, int_max - 1, 4, 4},               Rect{int_max - 1, 0, 4, 4}};
+    const std::array<Rect, 12> shapes{Rect{Point{int_min, int_min}, Size{int_max, int_max}}, Rect{Point{int_max, int_max}, Size{int_max, int_max}},
+                                      Rect{Point{-100, -100}, Size{100, 100}},               Rect{Point{4, 0}, Size{10, 10}},
+                                      Rect{Point{0, 4}, Size{10, 10}},                       Rect{Point{-5, 1}, Size{6, 1}},
+                                      Rect{Point{3, 3}, Size{int_max, int_max}},             Rect{Point{1, 1}, Size{0, 0}},
+                                      Rect{Point{-1, -1}, Size{6, 6}},                       Rect{Point{int_min, 0}, Size{int_max, 2}},
+                                      Rect{Point{0, int_max - 1}, Size{4, 4}},               Rect{Point{int_max - 1, 0}, Size{4, 4}}};
     for (const Rect& shape : shapes) {
         canvas.fill_rect(shape, Color{1});
         canvas.stroke_rect(shape, Color{2});
-        canvas.clipped(Rect{1, 1, 2, 2}).fill_rect(shape, Color{3});
+        canvas.clipped(Rect{Point{1, 1}, Size{2, 2}}).fill_rect(shape, Color{3});
     }
     for (std::size_t y = 0; y < 8; ++y) {
         for (std::size_t x = 0; x < 8; ++x) {
@@ -201,7 +201,7 @@ constexpr bool canvas_clip_and_text() {
     std::array<std::uint32_t, 16> storage{};
     const Canvas canvas{PixelBuffer::create(storage, Size{4, 4}, 16).value()};
     const TextRun run{Size{4, 4}, std::vector<std::uint8_t>(16, 255)};
-    canvas.clipped(Rect{1, 1, 2, 2}).draw_text(Point{0, 0}, run, Color{0xFF112233U});
+    canvas.clipped(Rect{Point{1, 1}, Size{2, 2}}).draw_text(Point{0, 0}, run, Color{0xFF112233U});
     for (std::size_t y = 0; y < 4; ++y) {
         for (std::size_t x = 0; x < 4; ++x) {
             const bool inside = x >= 1 && x < 3 && y >= 1 && y < 3;
@@ -331,6 +331,19 @@ constexpr bool queue_keeps_arrival_order() {
 }
 static_assert(queue_keeps_arrival_order());
 
+// --- Wire values: each meaning is its own type, with no way in or out but the explicit one ---
+static_assert(!std::same_as<Serial, PointerButtonCode> && !std::same_as<Serial, Keysym> && !std::same_as<PointerButtonCode, Keysym>);
+static_assert(!std::convertible_to<std::uint32_t, Serial> && !std::convertible_to<Serial, std::uint32_t>);
+static_assert(!std::convertible_to<std::uint32_t, PointerButtonCode> && !std::convertible_to<PointerButtonCode, std::uint32_t>);
+static_assert(!std::convertible_to<std::uint32_t, Keysym> && !std::convertible_to<Keysym, std::uint32_t>);
+static_assert(!std::convertible_to<std::uint32_t, ModifierMask> && !std::convertible_to<ModifierMask, std::uint32_t>);
+static_assert(!std::constructible_from<std::uint32_t, Serial> && !std::constructible_from<Serial, PointerButtonCode>);
+static_assert(Serial{5} == Serial{5} && Serial{5} != Serial{6} && Serial{} == Serial{0});
+static_assert(MouseButton::Left != PointerButtonCode{0x111} && Key::Return != Key::Space);
+static_assert((Modifier::Shift | Modifier::Ctrl).holds(Modifier::Ctrl) && !(Modifier::Shift | Modifier::Ctrl).holds(Modifier::Alt));
+static_assert((Modifier::Shift | Modifier::Ctrl) == (Modifier::Ctrl | Modifier::Shift) && ModifierMask{}.holds(ModifierMask{}));
+static_assert(!std::constructible_from<Rect, int, int, int, int> && std::constructible_from<Rect, Point, Size>);
+
 // --- Frame ---
 using Frame = WindowFrame<DefaultFrameMetrics>;
 constexpr Size frame_window{200, 100};
@@ -364,10 +377,10 @@ static_assert(FrameMetrics<DefaultFrameMetrics> && FrameMetrics<ThickMetrics>);
 static_assert(!std::same_as<Frame, ThickFrame>);
 static_assert(Widget<Frame> && Widget<ThickFrame>);
 static_assert(Frame::edge_width == 4 && Frame::corner_length == 12 && Frame::title_height == 24 && Frame::close_side == 16);
-static_assert(Frame::client_rect(frame_window) == Rect{4, 24, 192, 72});
-static_assert(ThickFrame::client_rect(frame_window) == Rect{8, 32, 184, 60});
-static_assert(Frame::close_box(frame_window) == Rect{176, 4, 16, 16});
-static_assert(ThickFrame::close_box(frame_window) == Rect{166, 6, 20, 20});
+static_assert(Frame::client_rect(frame_window) == Rect{Point{4, 24}, Size{192, 72}});
+static_assert(ThickFrame::client_rect(frame_window) == Rect{Point{8, 32}, Size{184, 60}});
+static_assert(Frame::close_box(frame_window) == Rect{Point{176, 4}, Size{16, 16}});
+static_assert(ThickFrame::close_box(frame_window) == Rect{Point{166, 6}, Size{20, 20}});
 static_assert(Frame::hit(Point{6, 50}, frame_window).region == FrameRegion::Client);
 static_assert(ThickFrame::hit(Point{6, 50}, frame_window).edge == ResizeEdge::Left);
 static_assert(Frame::hit(Point{100, 28}, frame_window).region == FrameRegion::Client);
@@ -450,7 +463,7 @@ static_assert(messages_reach_receivers_in_order());
 // Receivers are whole widgets, which the tree lays out and paints like any other.
 constexpr bool receivers_are_widgets() {
     auto ui = window(Counter{}, Silent{});
-    const Rect area{0, 0, 2, 2};
+    const Rect area{Point{0, 0}, Size{2, 2}};
     const auto left = ui.layout(area, BlockShaper{});
     const bool passed_through = left.has_value() && *left == area;
     std::array<std::uint32_t, 4> pixels{};
@@ -467,7 +480,7 @@ constexpr auto bump_on_click = [](auto& u) -> void { u.template send<Bump>(); };
 
 constexpr bool button_click_rules() {
     auto ui = window(menu_bar(button<ClickTag>(caption, bump_on_click)), Counter{});
-    static_cast<void>(ui.layout(Rect{0, 0, 100, 40}, BlockShaper{}));
+    static_cast<void>(ui.layout(Rect{Point{0, 0}, Size{100, 40}}, BlockShaper{}));
     auto& target = ui.get<ClickTag>();
     const Point on{target.bounds().x() + 1, target.bounds().y() + 1};
     const Point off{99, 39};
@@ -486,8 +499,8 @@ constexpr bool button_click_rules() {
     ui.dispatch(PointerRelease{on, MouseButton::Left});
     if (count() != 1) return false;
 
-    ui.dispatch(PointerPress{on, std::uint32_t{0x111}});  // another mouse button
-    ui.dispatch(PointerRelease{on, std::uint32_t{0x111}});
+    ui.dispatch(PointerPress{on, PointerButtonCode{0x111}});  // another mouse button
+    ui.dispatch(PointerRelease{on, PointerButtonCode{0x111}});
     return count() == 1;
 }
 static_assert(button_click_rules());
@@ -504,7 +517,7 @@ constexpr bool self_destruction_is_deferred() {
     auto ui = window(Dynamic<ItemTag, KillButton, std::vector>{});
     auto& node = ui.get<ItemTag>();
     const Handle<KillButton> handle = node.create("x", kill).value();
-    static_cast<void>(ui.layout(Rect{0, 0, 50, 20}, BlockShaper{}));
+    static_cast<void>(ui.layout(Rect{Point{0, 0}, Size{50, 20}}, BlockShaper{}));
     const Point on{1, 1};
     ui.dispatch(PointerPress{on, MouseButton::Left});
     ui.dispatch(PointerRelease{on, MouseButton::Left});
@@ -524,14 +537,14 @@ constexpr bool capture_and_focus_go_inert() {
     auto ui = window(Dynamic<ItemTag, FireButton, std::vector>{});
     auto& node = ui.get<ItemTag>();
     const Handle<FireButton> handle = node.create("x", fire).value();
-    static_cast<void>(ui.layout(Rect{0, 0, 50, 20}, BlockShaper{}));
+    static_cast<void>(ui.layout(Rect{Point{0, 0}, Size{50, 20}}, BlockShaper{}));
     const Point on{1, 1};
     ui.dispatch(PointerPress{on, MouseButton::Left});
     if (node.captured() == nullptr || node.focused() == nullptr || !ui.capture_active()) return false;
     node.destroy(handle);
     if (node.captured() != nullptr || node.focused() != nullptr || ui.capture_active()) return false;
     ui.dispatch(PointerRelease{on, MouseButton::Left});
-    ui.dispatch(KeyEvent{Keysym::Return, 0, true});
+    ui.dispatch(KeyEvent{Key::Return, ModifierMask{}, true});
     return fired == 0;
 }
 static_assert(capture_and_focus_go_inert());
@@ -547,8 +560,8 @@ struct Recorder {
     constexpr void paint(Canvas&) {}
     template <class Shaper>
     constexpr std::expected<Rect, Error> layout(Rect offered, const Shaper&) {
-        area = Rect{offered.x(), offered.y(), offered.width(), 10};
-        return Rect{offered.x(), offered.y() + 10, offered.width(), offered.height() - 10};
+        area = Rect{Point{offered.x(), offered.y()}, Size{offered.width(), 10}};
+        return Rect{Point{offered.x(), offered.y() + 10}, Size{offered.width(), offered.height() - 10}};
     }
     template <class U>
     constexpr bool handle(U&, const PointerPress& event) { return area.contains(event.position); }
@@ -579,8 +592,8 @@ constexpr bool dynamic_routes_to_the_holder_only() {
     auto& node = ui.get<ItemTag>();
     const Handle<Recorder> upper = node.create().value();
     const Handle<Recorder> lower = node.create().value();
-    static_cast<void>(ui.layout(Rect{0, 0, 50, 40}, BlockShaper{}));
-    if (node.find(upper)->bounds() != Rect{0, 0, 50, 10} || node.find(lower)->bounds() != Rect{0, 10, 50, 10}) return false;
+    static_cast<void>(ui.layout(Rect{Point{0, 0}, Size{50, 40}}, BlockShaper{}));
+    if (node.find(upper)->bounds() != Rect{Point{0, 0}, Size{50, 10}} || node.find(lower)->bounds() != Rect{Point{0, 10}, Size{50, 10}}) return false;
     std::array<std::uint32_t, 1> pixel{};
     Canvas canvas{PixelBuffer::create(pixel, Size{1, 1}, 4).value()};
     ui.paint(canvas);
@@ -607,10 +620,10 @@ constexpr bool dynamic_routes_to_the_holder_only() {
     if (node.find(lower)->releases != 1 || node.find(upper)->releases != 0) return false;
 
     // Keys go only to the focused item, and to nobody once the focus is cleared.
-    ui.dispatch(KeyEvent{Keysym::Return, 0, true});
+    ui.dispatch(KeyEvent{Key::Return, ModifierMask{}, true});
     if (node.find(lower)->keys != 1 || node.find(upper)->keys != 0) return false;
     ui.notify(ClearFocus{});
-    ui.dispatch(KeyEvent{Keysym::Return, 0, true});
+    ui.dispatch(KeyEvent{Key::Return, ModifierMask{}, true});
     if (node.find(lower)->keys != 1 || node.find(upper)->keys != 0) return false;
 
     // With no capture, motion reaches the topmost item first, and one that is hit stops the hit test.
@@ -621,19 +634,19 @@ static_assert(dynamic_routes_to_the_holder_only());
 
 constexpr bool shaper_errors_reach_layout() {
     auto ui = window(label<ClickTag>("\xFF"));
-    const auto result = ui.layout(Rect{0, 0, 10, 10}, BlockShaper{});
+    const auto result = ui.layout(Rect{Point{0, 0}, Size{10, 10}}, BlockShaper{});
     return !result.has_value() && result.error().code == ErrorCode::InvalidUtf8;
 }
 static_assert(shaper_errors_reach_layout());
 
 constexpr bool label_new_text_is_checked_by_layout() {
     auto ui = window(label<ClickTag>("good"));
-    if (!ui.layout(Rect{0, 0, 40, 40}, BlockShaper{}).has_value() || ui.damaged()) return false;
+    if (!ui.layout(Rect{Point{0, 0}, Size{40, 40}}, BlockShaper{}).has_value() || ui.damaged()) return false;
     ui.get<ClickTag>().set_text("\xC0\x80");
     if (!ui.damaged()) return false;
-    if (ui.layout(Rect{0, 0, 40, 40}, BlockShaper{}).has_value()) return false;
+    if (ui.layout(Rect{Point{0, 0}, Size{40, 40}}, BlockShaper{}).has_value()) return false;
     ui.get<ClickTag>().set_text("fine");
-    return ui.layout(Rect{0, 0, 40, 40}, BlockShaper{}).has_value() && ui.get<ClickTag>().text() == "fine";
+    return ui.layout(Rect{Point{0, 0}, Size{40, 40}}, BlockShaper{}).has_value() && ui.get<ClickTag>().text() == "fine";
 }
 static_assert(label_new_text_is_checked_by_layout());
 
@@ -648,7 +661,7 @@ constexpr bool demo_help_toggles_in_pixels() {
     const Rect target = core.ui().get<demo::HelpButton>().bounds();
     const Point on{target.x() + 1, target.y() + 1};
     const Rect bar = core.ui().get<MenuBarTag>().bounds();
-    const Rect below{bar.x(), bar.bottom(), bar.width(), Frame::client_rect(small_window).bottom() - bar.bottom()};
+    const Rect below{Point{bar.x(), bar.bottom()}, Size{bar.width(), Frame::client_rect(small_window).bottom() - bar.bottom()}};
     const auto text_pixels = [&] {
         int count = 0;
         for (std::int32_t y = below.y(); y < below.bottom(); ++y)
@@ -657,8 +670,8 @@ constexpr bool demo_help_toggles_in_pixels() {
         return count;
     };
     const auto click = [&] {
-        core.backend().inject(PointerButton{on, MouseButton::Left, ButtonState::Pressed, 1});
-        core.backend().inject(PointerButton{on, MouseButton::Left, ButtonState::Released, 2});
+        core.backend().inject(PointerButton{on, MouseButton::Left, ButtonState::Pressed, Serial{1}});
+        core.backend().inject(PointerButton{on, MouseButton::Left, ButtonState::Released, Serial{2}});
         return core.process_pending(shaper).has_value();
     };
     if (text_pixels() != 0) return false;
@@ -678,10 +691,10 @@ constexpr bool frame_routing_and_refused_sizes() {
     if (!core.process_pending(shaper).has_value() || core.frames() != frames) return false;
 
     // A title press starts a move with its serial, and an edge press a resize.
-    core.backend().inject(PointerButton{Point{60, 10}, MouseButton::Left, ButtonState::Pressed, 11});
-    core.backend().inject(PointerButton{Point{0, 30}, MouseButton::Left, ButtonState::Pressed, 12});
+    core.backend().inject(PointerButton{Point{60, 10}, MouseButton::Left, ButtonState::Pressed, Serial{11}});
+    core.backend().inject(PointerButton{Point{0, 30}, MouseButton::Left, ButtonState::Pressed, Serial{12}});
     if (!core.process_pending(shaper).has_value()) return false;
-    if (core.backend().move_serial() != 11U || core.backend().resize_serial() != 12U) return false;
+    if (core.backend().move_serial() != Serial{11} || core.backend().resize_serial() != Serial{12}) return false;
     if (core.backend().resize_edge() != ResizeEdge::Left) return false;
 
     // An absurd size is refused and leaves the window as it was.
@@ -692,11 +705,11 @@ constexpr bool frame_routing_and_refused_sizes() {
 
     // Press on the close box, release off it: nothing. Press and release on it: closed.
     const Point close = Point{Frame::close_box(small_window).x() + 1, Frame::close_box(small_window).y() + 1};
-    core.backend().inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, 13});
-    core.backend().inject(PointerButton{Point{60, 40}, MouseButton::Left, ButtonState::Released, 14});
+    core.backend().inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, Serial{13}});
+    core.backend().inject(PointerButton{Point{60, 40}, MouseButton::Left, ButtonState::Released, Serial{14}});
     if (!core.process_pending(shaper).has_value() || core.closed()) return false;
-    core.backend().inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, 15});
-    core.backend().inject(PointerButton{close, MouseButton::Left, ButtonState::Released, 16});
+    core.backend().inject(PointerButton{close, MouseButton::Left, ButtonState::Pressed, Serial{15}});
+    core.backend().inject(PointerButton{close, MouseButton::Left, ButtonState::Released, Serial{16}});
     return core.process_pending(shaper).has_value() && core.closed();
 }
 static_assert(frame_routing_and_refused_sizes());
@@ -704,7 +717,7 @@ static_assert(frame_routing_and_refused_sizes());
 // The frame is an ordinary node: the tree finds it and what it holds, and a childless frame works.
 constexpr bool frame_is_a_node_of_the_tree() {
     auto ui = window(window_frame<ThickMetrics>(menu_bar(button<ClickTag>("x", bump_on_click)), Counter{}));
-    const Rect whole{0, 0, 120, 80};
+    const Rect whole{Point{0, 0}, Size{120, 80}};
     ui.set_size(whole.size());
     const auto left = ui.layout(whole, BlockShaper{});
     if (!left.has_value() || !left->empty()) return false;
@@ -715,8 +728,8 @@ constexpr bool frame_is_a_node_of_the_tree() {
     auto empty = window(window_frame());
     empty.set_size(whole.size());
     if (!empty.layout(whole, BlockShaper{}).has_value()) return false;
-    empty.dispatch(PointerPress{Point{60, 10}, MouseButton::Left, 9});
-    return empty.take_requests().move == 9U && !empty.take_requests().move.has_value();
+    empty.dispatch(PointerPress{Point{60, 10}, MouseButton::Left, Serial{9}});
+    return empty.take_requests().move == Serial{9} && !empty.take_requests().move.has_value();
 }
 static_assert(frame_is_a_node_of_the_tree());
 
@@ -725,11 +738,11 @@ constexpr bool thick_frame_through_the_application() {
     ApplicationCore core{HeadlessBackend{small_window}, window(window_frame<ThickMetrics>(label<ClickTag>("x")))};
     const BlockShaper shaper;
     if (!core.process_pending(shaper).has_value()) return false;
-    core.backend().inject(PointerButton{Point{6, 30}, MouseButton::Left, ButtonState::Pressed, 21});
-    core.backend().inject(PointerButton{Point{60, 28}, MouseButton::Left, ButtonState::Pressed, 22});
+    core.backend().inject(PointerButton{Point{6, 30}, MouseButton::Left, ButtonState::Pressed, Serial{21}});
+    core.backend().inject(PointerButton{Point{60, 28}, MouseButton::Left, ButtonState::Pressed, Serial{22}});
     if (!core.process_pending(shaper).has_value()) return false;
-    if (core.backend().resize_serial() != 21U || core.backend().resize_edge() != ResizeEdge::Left) return false;
-    if (core.backend().move_serial() != 22U) return false;
+    if (core.backend().resize_serial() != Serial{21} || core.backend().resize_edge() != ResizeEdge::Left) return false;
+    if (core.backend().move_serial() != Serial{22}) return false;
     return core.backend().pixel(Point{6, 30}) == theme::frame_strip.argb && core.backend().pixel(Point{60, 28}) == theme::frame_strip.argb;
 }
 static_assert(thick_frame_through_the_application());
@@ -747,7 +760,7 @@ struct FrameRig {
         return core.process_pending(shaper).has_value();
     }
     [[nodiscard]] constexpr bool left(Point at, ButtonState state, std::uint32_t serial) {
-        return send(PointerButton{at, MouseButton::Left, state, serial});
+        return send(PointerButton{at, MouseButton::Left, state, Serial{serial}});
     }
     [[nodiscard]] constexpr auto& frame() { return core.ui().get<WindowFrameTag>(); }
     [[nodiscard]] constexpr auto& help() { return core.ui().get<demo::HelpButton>(); }
@@ -759,7 +772,7 @@ constexpr Rect small_box = Frame::close_box(small_window);
 constexpr Point on_close{small_box.x() + 1, small_box.y() + 1};
 constexpr Point on_title{60, 10};
 constexpr Point on_client{60, 50};
-constexpr std::uint32_t right_button = 0x111;
+constexpr PointerButtonCode right_button{0x111};
 
 constexpr bool hovering_the_close_box_redraws_once() {
     FrameRig rig;
@@ -794,9 +807,9 @@ static_assert(leaving_the_window_disarms_close());
 constexpr bool only_the_left_button_acts_on_the_frame() {
     FrameRig rig;
     if (!rig.start()) return false;
-    if (!rig.send(PointerButton{on_title, right_button, ButtonState::Pressed, 35})) return false;
+    if (!rig.send(PointerButton{on_title, right_button, ButtonState::Pressed, Serial{35}})) return false;
     if (rig.core.backend().move_serial().has_value()) return false;
-    return rig.send(PointerButton{on_close, right_button, ButtonState::Pressed, 36}) && !rig.frame().close_armed();
+    return rig.send(PointerButton{on_close, right_button, ButtonState::Pressed, Serial{36}}) && !rig.frame().close_armed();
 }
 static_assert(only_the_left_button_acts_on_the_frame());
 
@@ -817,7 +830,7 @@ constexpr bool only_a_client_press_takes_the_focus_away() {
     const Point help = rig.on_help();
     if (!rig.left(help, ButtonState::Pressed, 39) || !rig.left(help, ButtonState::Released, 40) || !rig.help().focused()) return false;
     if (!rig.left(on_title, ButtonState::Pressed, 41) || !rig.help().focused()) return false;
-    if (rig.core.backend().move_serial() != 41U) return false;
+    if (rig.core.backend().move_serial() != Serial{41}) return false;
     return rig.left(on_client, ButtonState::Pressed, 42) && !rig.help().focused();
 }
 static_assert(only_a_client_press_takes_the_focus_away());
@@ -835,7 +848,7 @@ constexpr bool a_press_behind_a_resize_uses_the_new_size() {
     if (!rig.start()) return false;
     rig.core.backend().inject(ResizeEvent{Size{300, 200}});
     if (!rig.left(Point{299, 100}, ButtonState::Pressed, 43)) return false;
-    return rig.core.backend().resize_serial() == 43U && rig.core.backend().resize_edge() == ResizeEdge::Right;
+    return rig.core.backend().resize_serial() == Serial{43} && rig.core.backend().resize_edge() == ResizeEdge::Right;
 }
 static_assert(a_press_behind_a_resize_uses_the_new_size());
 

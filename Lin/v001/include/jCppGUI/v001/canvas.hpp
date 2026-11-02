@@ -90,10 +90,10 @@ public:
     // A one-pixel outline just inside the rectangle.
     constexpr void stroke_rect(const Rect& area, Color color) const {
         if (area.empty()) return;
-        fill_rect(Rect{area.x(), area.y(), area.width(), 1}, color);
-        fill_rect(Rect{area.x(), sat_sub(area.bottom(), 1), area.width(), 1}, color);
-        fill_rect(Rect{area.x(), area.y(), 1, area.height()}, color);
-        fill_rect(Rect{sat_sub(area.right(), 1), area.y(), 1, area.height()}, color);
+        fill_rect(Rect{Point{area.x(), area.y()}, Size{area.width(), 1}}, color);
+        fill_rect(Rect{Point{area.x(), sat_sub(area.bottom(), 1)}, Size{area.width(), 1}}, color);
+        fill_rect(Rect{Point{area.x(), area.y()}, Size{1, area.height()}}, color);
+        fill_rect(Rect{Point{sat_sub(area.right(), 1), area.y()}, Size{1, area.height()}}, color);
     }
 
     // Blends a shaped line of text with its top-left corner at the given point.

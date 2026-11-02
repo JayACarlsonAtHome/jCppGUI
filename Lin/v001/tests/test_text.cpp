@@ -50,7 +50,7 @@ void test_help_text(jgui_test::Checker& check, const TextEngine& engine) {
     check(whole.count_inked(measured, false) == 0, "none outside its measured bounds");
 
     Target clipped;
-    const Rect clip{12, 12, 6, 6};
+    const Rect clip{Point{12, 12}, Size{6, 6}};
     Canvas{clipped.buffer()}.clipped(clip).draw_text(at, *run, ink);
     check(clipped.count_inked(clip, false) == 0, "none outside the clip");
     check(clipped.count_inked(clip, true) > 0, "some inside the clip");

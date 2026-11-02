@@ -26,11 +26,12 @@
 #include "file_io.hpp"
 #include "trampoline.hpp"
 #include "untrusted.hpp"
+#include "wire_access.hpp"
 #include "xdg-shell-client-protocol.h"
 
 namespace jgui::inline v001 {
 
-static_assert(Keysym::Return == XKB_KEY_Return && Keysym::Space == XKB_KEY_space);
+static_assert(detail::WireAccess::number(Key::Return) == XKB_KEY_Return && detail::WireAccess::number(Key::Space) == XKB_KEY_space);
 static_assert(detail::keymap_format_xkb_v1 == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1);
 static_assert(detail::keymap_format_none == WL_KEYBOARD_KEYMAP_FORMAT_NO_KEYMAP);
 
@@ -390,7 +391,7 @@ void WaylandImpl::on_pointer_button(wl_pointer*, std::uint32_t serial, std::uint
                                     std::uint32_t state) noexcept {
     const ButtonState mapped =
         state == WL_POINTER_BUTTON_STATE_PRESSED ? ButtonState::Pressed : ButtonState::Released;
-    record(PointerButton{pointer_position, button, mapped, serial});
+    record(PointerButton{pointer_position, PointerButtonCode{button}, mapped, Serial{serial}});
 }
 
 void WaylandImpl::on_keymap(wl_keyboard*, std::uint32_t format, std::int32_t raw_fd, std::uint32_t size) noexcept {
@@ -421,15 +422,15 @@ void WaylandImpl::on_key(wl_keyboard*, std::uint32_t, std::uint32_t, std::uint32
     if (!code) return;
     xkb_state* xkb = xkb_state_object.get();
     const std::uint32_t keysym = xkb_state_key_get_one_sym(xkb, *code);
-    std::uint32_t modifiers = 0;
-    const auto add = [&](const char* name, std::uint32_t bit) {
-        if (xkb_state_mod_name_is_active(xkb, name, XKB_STATE_MODS_EFFECTIVE) > 0) modifiers |= bit;
+    ModifierMask modifiers{};
+    const auto add = [&](const char* name, ModifierMask bit) {
+        if (xkb_state_mod_name_is_active(xkb, name, XKB_STATE_MODS_EFFECTIVE) > 0) modifiers = modifiers | bit;
     };
     add(XKB_MOD_NAME_SHIFT, Modifier::Shift);
     add(XKB_MOD_NAME_CTRL, Modifier::Ctrl);
     add(XKB_MOD_NAME_ALT, Modifier::Alt);
     add(XKB_MOD_NAME_LOGO, Modifier::Super);
-    record(KeyEvent{keysym, modifiers, state == WL_KEYBOARD_KEY_STATE_PRESSED});
+    record(KeyEvent{Keysym{keysym}, modifiers, state == WL_KEYBOARD_KEY_STATE_PRESSED});
 }
 
 void WaylandImpl::on_modifiers(wl_keyboard*, std::uint32_t, std::uint32_t depressed, std::uint32_t latched,
@@ -626,12 +627,13 @@ std::expected<void, Error> WaylandBackend::sync() {
     return {};
 }
 
-void WaylandBackend::begin_move(std::uint32_t serial) noexcept {
-    if (impl_->seat) xdg_toplevel_move(impl_->toplevel.get(), impl_->seat.get(), serial);
+void WaylandBackend::begin_move(Serial serial) noexcept {
+    if (impl_->seat) xdg_toplevel_move(impl_->toplevel.get(), impl_->seat.get(), detail::WireAccess::number(serial));
 }
 
-void WaylandBackend::begin_resize(std::uint32_t serial, ResizeEdge edge) noexcept {
-    if (impl_->seat) xdg_toplevel_resize(impl_->toplevel.get(), impl_->seat.get(), serial, resize_edge_value(edge));
+void WaylandBackend::begin_resize(Serial serial, ResizeEdge edge) noexcept {
+    if (impl_->seat)
+        xdg_toplevel_resize(impl_->toplevel.get(), impl_->seat.get(), detail::WireAccess::number(serial), resize_edge_value(edge));
 }
 
 }  // namespace jgui::inline v001

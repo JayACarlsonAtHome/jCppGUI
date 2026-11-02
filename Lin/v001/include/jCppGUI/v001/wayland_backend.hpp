@@ -47,8 +47,8 @@ public:
     std::expected<PixelBuffer, Error> acquire_frame(Size size);
     std::expected<void, Error> present(Rect damage);
     std::expected<void, Error> sync();
-    void begin_move(std::uint32_t serial) noexcept;
-    void begin_resize(std::uint32_t serial, ResizeEdge edge) noexcept;
+    void begin_move(Serial serial) noexcept;
+    void begin_resize(Serial serial, ResizeEdge edge) noexcept;
 
 private:
     WaylandBackend(std::unique_ptr<BackendEventQueue> events,

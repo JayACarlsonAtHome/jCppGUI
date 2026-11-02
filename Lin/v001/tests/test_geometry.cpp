@@ -24,12 +24,12 @@ int main() {
     check(sat_mul(lo, hi) == lo, "mul saturates low");
     check((Point{hi, lo} + Point{hi, lo}) == Point{hi, lo}, "point add saturates");
     check(Size{lo, lo} == Size{}, "size is never negative");
-    check(Rect{hi, hi, hi, hi}.right() == hi, "right saturates");
-    check(Rect{hi - 1, 0, 10, 10}.contains(Point{hi, 5}), "contains at the top limit");
-    check(!Rect{lo, lo, hi, hi}.contains(Point{-1, -1}), "contains stops short of far edge");
-    check(Rect{lo, lo, hi, hi}.contains(Point{lo, lo}), "contains at the bottom limit");
-    check(Rect{hi, hi, hi, hi}.intersect(Rect{lo, lo, hi, hi}).empty(), "far apart do not intersect");
-    check(Rect{lo, lo, hi, hi}.intersect(Rect{lo, lo, hi, hi}) == Rect{lo, lo, hi, hi}, "self intersect");
-    check(Rect{hi - 2, 0, hi, 4}.intersect(Rect{0, 0, hi, 4}) == Rect{hi - 2, 0, 2, 4}, "overlap at the limit");
+    check(Rect{Point{hi, hi}, Size{hi, hi}}.right() == hi, "right saturates");
+    check(Rect{Point{hi - 1, 0}, Size{10, 10}}.contains(Point{hi, 5}), "contains at the top limit");
+    check(!Rect{Point{lo, lo}, Size{hi, hi}}.contains(Point{-1, -1}), "contains stops short of far edge");
+    check(Rect{Point{lo, lo}, Size{hi, hi}}.contains(Point{lo, lo}), "contains at the bottom limit");
+    check(Rect{Point{hi, hi}, Size{hi, hi}}.intersect(Rect{Point{lo, lo}, Size{hi, hi}}).empty(), "far apart do not intersect");
+    check(Rect{Point{lo, lo}, Size{hi, hi}}.intersect(Rect{Point{lo, lo}, Size{hi, hi}}) == Rect{Point{lo, lo}, Size{hi, hi}}, "self intersect");
+    check(Rect{Point{hi - 2, 0}, Size{hi, 4}}.intersect(Rect{Point{0, 0}, Size{hi, 4}}) == Rect{Point{hi - 2, 0}, Size{2, 4}}, "overlap at the limit");
     return check.finish();
 }
