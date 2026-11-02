@@ -7,9 +7,18 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Debug)
+# Choosing no build type would quietly choose no optimization and none of the hardening below that needs it, so a
+# build must name one. CMake's own defaults for the optimized types are not used: they add -DNDEBUG, and -O3 at
+# Release. Nothing here depends on assert, but -O2 is the level these flags were tried at.
+set(JGUI_BUILD_TYPES Debug Release RelWithDebInfo MinSizeRel)
+if(NOT CMAKE_BUILD_TYPE IN_LIST JGUI_BUILD_TYPES)
+  message(FATAL_ERROR "Name a build type, one of: ${JGUI_BUILD_TYPES}. Got: '${CMAKE_BUILD_TYPE}'. The presets do this.")
 endif()
+foreach(language C CXX)
+  set(CMAKE_${language}_FLAGS_RELEASE "-O2")
+  set(CMAKE_${language}_FLAGS_RELWITHDEBINFO "-O2 -g")
+  set(CMAKE_${language}_FLAGS_MINSIZEREL "-Os")
+endforeach()
 
 option(JGUI_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(JGUI_FUZZ "Build the libFuzzer harnesses with ASan and UBSan, instead of the demo and tests" OFF)
@@ -31,14 +40,14 @@ target_compile_definitions(jgui_hardening INTERFACE _GLIBCXX_ASSERTIONS)
 target_compile_options(jgui_hardening INTERFACE
   -fstack-protector-strong -fstack-clash-protection -fcf-protection -fPIE
   -ftrivial-auto-var-init=zero -fstrict-flex-arrays=3
-  $<$<CONFIG:Release>:-O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3>)
+  $<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3>)
 # These three change what the language promises, which is hardening. They also stop g++'s warnings about the
 # same promises: -Wnull-dereference, -Wstrict-aliasing and -Wstrict-overflow. The gcc-warn preset leaves them
 # out so that those warnings can report. A build that is shipped always has them.
 if(NOT JGUI_WARNINGS_ONLY)
   target_compile_options(jgui_hardening INTERFACE
     -fno-delete-null-pointer-checks
-    $<$<CONFIG:Release>:-fno-strict-overflow -fno-strict-aliasing>)
+    $<$<NOT:$<CONFIG:Debug>>:-fno-strict-overflow -fno-strict-aliasing>)
 endif()
 target_link_options(jgui_hardening INTERFACE -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack)
 if(JGUI_SANITIZE)
