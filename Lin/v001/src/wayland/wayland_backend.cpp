@@ -98,9 +98,10 @@ private:
     bool busy_{};
 };
 
-constexpr wl_buffer_listener buffer_listener{
-    .release = &detail::Trampoline<&ShmBuffer::on_release>::call,
-};
+using BufferListener = detail::OwnedListener<ShmBuffer, wl_buffer_listener>;
+constexpr BufferListener buffer_listener{{
+    .release = BufferListener::on<&ShmBuffer::on_release>,
+}};
 
 std::expected<std::unique_ptr<ShmBuffer>, Error> ShmBuffer::create(wl_shm* shm, Size size) {
     // The validation comes first: nothing below does arithmetic on an unchecked size.
@@ -158,6 +159,23 @@ static_assert(cursor_colour('X') == 0xFF000000U && cursor_colour('.') == 0xFFFFF
 }  // namespace
 
 namespace detail {
+
+template <>
+struct GlobalInterface<wl_compositor> {
+    static constexpr const wl_interface* value = &wl_compositor_interface;
+};
+template <>
+struct GlobalInterface<wl_shm> {
+    static constexpr const wl_interface* value = &wl_shm_interface;
+};
+template <>
+struct GlobalInterface<xdg_wm_base> {
+    static constexpr const wl_interface* value = &xdg_wm_base_interface;
+};
+template <>
+struct GlobalInterface<wl_seat> {
+    static constexpr const wl_interface* value = &wl_seat_interface;
+};
 
 struct WaylandImpl {
     explicit WaylandImpl(BackendEventQueue& queue, Size fallback) noexcept : events{queue}, chosen_size{fallback} {}
@@ -271,52 +289,59 @@ void WaylandImplDeleter::operator()(WaylandImpl* impl) const noexcept {
 
 namespace {
 
-using detail::Trampoline;
+using detail::OwnedListener;
 using detail::WaylandImpl;
 
-constexpr wl_registry_listener registry_listener{
-    .global = &Trampoline<&WaylandImpl::on_global>::call,
-    .global_remove = &Trampoline<&WaylandImpl::on_global_remove>::call,
-};
-constexpr xdg_wm_base_listener wm_base_listener{
-    .ping = &Trampoline<&WaylandImpl::on_ping>::call,
-};
-constexpr xdg_surface_listener surface_listener{
-    .configure = &Trampoline<&WaylandImpl::on_surface_configure>::call,
-};
+using RegistryListener = OwnedListener<WaylandImpl, wl_registry_listener>;
+constexpr RegistryListener registry_listener{{
+    .global = RegistryListener::on<&WaylandImpl::on_global>,
+    .global_remove = RegistryListener::on<&WaylandImpl::on_global_remove>,
+}};
+using WmBaseListener = OwnedListener<WaylandImpl, xdg_wm_base_listener>;
+constexpr WmBaseListener wm_base_listener{{
+    .ping = WmBaseListener::on<&WaylandImpl::on_ping>,
+}};
+using SurfaceListener = OwnedListener<WaylandImpl, xdg_surface_listener>;
+constexpr SurfaceListener surface_listener{{
+    .configure = SurfaceListener::on<&WaylandImpl::on_surface_configure>,
+}};
 // The two listeners below grow as the protocol does. Only the events of the versions we bind can ever
 // arrive, so those are all that is set, and this still compiles against a later libwayland.
-constexpr xdg_toplevel_listener toplevel_listener = [] {
+using ToplevelListener = OwnedListener<WaylandImpl, xdg_toplevel_listener>;
+constexpr ToplevelListener toplevel_listener{[] {
     xdg_toplevel_listener listener{};
-    listener.configure = &Trampoline<&WaylandImpl::on_toplevel_configure>::call;
-    listener.close = &Trampoline<&WaylandImpl::on_toplevel_close>::call;
+    listener.configure = ToplevelListener::on<&WaylandImpl::on_toplevel_configure>;
+    listener.close = ToplevelListener::on<&WaylandImpl::on_toplevel_close>;
     return listener;
-}();
-constexpr wl_seat_listener seat_listener{
-    .capabilities = &Trampoline<&WaylandImpl::on_seat_capabilities>::call,
-    .name = &Trampoline<&WaylandImpl::on_seat_name>::call,
-};
-constexpr wl_pointer_listener pointer_listener = [] {
+}()};
+using SeatListener = OwnedListener<WaylandImpl, wl_seat_listener>;
+constexpr SeatListener seat_listener{{
+    .capabilities = SeatListener::on<&WaylandImpl::on_seat_capabilities>,
+    .name = SeatListener::on<&WaylandImpl::on_seat_name>,
+}};
+using PointerListener = OwnedListener<WaylandImpl, wl_pointer_listener>;
+constexpr PointerListener pointer_listener{[] {
     wl_pointer_listener listener{};
-    listener.enter = &Trampoline<&WaylandImpl::on_pointer_enter>::call;
-    listener.leave = &Trampoline<&WaylandImpl::on_pointer_leave>::call;
-    listener.motion = &Trampoline<&WaylandImpl::on_pointer_motion>::call;
-    listener.button = &Trampoline<&WaylandImpl::on_pointer_button>::call;
-    listener.axis = &Trampoline<&WaylandImpl::on_pointer_axis>::call;
-    listener.frame = &Trampoline<&WaylandImpl::on_pointer_frame>::call;
-    listener.axis_source = &Trampoline<&WaylandImpl::on_pointer_axis_source>::call;
-    listener.axis_stop = &Trampoline<&WaylandImpl::on_pointer_axis_stop>::call;
-    listener.axis_discrete = &Trampoline<&WaylandImpl::on_pointer_axis_discrete>::call;
+    listener.enter = PointerListener::on<&WaylandImpl::on_pointer_enter>;
+    listener.leave = PointerListener::on<&WaylandImpl::on_pointer_leave>;
+    listener.motion = PointerListener::on<&WaylandImpl::on_pointer_motion>;
+    listener.button = PointerListener::on<&WaylandImpl::on_pointer_button>;
+    listener.axis = PointerListener::on<&WaylandImpl::on_pointer_axis>;
+    listener.frame = PointerListener::on<&WaylandImpl::on_pointer_frame>;
+    listener.axis_source = PointerListener::on<&WaylandImpl::on_pointer_axis_source>;
+    listener.axis_stop = PointerListener::on<&WaylandImpl::on_pointer_axis_stop>;
+    listener.axis_discrete = PointerListener::on<&WaylandImpl::on_pointer_axis_discrete>;
     return listener;
-}();
-constexpr wl_keyboard_listener keyboard_listener{
-    .keymap = &Trampoline<&WaylandImpl::on_keymap>::call,
-    .enter = &Trampoline<&WaylandImpl::on_keyboard_enter>::call,
-    .leave = &Trampoline<&WaylandImpl::on_keyboard_leave>::call,
-    .key = &Trampoline<&WaylandImpl::on_key>::call,
-    .modifiers = &Trampoline<&WaylandImpl::on_modifiers>::call,
-    .repeat_info = &Trampoline<&WaylandImpl::on_repeat_info>::call,
-};
+}()};
+using KeyboardListener = OwnedListener<WaylandImpl, wl_keyboard_listener>;
+constexpr KeyboardListener keyboard_listener{{
+    .keymap = KeyboardListener::on<&WaylandImpl::on_keymap>,
+    .enter = KeyboardListener::on<&WaylandImpl::on_keyboard_enter>,
+    .leave = KeyboardListener::on<&WaylandImpl::on_keyboard_leave>,
+    .key = KeyboardListener::on<&WaylandImpl::on_key>,
+    .modifiers = KeyboardListener::on<&WaylandImpl::on_modifiers>,
+    .repeat_info = KeyboardListener::on<&WaylandImpl::on_repeat_info>,
+}};
 
 }  // namespace
 
@@ -338,11 +363,11 @@ void WaylandImpl::on_global(wl_registry* object, std::uint32_t name, const char*
         return;
     }
     if (kind == wl_compositor_interface.name && !compositor && version >= compositor_version) {
-        compositor.reset(bind_global<wl_compositor>(object, name, &wl_compositor_interface, compositor_version));
+        compositor.reset(bind_global<wl_compositor>(object, name, compositor_version));
     } else if (kind == wl_shm_interface.name && !shm) {
-        shm.reset(bind_global<wl_shm>(object, name, &wl_shm_interface, shm_version));
+        shm.reset(bind_global<wl_shm>(object, name, shm_version));
     } else if (kind == xdg_wm_base_interface.name && !wm_base) {
-        wm_base.reset(bind_global<xdg_wm_base>(object, name, &xdg_wm_base_interface, std::min(version, wm_base_version)));
+        wm_base.reset(bind_global<xdg_wm_base>(object, name, std::min(version, wm_base_version)));
         if (!wm_base) {
             fail(ErrorCode::System, "xdg_wm_base could not be bound");
             return;
@@ -350,7 +375,7 @@ void WaylandImpl::on_global(wl_registry* object, std::uint32_t name, const char*
         if (!listen<xdg_wm_base_add_listener>(wm_base.get(), wm_base_listener, *this))
             fail(ErrorCode::System, "the xdg_wm_base listener was refused");
     } else if (kind == wl_seat_interface.name && !seat && version >= seat_version) {
-        seat.reset(bind_global<wl_seat>(object, name, &wl_seat_interface, seat_version));
+        seat.reset(bind_global<wl_seat>(object, name, seat_version));
         if (!seat) {
             fail(ErrorCode::System, "wl_seat could not be bound");
             return;

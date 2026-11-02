@@ -201,6 +201,7 @@ function(jgui_compile_fail name regex)
     -DCXX=${CMAKE_CXX_COMPILER}
     "-DFLAGS=-std=c++23 ${JGUI_WARNING_STRING} -fsyntax-only"
     -DINCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/include
+    -DSRC_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/src
     -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/compile_fail/${name}.cpp)
   add_test(NAME compile_ok_${name} COMMAND ${CMAKE_COMMAND} ${common} -DEXPECT=ok -P ${script})
   add_test(NAME compile_fail_${name} COMMAND ${CMAKE_COMMAND} ${common} -DEXPECT=fail "-DREGEX=${regex}" -P ${script})
@@ -228,6 +229,8 @@ jgui_compile_fail(left_plus_left "no match|invalid operands")
 jgui_compile_fail(frame_copied "deleted")
 jgui_compile_fail(frame_presented_without_move "deleted")
 jgui_compile_fail(vector_pool_at_run_time "consteval|immediate|constant expression|not a constant")
+jgui_compile_fail(listener_wrong_owner "no matching|no viable|cannot bind|could not convert|invalid initialization")
+jgui_compile_fail(listener_wrong_method "constraints? not satisfied|not satisfied|no matching|invalid")
 jgui_compile_fail(canvas_stored "no match|no viable|deleted")
 jgui_compile_fail(pixel_buffer_copied "deleted")
 jgui_compile_fail(callback_sets_size "private|inaccessible")
