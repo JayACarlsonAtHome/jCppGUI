@@ -3,9 +3,12 @@
 //          and window sizes. Kept apart from the connection so tests can reach it directly.
 #pragma once
 
+#include <fcntl.h>
+#include <sys/mman.h>  // for memfd_create
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -65,9 +68,31 @@ inline constexpr std::uint32_t max_keymap_bytes = 1024 * 1024;
 // from the environment, so the keymap's text cannot make xkbcommon read any file.
 [[nodiscard]] XkbContext make_keymap_context() noexcept;
 
+// The system calls a buffer file needs. They are a template parameter only so that a test can make each one fail
+// or report what it did: production always uses this one, and create_buffer_file has no branch for it.
+struct BufferFileCalls {
+    [[nodiscard]] static int memfd_create(const char* name, unsigned int flags) noexcept { return ::memfd_create(name, flags); }
+    [[nodiscard]] static int reserve(int fd, ::off_t bytes) noexcept { return ::posix_fallocate(fd, 0, bytes); }
+    [[nodiscard]] static int add_seals(int fd, int seals) noexcept { return ::fcntl(fd, F_ADD_SEALS, seals); }
+};
+
 // A new file for one window buffer: not executable, with its space reserved, so a shortage is an Error
 // here and not a failure later. It is sealed at that size, so nobody can truncate it under the compositor.
-[[nodiscard]] std::expected<UniqueFd, Error> create_buffer_file(std::size_t bytes);
+template <class Calls = BufferFileCalls>
+[[nodiscard]] std::expected<UniqueFd, Error> create_buffer_file(std::size_t bytes) {
+    UniqueFd fd{Calls::memfd_create("jcppgui-frame", MFD_CLOEXEC | MFD_NOEXEC_SEAL)};
+    // A kernel too old to know the flag refuses it. Such a file keeps its exec bit, and sealing still works.
+    if (fd.get() < 0 && errno == EINVAL) fd = UniqueFd{Calls::memfd_create("jcppgui-frame", MFD_CLOEXEC | MFD_ALLOW_SEALING)};
+    if (fd.get() < 0) return make_error(ErrorCode::System, "memfd_create failed");
+    int reserve_failure = 0;
+    do {
+        reserve_failure = Calls::reserve(fd.get(), saturate_to<::off_t>(bytes));
+    } while (reserve_failure == EINTR);
+    if (reserve_failure != 0) return make_error(ErrorCode::System, "the buffer file could not be sized");
+    if (Calls::add_seals(fd.get(), F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_SEAL) != 0)
+        return make_error(ErrorCode::System, "the buffer file could not be sealed");
+    return fd;
+}
 
 // The checks made on a keymap before anything is read.
 [[nodiscard]] constexpr std::expected<void, Error> check_keymap_header(std::uint32_t format, std::uint32_t size) {
