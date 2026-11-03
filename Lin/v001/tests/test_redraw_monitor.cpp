@@ -148,9 +148,9 @@ consteval bool line_number_is_two_columns() {
 static_assert(line_number_is_two_columns());
 
 // --- File names ---
-static_assert(detail::redraw_file_name_fits("redraw_monitor.jtext") && detail::redraw_file_name_fits(".hidden"));
-static_assert(!detail::redraw_file_name_fits("") && !detail::redraw_file_name_fits(".") && !detail::redraw_file_name_fits(".."));
-static_assert(!detail::redraw_file_name_fits("a/b") && !detail::redraw_file_name_fits("a\nb") && !detail::redraw_file_name_fits("\xFF"));
+static_assert(detail::plain_file_name_fits("redraw_monitor.jtext") && detail::plain_file_name_fits(".hidden"));
+static_assert(!detail::plain_file_name_fits("") && !detail::plain_file_name_fits(".") && !detail::plain_file_name_fits(".."));
+static_assert(!detail::plain_file_name_fits("a/b") && !detail::plain_file_name_fits("a\nb") && !detail::plain_file_name_fits("\xFF"));
 
 // --- The newest rows ---
 consteval bool ring_keeps_the_newest() {

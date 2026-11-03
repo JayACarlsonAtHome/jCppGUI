@@ -46,8 +46,8 @@ struct HeightTag;
 struct GeometryArithmetic;
 // Reads the number. It is defined only in src/geometry_access.hpp, so nothing above the backend line can use it.
 struct GeometryAccess;
-// Reads the number to write it in the redraw monitor's file. It is defined only in redraw_monitor.hpp.
-struct RedrawNumbers;
+// Reads the number to write it in a jText file. It is defined only in jtext_writer.hpp.
+struct FileNumbers;
 // Reads the number to show it as the text of a cell. It is defined only in cell_text.hpp.
 struct CellNumbers;
 // Defined only in tests/test_access.hpp.
@@ -73,7 +73,7 @@ private:
     friend class TextRun;
     friend struct detail::GeometryArithmetic;
     friend struct detail::GeometryAccess;
-    friend struct detail::RedrawNumbers;
+    friend struct detail::FileNumbers;
     friend struct detail::CellNumbers;
     friend struct detail::TestAccess;
 
@@ -123,7 +123,7 @@ private:
     friend class TextRun;
     friend struct detail::GeometryArithmetic;
     friend struct detail::GeometryAccess;
-    friend struct detail::RedrawNumbers;
+    friend struct detail::FileNumbers;
     friend struct detail::CellNumbers;
     friend struct detail::TestAccess;
 

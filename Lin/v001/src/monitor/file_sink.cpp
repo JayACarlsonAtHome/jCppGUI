@@ -1,5 +1,5 @@
 // File: src/monitor/file_sink.cpp
-// Purpose: The redraw monitor's file. A whole new file is written beside the old under a temporary name, with
+// Purpose: FileSink, for whichever tool writes through it. A whole new file is written beside the old under a temporary name, with
 //          O_CREAT | O_EXCL | O_NOFOLLOW and mode 0600, and renamed over it. What stands at either name must be a regular
 //          file or nothing: anything else is refused and left alone. Every failure is an Error for the monitor to keep.
 #include <fcntl.h>
@@ -17,7 +17,7 @@
 
 #include "file_io.hpp"
 #include "jCppGUI/v001/base_directory.hpp"
-#include "jCppGUI/v001/redraw_monitor.hpp"
+#include "jCppGUI/v001/jtext_writer.hpp"
 
 namespace jgui::inline v001 {
 
@@ -34,39 +34,47 @@ enum class Found : std::uint8_t { Nothing, RegularFile };
     struct stat status {};
     if (::fstatat(directory, name.c_str(), &status, AT_SYMLINK_NOFOLLOW) != 0) {
         if (errno == ENOENT) return Found::Nothing;
-        return failure("the redraw monitor cannot look at", name, errno);
+        return failure("cannot look at", name, errno);
     }
-    if (!S_ISREG(status.st_mode)) return make_error(ErrorCode::System, "the redraw monitor refuses to replace " + name + ": it is not a regular file");
+    if (!S_ISREG(status.st_mode)) return make_error(ErrorCode::System, "will not replace " + name + ": it is not a regular file");
     return Found::RegularFile;
 }
 
 // Writes the new file under its temporary name. The descriptor closes on the way out, whatever happened.
 [[nodiscard]] std::expected<void, Error> write_new_file(int directory, const std::string& name, std::string_view text) {
     const detail::UniqueFd file{::openat(directory, name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR)};
-    if (file.get() < 0) return failure("the redraw monitor cannot create", name, errno);
+    if (file.get() < 0) return failure("cannot create", name, errno);
     struct stat status {};
-    if (::fstat(file.get(), &status) != 0) return failure("the redraw monitor cannot check", name, errno);
-    if (!S_ISREG(status.st_mode)) return make_error(ErrorCode::System, "the redraw monitor refuses " + name + ": it is not a regular file");
+    if (::fstat(file.get(), &status) != 0) return failure("cannot check", name, errno);
+    if (!S_ISREG(status.st_mode)) return make_error(ErrorCode::System, "will not use " + name + ": it is not a regular file");
     if (auto written = detail::write_at<char>(file.get(), std::span<const char>{text}, 0); !written) {
-        return make_error(ErrorCode::System, "the redraw monitor cannot write " + name + ": " + written.error().message);
+        return make_error(ErrorCode::System, "cannot write " + name + ": " + written.error().message);
     }
     return {};
 }
 
 }  // namespace
 
-FileSink::FileSink() : name_{default_redraw_file_name} {
+FileSink::FileSink() : FileSink{InBaseDirectory{}, default_redraw_file_name} {}
+
+FileSink FileSink::in_base_directory(std::string_view file_name) { return FileSink{InBaseDirectory{}, file_name}; }
+
+FileSink::FileSink(InBaseDirectory, std::string_view file_name) : name_{file_name} {
+    if (!detail::plain_file_name_fits(file_name)) {
+        refused_ = Error{ErrorCode::System, "a file to save must be a plain name in its directory"};
+        return;
+    }
     const auto base = application_base_directory();
     if (base) {
         open_directory(*base);
     } else {
-        refused_ = Error{base.error().code, "the redraw monitor has no base directory: " + base.error().message};
+        refused_ = Error{base.error().code, "there is no base directory for " + name_ + ": " + base.error().message};
     }
 }
 
 FileSink::FileSink(std::string_view directory, std::string_view file_name) : name_{file_name} {
-    if (!detail::redraw_file_name_fits(file_name)) {
-        refused_ = Error{ErrorCode::System, "the redraw monitor's file must be a plain name in its directory"};
+    if (!detail::plain_file_name_fits(file_name)) {
+        refused_ = Error{ErrorCode::System, "a file to save must be a plain name in its directory"};
         return;
     }
     open_directory(std::string{directory});
@@ -74,11 +82,11 @@ FileSink::FileSink(std::string_view directory, std::string_view file_name) : nam
 
 void FileSink::open_directory(const std::string& directory) {
     if (directory.empty() || directory.contains('\0')) {
-        refused_ = Error{ErrorCode::System, "the redraw monitor's directory is not a path"};
+        refused_ = Error{ErrorCode::System, "the directory to save in is not a path"};
         return;
     }
     directory_ = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (directory_ < 0) refused_ = failure("the redraw monitor cannot open the directory", directory, errno).error();
+    if (directory_ < 0) refused_ = failure("cannot open the directory", directory, errno).error();
 }
 
 FileSink::FileSink(FileSink&& other) noexcept
@@ -100,7 +108,7 @@ std::expected<void, Error> FileSink::save(std::string_view text) {
     if (!leftover) return std::unexpected(std::move(leftover.error()));
     // What a run that crashed left behind. O_EXCL below would refuse it for ever.
     if (*leftover == Found::RegularFile && ::unlinkat(directory_, temporary.c_str(), 0) != 0)
-        return failure("the redraw monitor cannot remove", temporary, errno);
+        return failure("cannot remove", temporary, errno);
 
     if (auto written = write_new_file(directory_, temporary, text); !written) {
         // Gone if it was made, and if it was not there is nothing to do.
@@ -110,7 +118,7 @@ std::expected<void, Error> FileSink::save(std::string_view text) {
     if (::renameat(directory_, temporary.c_str(), directory_, name_.c_str()) != 0) {
         const int code = errno;
         static_cast<void>(::unlinkat(directory_, temporary.c_str(), 0));
-        return failure("the redraw monitor cannot replace", name_, code);
+        return failure("cannot replace", name_, code);
     }
     return {};
 }
