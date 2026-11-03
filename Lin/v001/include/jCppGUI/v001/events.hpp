@@ -69,6 +69,9 @@ private:
 // The edge or corner a compositor resize starts from.
 enum class ResizeEdge : std::uint8_t { TopSide, BottomSide, LeftSide, RightSide, TopLeft, TopRight, BottomLeft, BottomRight };
 
+// What the pointer looks like over the window: the plain arrow, or the arrow for resizing from one edge or corner.
+enum class CursorShape : std::uint8_t { Default, ResizeTop, ResizeBottom, ResizeLeft, ResizeRight, ResizeTopLeft, ResizeTopRight, ResizeBottomLeft, ResizeBottomRight };
+
 // --- Delivered by a backend ---
 
 struct CloseEvent {};
@@ -80,6 +83,7 @@ struct ResizeEvent {
 struct PointerMove {
     Point position;
     bool captured{};  // set by the toolkit: another widget, or this one, holds the pointer
+    bool entered{};   // set by a backend: the pointer just came into the window, so what it looks like is not yet known
 };
 
 enum class ButtonState : std::uint8_t { Pressed, Released };

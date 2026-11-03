@@ -129,7 +129,11 @@ private:
     }
 
     constexpr void on(const PointerMove& event) {
+        // A compositor leaves the pointer's look undefined at each enter, so nothing about it is known now.
+        if (event.entered) cursor_.reset();
         send_to_tree(PointerMove{event.position, root_.capture_active()});
+        // A tree with no frame says nothing, and the pointer must still look like something.
+        if (!cursor_) show_cursor(CursorShape::Default);
     }
 
     constexpr void on(const PointerButton& event) {
@@ -159,7 +163,15 @@ private:
         const WindowRequests asked = root_.take_requests();
         if (asked.move) backend_.begin_move(*asked.move);
         if (asked.resize) backend_.begin_resize(asked.resize->serial, asked.resize->edge);
+        if (asked.cursor) show_cursor(*asked.cursor);
         if (asked.close) on(CloseEvent{});
+    }
+
+    // Goes to the backend only when the shape changes.
+    constexpr void show_cursor(CursorShape shape) {
+        if (cursor_ == shape) return;
+        cursor_ = shape;
+        backend_.set_cursor(shape);
     }
 
     // Reports a failure recorded during delivery, then draws if anything is damaged. Whatever came of it, nothing
@@ -233,6 +245,7 @@ private:
     std::unique_ptr<detail::FrameLedger> painting_;
     std::optional<Error> failure_{};
     std::uint64_t frames_{};
+    std::optional<CursorShape> cursor_{};
     bool have_size_{};
     bool closed_{};
     bool damaged_{};

@@ -327,11 +327,12 @@ struct ResizeRequest {
 struct WindowRequests {
     std::optional<Serial> move;  // the serial of the press that started it
     std::optional<ResizeRequest> resize;
+    std::optional<CursorShape> cursor{};
     bool close{};
 };
 
 // The root of a tree. Callbacks receive it as their "u", and can reach only what is public: widgets by tag,
-// messages, the size and the three requests.
+// messages, the size and the four requests.
 template <Widget... C>
 class Window {
 public:
@@ -378,6 +379,7 @@ public:
         requests_.resize = ResizeRequest{serial, edge};
     }
     constexpr void request_close() noexcept { requests_.close = true; }
+    constexpr void request_cursor(CursorShape shape) noexcept { requests_.cursor = shape; }
 
 private:
     template <class B, class Root, class Monitor>

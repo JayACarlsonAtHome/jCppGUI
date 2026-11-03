@@ -62,12 +62,23 @@ static_assert(wire::button_left == 0x110 && wire::resize_edge_left == XDG_TOPLEV
 static_assert(wire::capability_pointer == WL_SEAT_CAPABILITY_POINTER && wire::capability_keyboard == WL_SEAT_CAPABILITY_KEYBOARD);
 static_assert(wire::keymap_xkb_v1 == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 && wire::keymap_no_keymap == WL_KEYBOARD_KEYMAP_FORMAT_NO_KEYMAP);
 static_assert(wire::format_argb8888 == WL_SHM_FORMAT_ARGB8888);
+static_assert(std::to_underlying(request::CursorShapeManager::Destroy) == WP_CURSOR_SHAPE_MANAGER_V1_DESTROY && std::to_underlying(request::CursorShapeManager::GetPointer) == WP_CURSOR_SHAPE_MANAGER_V1_GET_POINTER && std::to_underlying(request::CursorShapeManager::GetTabletToolV2) == WP_CURSOR_SHAPE_MANAGER_V1_GET_TABLET_TOOL_V2);
+static_assert(std::to_underlying(request::CursorShapeDevice::Destroy) == WP_CURSOR_SHAPE_DEVICE_V1_DESTROY && std::to_underlying(request::CursorShapeDevice::SetShape) == WP_CURSOR_SHAPE_DEVICE_V1_SET_SHAPE);
+static_assert(wire::shape_default == WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT && wire::shape_last_of_version_1 == WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ZOOM_OUT);
+static_assert(wire::shape_e_resize == WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_E_RESIZE && wire::shape_n_resize == WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_N_RESIZE && wire::shape_ne_resize == WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NE_RESIZE && wire::shape_nw_resize == WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NW_RESIZE);
+static_assert(wire::shape_s_resize == WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_S_RESIZE && wire::shape_se_resize == WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SE_RESIZE && wire::shape_sw_resize == WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SW_RESIZE && wire::shape_w_resize == WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_W_RESIZE);
+// Each shape the toolkit can ask for, from the backend's own mapping.
+static_assert(jgui::detail::cursor_shape_value(jgui::CursorShape::Default) == wire::shape_default && jgui::detail::cursor_shape_value(jgui::CursorShape::ResizeTop) == wire::shape_n_resize);
+static_assert(jgui::detail::cursor_shape_value(jgui::CursorShape::ResizeBottom) == wire::shape_s_resize && jgui::detail::cursor_shape_value(jgui::CursorShape::ResizeLeft) == wire::shape_w_resize);
+static_assert(jgui::detail::cursor_shape_value(jgui::CursorShape::ResizeRight) == wire::shape_e_resize && jgui::detail::cursor_shape_value(jgui::CursorShape::ResizeTopLeft) == wire::shape_nw_resize);
+static_assert(jgui::detail::cursor_shape_value(jgui::CursorShape::ResizeTopRight) == wire::shape_ne_resize && jgui::detail::cursor_shape_value(jgui::CursorShape::ResizeBottomLeft) == wire::shape_sw_resize);
+static_assert(jgui::detail::cursor_shape_value(jgui::CursorShape::ResizeBottomRight) == wire::shape_se_resize);
 
 // --- One failing C call at a time ---
 
 enum class Site : std::uint8_t {
     Nothing, Connect, Registry, Sync,
-    BindCompositor, BindShm, BindWmBase, BindSeat,
+    BindCompositor, BindShm, BindWmBase, BindSeat, BindCursorShape, CursorDevice,
     ListenRegistry, ListenSync, ListenWmBase, ListenSeat, ListenPointer, ListenKeyboard, ListenSurface, ListenToplevel, ListenBuffer,
     CursorSurface, WindowSurface, XdgSurface, Toplevel, Pointer, Keyboard, Pool, Buffer, KeyboardState, KeymapContext,
 };
@@ -84,7 +95,8 @@ struct Failing {
     template <class Global>
     [[nodiscard]] static Global* bind(wl_registry* registry, std::uint32_t name, std::uint32_t version) noexcept {
         if constexpr ((Fails == Site::BindCompositor && std::same_as<Global, wl_compositor>) || (Fails == Site::BindShm && std::same_as<Global, wl_shm>) ||
-                      (Fails == Site::BindWmBase && std::same_as<Global, xdg_wm_base>) || (Fails == Site::BindSeat && std::same_as<Global, wl_seat>)) {
+                      (Fails == Site::BindWmBase && std::same_as<Global, xdg_wm_base>) || (Fails == Site::BindSeat && std::same_as<Global, wl_seat>) ||
+                      (Fails == Site::BindCursorShape && std::same_as<Global, wp_cursor_shape_manager_v1>)) {
             static_cast<void>(registry);
             static_cast<void>(name);
             static_cast<void>(version);
@@ -120,6 +132,9 @@ struct Failing {
     [[nodiscard]] static xdg_toplevel* get_toplevel(xdg_surface* surface) noexcept { return Fails == Site::Toplevel ? nullptr : LibWayland::get_toplevel(surface); }
     [[nodiscard]] static wl_pointer* get_pointer(wl_seat* seat) noexcept { return Fails == Site::Pointer ? nullptr : LibWayland::get_pointer(seat); }
     [[nodiscard]] static wl_keyboard* get_keyboard(wl_seat* seat) noexcept { return Fails == Site::Keyboard ? nullptr : LibWayland::get_keyboard(seat); }
+    [[nodiscard]] static wp_cursor_shape_device_v1* get_cursor_device(wp_cursor_shape_manager_v1* manager, wl_pointer* pointer) noexcept {
+        return Fails == Site::CursorDevice ? nullptr : LibWayland::get_cursor_device(manager, pointer);
+    }
     [[nodiscard]] static wl_shm_pool* create_pool(wl_shm* shm, int fd, std::int32_t bytes) noexcept { return Fails == Site::Pool ? nullptr : LibWayland::create_pool(shm, fd, bytes); }
     [[nodiscard]] static wl_buffer* create_buffer(wl_shm_pool* pool, std::int32_t width, std::int32_t height, std::int32_t stride) noexcept {
         return Fails == Site::Buffer ? nullptr : LibWayland::create_buffer(pool, width, height, stride);
@@ -220,6 +235,9 @@ void test_failing_c_calls(jgui_test::Checker& check) {
     refused_with<Site::Pool>(check, "wl_shm_create_pool", system, "wl_shm_create_pool");
     refused_with<Site::Buffer>(check, "wl_shm_pool_create_buffer", system, "wl_shm_pool_create_buffer");
     refused_with<Site::KeyboardState>(check, "xkb_state_new", ErrorCode::Keymap, "keyboard state");
+    // The cursor shape protocol is optional: its failing is no failure, so these run to the compositor going, as the control does.
+    refused_with<Site::BindCursorShape>(check, "bind wp_cursor_shape_manager_v1", ErrorCode::Connect, "connection");
+    refused_with<Site::CursorDevice>(check, "wp_cursor_shape_manager_v1_get_pointer", ErrorCode::Connect, "connection");
 }
 
 // --- The buffer file's system calls ---

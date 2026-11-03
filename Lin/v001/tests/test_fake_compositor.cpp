@@ -89,8 +89,7 @@ void send_valid_keymap(Session& session) {
 }
 
 void pointer_enter(Session& session, std::int32_t x, std::int32_t y) {
-    if (session.pointer() && session.window_surface())
-        session.queue(event::pointer_enter(*session.pointer(), session.next_serial(), *session.window_surface(), Fixed::from_int(x), Fixed::from_int(y)));
+    session.pointer_enter(Fixed::from_int(x), Fixed::from_int(y));
 }
 void pointer_motion(Session& session, std::int32_t x, std::int32_t y) {
     if (session.pointer()) session.queue(event::pointer_motion(*session.pointer(), 0, Fixed::from_int(x), Fixed::from_int(y)));
@@ -572,7 +571,7 @@ struct PointerExtremes {
         session.queue(event::pointer_leave(pointer, session.next_serial(), surface));
         for (const std::int32_t x : {int32_most, int32_least, 0, -1, -256, 256}) {
             for (const std::int32_t y : {int32_most, int32_least, 0, -1}) {
-                session.queue(event::pointer_enter(pointer, session.next_serial(), surface, Fixed{x}, Fixed{y}));
+                session.pointer_enter(Fixed{x}, Fixed{y});
                 session.queue(event::pointer_motion(pointer, uint32_most, Fixed{y}, Fixed{x}));
                 session.queue(event::pointer_button(pointer, session.next_serial(), 0, uint32_most, 9));
                 session.queue(event::pointer_button(pointer, session.next_serial(), 0, 0, 1));
@@ -787,6 +786,214 @@ void start_signal_storm() {
     timer.it_value.tv_usec = 500;
     ::setitimer(ITIMER_REAL, &timer, nullptr);
 }
+
+// --- What the pointer looks like, through the real backend ---
+
+// Every edge and corner, and the middle, in one go with each said twice, because only a change may reach the
+// compositor. Then out and back in, in the same region, which the compositor has forgotten, so the same shape goes
+// again. Then out and back in on a corner, which must be right at once. Each with the new enter's serial.
+struct CursorAllEdges {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr std::array<std::array<std::int32_t, 3>, 10> stops{{
+        {300, 1, static_cast<std::int32_t>(wire::shape_n_resize)},
+        {300, 478, static_cast<std::int32_t>(wire::shape_s_resize)},
+        {1, 240, static_cast<std::int32_t>(wire::shape_w_resize)},
+        {638, 240, static_cast<std::int32_t>(wire::shape_e_resize)},
+        {1, 1, static_cast<std::int32_t>(wire::shape_nw_resize)},
+        {638, 1, static_cast<std::int32_t>(wire::shape_ne_resize)},
+        {1, 478, static_cast<std::int32_t>(wire::shape_sw_resize)},
+        {638, 478, static_cast<std::int32_t>(wire::shape_se_resize)},
+        {300, 300, static_cast<std::int32_t>(wire::shape_default)},
+        {on_title_x, on_title_y + 5, static_cast<std::int32_t>(wire::shape_default)},
+    }};
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, nowhere_x, nowhere_y);
+            for (const auto& stop : stops) {
+                pointer_motion(session, stop[0], stop[1]);
+                pointer_motion(session, stop[0], stop[1]);
+            }
+        } else if (idles == 2) {
+            session.pointer_leave();
+            pointer_enter(session, nowhere_x, nowhere_y);
+        } else if (idles == 3) {
+            session.pointer_leave();
+            pointer_enter(session, 1, 1);
+        } else {
+            session.close_window();
+        }
+    }
+    void finish(Session& session) const {
+        std::vector<std::uint32_t> wanted{wire::shape_default};
+        for (const auto& stop : stops) {
+            const auto shape = static_cast<std::uint32_t>(stop[2]);
+            if (wanted.back() != shape) wanted.push_back(shape);
+        }
+        wanted.push_back(wire::shape_default);
+        wanted.push_back(wire::shape_nw_resize);
+        if (session.shapes() != wanted) session.violation("the shapes that arrived are not those of the regions crossed, once each");
+        if (session.set_cursors() != 0) session.violation("the drawn arrow was used beside the shapes");
+    }
+};
+
+// A compositor without the protocol: the drawn arrow at each enter, nothing else, and no failure.
+struct CursorNoProtocol {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr GlobalSet globals{.cursor_shape = false};
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, on_left_edge_x, on_left_edge_y);
+            pointer_motion(session, nowhere_x, nowhere_y);
+            pointer_motion(session, on_left_edge_x, on_left_edge_y);
+        } else {
+            session.close_window();
+        }
+    }
+    void finish(Session& session) const {
+        if (session.set_cursors() != 1) session.violation("the drawn arrow must be set once, at the enter");
+        if (!session.shapes().empty()) session.violation("a shape was asked for with no such protocol");
+    }
+};
+
+// The seat goes with a shape set: the device goes before the pointer, which the compositor checks, and the window goes on.
+struct CursorSeatRemoved {
+    static constexpr ClientEnd end = ends_clean;
+    std::size_t idles{};
+    bool device_was_there{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, on_left_edge_x, on_left_edge_y);
+        } else if (idles == 2) {
+            device_was_there = session.cursor_device().has_value();
+            if (session.registry()) session.queue(event::global_remove(*session.registry(), seat_name));
+        } else if (idles == 3) {
+            if (session.cursor_device()) session.violation("the device outlived the seat");
+            session.configure(500, 400);
+        } else {
+            session.close_window();
+        }
+    }
+    void finish(Session& session) const {
+        if (!device_was_there) session.violation("there was no device to begin with");
+        if (session.shapes() != std::vector<std::uint32_t>{wire::shape_w_resize}) session.violation("the shape before the seat went did not arrive");
+    }
+};
+
+// The seat loses its pointer and gets a new one. The old device goes first, and the new one belongs to the new pointer.
+struct CursorPointerFlap {
+    static constexpr ClientEnd end = ends_clean;
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.seat()) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, on_left_edge_x, on_left_edge_y);
+        } else if (idles == 2) {
+            session.queue(event::seat_capabilities(*session.seat(), wire::capability_keyboard));
+        } else if (idles == 3) {
+            if (session.cursor_device()) session.violation("the device outlived its pointer");
+            session.queue(event::seat_capabilities(*session.seat(), wire::capability_pointer | wire::capability_keyboard));
+        } else if (idles == 4) {
+            pointer_enter(session, 638, 240);
+        } else {
+            session.close_window();
+        }
+    }
+    void finish(Session& session) const {
+        if (session.shapes() != std::vector<std::uint32_t>{wire::shape_w_resize, wire::shape_e_resize}) session.violation("each pointer did not get its own shape");
+    }
+};
+
+// The compositor takes the protocol away: back to the drawn arrow, at once and at each enter after.
+struct CursorManagerRemoved {
+    static constexpr ClientEnd end = ends_clean;
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, on_left_edge_x, on_left_edge_y);
+        } else if (idles == 2) {
+            if (session.registry()) session.queue(event::global_remove(*session.registry(), cursor_shape_name));
+        } else if (idles == 3) {
+            if (session.cursor_device() || session.cursor_manager()) session.violation("the protocol's objects outlived its global");
+            session.pointer_leave();
+            pointer_enter(session, 638, 240);
+        } else {
+            session.close_window();
+        }
+    }
+    void finish(Session& session) const {
+        if (session.shapes() != std::vector<std::uint32_t>{wire::shape_w_resize}) session.violation("a shape was asked for after the protocol went");
+        if (session.set_cursors() != 2) session.violation("the drawn arrow must come back, at once and at the next enter");
+    }
+};
+
+// The protocol's global comes after the pointer already exists: from then on it is shapes, and not the arrow.
+struct CursorManagerLate {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr GlobalSet globals{.cursor_shape = false};
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, on_left_edge_x, on_left_edge_y);
+        } else if (idles == 2) {
+            if (session.registry()) session.queue(event::global(*session.registry(), cursor_shape_name, "wp_cursor_shape_manager_v1", 1));
+        } else if (idles == 3) {
+            if (!session.cursor_device()) session.violation("no device for the pointer that was already there");
+            session.pointer_leave();
+            pointer_enter(session, 638, 240);
+        } else {
+            session.close_window();
+        }
+    }
+    void finish(Session& session) const {
+        if (session.set_cursors() != 1) session.violation("the arrow must be used only before the protocol came");
+        if (session.shapes() != std::vector<std::uint32_t>{wire::shape_e_resize}) session.violation("no shape after the protocol came");
+    }
+};
+
+// A press held on Help and dragged across the edges: no change, until the release says where it ended.
+struct CursorDuringDrag {
+    static constexpr ClientEnd end = ends_clean;
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, on_help_x, on_help_y);
+            pointer_button(session, wire::button_left, wire::button_pressed);
+            pointer_motion(session, on_left_edge_x, on_left_edge_y);
+            pointer_motion(session, 1, 1);
+            pointer_motion(session, on_left_edge_x, on_left_edge_y);
+        } else if (idles == 2) {
+            if (session.shapes() != std::vector<std::uint32_t>{wire::shape_default}) session.violation("the shape changed during a drag");
+            pointer_button(session, wire::button_left, wire::button_released);
+        } else {
+            session.close_window();
+        }
+    }
+    void finish(Session& session) const {
+        if (session.shapes() != std::vector<std::uint32_t>{wire::shape_default, wire::shape_w_resize}) session.violation("the release over an edge did not bring its shape");
+    }
+};
 
 // --- The redraw monitor, through the real backend ---
 
@@ -1065,6 +1272,13 @@ constexpr auto scenarios = std::tuple{
     Named<MonitorNeverRelease>{"monitor_never_release"},
     Named<MonitorVersusNone>{"monitor_versus_none"},
     Named<MonitorCannotWrite>{"monitor_cannot_write"},
+    Named<CursorAllEdges>{"cursor_all_edges"},
+    Named<CursorNoProtocol>{"cursor_no_protocol"},
+    Named<CursorSeatRemoved>{"cursor_seat_removed"},
+    Named<CursorPointerFlap>{"cursor_pointer_flap"},
+    Named<CursorManagerRemoved>{"cursor_manager_removed"},
+    Named<CursorManagerLate>{"cursor_manager_late"},
+    Named<CursorDuringDrag>{"cursor_during_drag"},
 };
 
 }  // namespace

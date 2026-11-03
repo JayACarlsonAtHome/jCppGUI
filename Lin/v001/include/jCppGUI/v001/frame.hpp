@@ -25,6 +25,22 @@ struct FrameHit {
     ResizeEdge edge{ResizeEdge::TopSide};  // meaningful only for FrameRegion::Edge
 };
 
+// What the pointer looks like over each part of a frame.
+[[nodiscard]] constexpr CursorShape cursor_for(const FrameHit& hit) noexcept {
+    if (hit.region != FrameRegion::Edge) return CursorShape::Default;
+    switch (hit.edge) {
+        case ResizeEdge::TopSide: return CursorShape::ResizeTop;
+        case ResizeEdge::BottomSide: return CursorShape::ResizeBottom;
+        case ResizeEdge::LeftSide: return CursorShape::ResizeLeft;
+        case ResizeEdge::RightSide: return CursorShape::ResizeRight;
+        case ResizeEdge::TopLeft: return CursorShape::ResizeTopLeft;
+        case ResizeEdge::TopRight: return CursorShape::ResizeTopRight;
+        case ResizeEdge::BottomLeft: return CursorShape::ResizeBottomLeft;
+        case ResizeEdge::BottomRight: return CursorShape::ResizeBottomRight;
+        default: return CursorShape::Default;
+    }
+}
+
 // The frame's sizes, as compile-time values of one type. They must be positive, the close box must
 // fit in the title strip, and a corner must be at least as long as the edge is wide.
 template <class M>
@@ -163,12 +179,18 @@ public:
             if (hit(event.position, ui.size()).region == FrameRegion::Close) ui.request_close();
         }
         close_armed_ = false;
-        return detail::deliver(children_, key, ui, event);
+        const bool taken = detail::deliver(children_, key, ui, event);
+        // A drag that just ended may have ended over an edge, with no motion to say so.
+        if (!detail::broadcast(children_, key, ui, HoldsCapture{})) ui.request_cursor(cursor_for(hit(event.position, ui.size())));
+        return taken;
     }
 
     template <class U>
     constexpr bool handle(const TreeKey& key, U& ui, const PointerMove& event) {
-        set_close_hover(hit(event.position, ui.size()).region == FrameRegion::Close);
+        const FrameHit where = hit(event.position, ui.size());
+        set_close_hover(where.region == FrameRegion::Close);
+        // While something holds the pointer the arrow stays as it was, whatever it crosses.
+        if (!event.captured) ui.request_cursor(cursor_for(where));
         if (event.captured || client_rect(ui.size()).contains(event.position))
             return detail::deliver(children_, key, ui, event);
         detail::notify_all(children_, key, ui, PointerLeave{});

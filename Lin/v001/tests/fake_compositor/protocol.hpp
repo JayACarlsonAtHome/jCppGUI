@@ -16,7 +16,7 @@ namespace jgui_test::wire {
 
 // What kind of thing an object is. It decides how its requests are read.
 enum class Kind : std::uint8_t {
-    Display, Registry, Callback, Compositor, Shm, ShmPool, Buffer, Surface, Seat, Pointer, Keyboard, WmBase, XdgSurface, Toplevel,
+    Display, Registry, Callback, Compositor, Shm, ShmPool, Buffer, Surface, Seat, Pointer, Keyboard, WmBase, XdgSurface, Toplevel, CursorShapeManager, CursorShapeDevice,
 };
 
 namespace request {
@@ -33,6 +33,8 @@ enum class Keyboard : std::uint16_t { Release = 0 };
 enum class WmBase : std::uint16_t { Destroy = 0, GetXdgSurface = 2, Pong = 3 };
 enum class XdgSurface : std::uint16_t { Destroy = 0, GetToplevel = 1, SetWindowGeometry = 3, AckConfigure = 4 };
 enum class Toplevel : std::uint16_t { Destroy = 0, SetTitle = 2, SetAppId = 3, Move = 5, Resize = 6, SetMinSize = 8 };
+enum class CursorShapeManager : std::uint16_t { Destroy = 0, GetPointer = 1, GetTabletToolV2 = 2 };
+enum class CursorShapeDevice : std::uint16_t { Destroy = 0, SetShape = 1 };
 }  // namespace request
 
 inline constexpr std::int32_t format_argb8888 = 0;
@@ -44,6 +46,18 @@ inline constexpr std::uint32_t button_left = 0x110;
 inline constexpr std::uint32_t button_pressed = 1;
 inline constexpr std::uint32_t button_released = 0;
 inline constexpr std::uint32_t resize_edge_left = 4;
+// wp_cursor_shape_device_v1.shape: every value a client bound to version 1 may send lies in these two.
+inline constexpr std::uint32_t shape_first = 1;
+inline constexpr std::uint32_t shape_last_of_version_1 = 34;
+inline constexpr std::uint32_t shape_default = 1;
+inline constexpr std::uint32_t shape_e_resize = 18;
+inline constexpr std::uint32_t shape_n_resize = 19;
+inline constexpr std::uint32_t shape_ne_resize = 20;
+inline constexpr std::uint32_t shape_nw_resize = 21;
+inline constexpr std::uint32_t shape_s_resize = 22;
+inline constexpr std::uint32_t shape_se_resize = 23;
+inline constexpr std::uint32_t shape_sw_resize = 24;
+inline constexpr std::uint32_t shape_w_resize = 25;
 
 // Each event as a typed function, giving the bytes to send. A descriptor goes alongside and is not in these.
 namespace event {

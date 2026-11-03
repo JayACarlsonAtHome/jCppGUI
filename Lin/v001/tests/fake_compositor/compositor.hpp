@@ -50,12 +50,14 @@ struct GlobalSet {
     bool wm_base{true};
     bool seat{true};
     std::uint32_t seat_version{5};
+    bool cursor_shape{true};
 };
 
 inline constexpr std::uint32_t compositor_name = 1;
 inline constexpr std::uint32_t shm_name = 2;
 inline constexpr std::uint32_t wm_base_name = 3;
 inline constexpr std::uint32_t seat_name = 4;
+inline constexpr std::uint32_t cursor_shape_name = 5;
 
 // What a script can hear about. Each is its own type, and a script overloads on() for those it wants.
 struct SeatBound {};
@@ -177,6 +179,19 @@ public:
     // Sends a release with no check and no change in what is recorded, for scenarios about lying to the client.
     void send_release_anyway(ObjectId buffer) { queue(event::buffer_release(buffer)); }
 
+    // The pointer comes into the window, and goes. The serial of the latest enter is the one set_shape must use.
+    void pointer_enter(Fixed x, Fixed y) {
+        if (!pointer_ || !window_surface_) return;
+        const std::uint32_t serial = next_serial();
+        enter_serial_ = serial;
+        queue(event::pointer_enter(*pointer_, serial, *window_surface_, x, y));
+    }
+    void pointer_leave() {
+        if (!pointer_ || !window_surface_) return;
+        enter_serial_.reset();
+        queue(event::pointer_leave(*pointer_, next_serial(), *window_surface_));
+    }
+
     // Ends the connection as soon as what is queued has gone. Nothing queued after this is sent.
     void hang_up() noexcept { hang_up_ = true; }
 
@@ -192,6 +207,10 @@ public:
     [[nodiscard]] std::optional<ObjectId> xdg_surface() const noexcept { return xdg_surface_; }
     [[nodiscard]] std::optional<ObjectId> toplevel() const noexcept { return toplevel_; }
     [[nodiscard]] std::size_t commits_with_buffer() const noexcept { return commits_with_buffer_; }
+    [[nodiscard]] std::optional<ObjectId> cursor_manager() const noexcept { return cursor_manager_; }
+    [[nodiscard]] std::optional<ObjectId> cursor_device() const noexcept { return cursor_device_; }
+    [[nodiscard]] const std::vector<std::uint32_t>& shapes() const noexcept { return shapes_; }
+    [[nodiscard]] std::size_t set_cursors() const noexcept { return set_cursors_; }
     [[nodiscard]] std::size_t acks() const noexcept { return acks_; }
     [[nodiscard]] std::size_t buffers_held() const {
         return static_cast<std::size_t>(std::ranges::count_if(buffers_, [](const auto& entry) { return entry.second.held; }));
@@ -317,6 +336,7 @@ public:
         if (globals_.shm) queue(event::global(registry_id, shm_name, "wl_shm", 1));
         if (globals_.wm_base) queue(event::global(registry_id, wm_base_name, "xdg_wm_base", 2));
         if (globals_.seat) queue(event::global(registry_id, seat_name, "wl_seat", globals_.seat_version));
+        if (globals_.cursor_shape) queue(event::global(registry_id, cursor_shape_name, "wp_cursor_shape_manager_v1", 1));
     }
 
     struct PendingFd {
@@ -350,6 +370,11 @@ public:
     std::optional<ObjectId> window_surface_{};
     std::optional<ObjectId> xdg_surface_{};
     std::optional<ObjectId> toplevel_{};
+    std::optional<ObjectId> cursor_manager_{};
+    std::optional<ObjectId> cursor_device_{};
+    std::optional<std::uint32_t> enter_serial_{};
+    std::vector<std::uint32_t> shapes_{};
+    std::size_t set_cursors_{};
     std::string title_{};
     std::string app_id_{};
     bool destroyed_a_held_buffer_{};
@@ -565,6 +590,8 @@ private:
             case Kind::WmBase: on_wm_base(header, reader); return;
             case Kind::XdgSurface: on_xdg_surface(header, reader); return;
             case Kind::Toplevel: on_toplevel(header, reader); return;
+            case Kind::CursorShapeManager: on_cursor_manager(header, reader); return;
+            case Kind::CursorShapeDevice: on_cursor_device(header, reader); return;
             case Kind::Callback:
             default: unexpected("an object with no requests", header.opcode); return;
         }
@@ -619,6 +646,10 @@ private:
         if (bound(seat_name, "wl_seat", session_.globals_.seat_version, Kind::Seat)) {
             session_.seat_ = id;
             tell(SeatBound{});
+            return;
+        }
+        if (bound(cursor_shape_name, "wp_cursor_shape_manager_v1", 1, Kind::CursorShapeManager)) {
+            session_.cursor_manager_ = id;
             return;
         }
         session_.violation("a bind of a global that was not announced: " + interface);
@@ -772,10 +803,13 @@ private:
                 if (!args) return;
                 if (std::get<0>(*args) == 0 || std::get<0>(*args) > session_.serial_) session_.violation("set_cursor with a serial never sent");
                 if (!session_.surfaces_.contains(std::get<1>(*args).value)) session_.violation("set_cursor with a surface that does not exist");
+                if (session_.cursor_device_) session_.violation("set_cursor beside a cursor shape device");
+                ++session_.set_cursors_;
                 return;
             }
             case request::Pointer::Release:
                 if (!session_.arguments<>(reader, "wl_pointer.release")) return;
+                if (session_.cursor_device_) session_.violation("a pointer released before its cursor shape device");
                 session_.pointer_.reset();
                 session_.remove_object(header.object);
                 tell(PointerReleased{});
@@ -793,6 +827,49 @@ private:
         session_.keyboard_.reset();
         session_.remove_object(header.object);
         tell(KeyboardReleased{});
+    }
+
+    void on_cursor_manager(const Header& header, MessageReader& reader) {
+        switch (static_cast<request::CursorShapeManager>(header.opcode)) {
+            case request::CursorShapeManager::GetPointer: {
+                const auto args = session_.arguments<ObjectId, ObjectId>(reader, "wp_cursor_shape_manager_v1.get_pointer");
+                if (!args) return;
+                const auto [device, pointer] = *args;
+                if (!session_.pointer_ || session_.pointer_->value != pointer.value) session_.violation("a cursor shape device for something other than the current pointer");
+                if (session_.cursor_device_) session_.violation("a second cursor shape device");
+                session_.add_object(device, Kind::CursorShapeDevice);
+                session_.cursor_device_ = device;
+                return;
+            }
+            case request::CursorShapeManager::Destroy:
+                if (!session_.arguments<>(reader, "wp_cursor_shape_manager_v1.destroy")) return;
+                if (session_.cursor_device_) session_.violation("a cursor shape manager destroyed before its device");
+                session_.cursor_manager_.reset();
+                session_.remove_object(header.object);
+                return;
+            case request::CursorShapeManager::GetTabletToolV2:
+            default: unexpected("wp_cursor_shape_manager_v1: this client has no tablet", header.opcode); return;
+        }
+    }
+
+    void on_cursor_device(const Header& header, MessageReader& reader) {
+        switch (static_cast<request::CursorShapeDevice>(header.opcode)) {
+            case request::CursorShapeDevice::SetShape: {
+                const auto args = session_.arguments<std::uint32_t, std::uint32_t>(reader, "wp_cursor_shape_device_v1.set_shape");
+                if (!args) return;
+                const auto [serial, shape] = *args;
+                if (session_.enter_serial_ != serial) session_.violation("set_shape with a serial other than the latest enter");
+                if (shape < wire::shape_first || shape > wire::shape_last_of_version_1) session_.violation("an invalid cursor shape: " + std::to_string(shape));
+                session_.shapes_.push_back(shape);
+                return;
+            }
+            case request::CursorShapeDevice::Destroy:
+                if (!session_.arguments<>(reader, "wp_cursor_shape_device_v1.destroy")) return;
+                session_.cursor_device_.reset();
+                session_.remove_object(header.object);
+                return;
+            default: unexpected("wp_cursor_shape_device_v1", header.opcode); return;
+        }
     }
 
     void on_wm_base(const Header& header, MessageReader& reader) {

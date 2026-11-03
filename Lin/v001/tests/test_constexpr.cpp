@@ -826,6 +826,27 @@ consteval bool dynamic_routes_to_the_holder_only() {
 static_assert(dynamic_routes_to_the_holder_only());
 
 constexpr Size small_size_for_text{Width{60}, Height{24}};
+// --- What the pointer looks like ---
+using CursorFrame = WindowFrame<DefaultFrameMetrics>;
+constexpr Size cursor_window{Width{200}, Height{100}};
+[[nodiscard]] consteval CursorShape cursor_at(std::int32_t x, std::int32_t y) {
+    return cursor_for(CursorFrame::hit(Point{Left{x}, Top{y}}, cursor_window));
+}
+static_assert(cursor_at(100, 0) == CursorShape::ResizeTop && cursor_at(100, 3) == CursorShape::ResizeTop);
+static_assert(cursor_at(100, 99) == CursorShape::ResizeBottom && cursor_at(100, 96) == CursorShape::ResizeBottom);
+static_assert(cursor_at(0, 50) == CursorShape::ResizeLeft && cursor_at(3, 50) == CursorShape::ResizeLeft);
+static_assert(cursor_at(199, 50) == CursorShape::ResizeRight && cursor_at(196, 50) == CursorShape::ResizeRight);
+static_assert(cursor_at(0, 0) == CursorShape::ResizeTopLeft && cursor_at(11, 0) == CursorShape::ResizeTopLeft && cursor_at(0, 11) == CursorShape::ResizeTopLeft);
+static_assert(cursor_at(199, 0) == CursorShape::ResizeTopRight && cursor_at(188, 0) == CursorShape::ResizeTopRight);
+static_assert(cursor_at(0, 99) == CursorShape::ResizeBottomLeft && cursor_at(0, 88) == CursorShape::ResizeBottomLeft);
+static_assert(cursor_at(199, 99) == CursorShape::ResizeBottomRight && cursor_at(188, 99) == CursorShape::ResizeBottomRight);
+static_assert(cursor_at(100, 50) == CursorShape::Default, "the middle");
+static_assert(cursor_at(100, 12) == CursorShape::Default, "the title strip");
+static_assert(cursor_at(4, 50) == CursorShape::Default && cursor_at(195, 50) == CursorShape::Default, "just inside the side edges");
+static_assert(cursor_at(100, 4) == CursorShape::Default && cursor_at(100, 95) == CursorShape::Default, "just inside the top and bottom");
+static_assert(cursor_at(-1, 50) == CursorShape::Default && cursor_at(200, 50) == CursorShape::Default && cursor_at(100, 100) == CursorShape::Default, "outside");
+static_assert(cursor_for(FrameHit{FrameRegion::Close}) == CursorShape::Default && cursor_for(FrameHit{FrameRegion::Client}) == CursorShape::Default);
+
 // --- Text that cannot be drawn does not end the program ---
 // Checked text: what a program can make at run time, and where the limits fall.
 static_assert(CheckedText::check("good").has_value() && CheckedText::check("").has_value());
@@ -922,6 +943,78 @@ consteval bool failure_of_the_engine_still_ends_the_run() {
     return !result.has_value() && result.error().code == ErrorCode::Font && core.frames() == 0;
 }
 static_assert(failure_of_the_engine_still_ends_the_run());
+
+// The shape follows the pointer through a real application, and only a change reaches the backend.
+consteval bool cursor_changes_only_when_the_region_does() {
+    ApplicationCore core{HeadlessBackend{cursor_window}, window(window_frame(button<ClickTag>("x", [](auto&) -> void {})))};
+    const BlockShaper shaper;
+    if (!core.process_pending(shaper).has_value()) return false;
+    auto& backend = jgui_test::backend(core);
+    if (backend.cursor_requests() != 0) return false;
+    const auto at = [&](std::int32_t x, std::int32_t y) {
+        backend.inject(PointerMove{Point{Left{x}, Top{y}}});
+        return core.process_pending(shaper).has_value();
+    };
+    const auto expect = [&](std::int32_t x, std::int32_t y, CursorShape shape, std::size_t requests) {
+        return at(x, y) && backend.cursor() == shape && backend.cursor_requests() == requests;
+    };
+    if (!expect(100, 50, CursorShape::Default, 1)) return false;
+    if (!expect(101, 51, CursorShape::Default, 1) || !expect(100, 12, CursorShape::Default, 1)) return false;  // middle to title is no change
+    if (!expect(100, 0, CursorShape::ResizeTop, 2) || !expect(90, 1, CursorShape::ResizeTop, 2)) return false;
+    if (!expect(100, 99, CursorShape::ResizeBottom, 3) || !expect(0, 50, CursorShape::ResizeLeft, 4)) return false;
+    if (!expect(199, 50, CursorShape::ResizeRight, 5) || !expect(0, 0, CursorShape::ResizeTopLeft, 6)) return false;
+    if (!expect(199, 0, CursorShape::ResizeTopRight, 7) || !expect(0, 99, CursorShape::ResizeBottomLeft, 8)) return false;
+    if (!expect(199, 99, CursorShape::ResizeBottomRight, 9) || !expect(100, 50, CursorShape::Default, 10)) return false;
+
+    // An enter says nothing is known, so the same shape goes again. A leave alone sends nothing.
+    backend.inject(PointerLeave{});
+    if (!core.process_pending(shaper).has_value() || backend.cursor_requests() != 10) return false;
+    backend.inject(PointerMove{Point{Left{100}, Top{50}}, false, true});
+    if (!core.process_pending(shaper).has_value() || backend.cursor_requests() != 11) return false;
+    return expect(0, 50, CursorShape::ResizeLeft, 12);
+}
+static_assert(cursor_changes_only_when_the_region_does());
+
+consteval bool cursor_stays_during_a_capture_and_catches_up_after() {
+    ApplicationCore core{HeadlessBackend{cursor_window}, window(window_frame(button<ClickTag>("x", [](auto&) -> void {})))};
+    const BlockShaper shaper;
+    if (!core.process_pending(shaper).has_value()) return false;
+    auto& backend = jgui_test::backend(core);
+    const Point on_button = jgui_test::inside(core.ui().get<ClickTag>().bounds(), 1, 1);
+    const Point on_edge{Left{0}, Top{50}};
+    backend.inject(PointerMove{on_button, false, true});
+    backend.inject(PointerButton{on_button, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(1)});
+    backend.inject(PointerMove{on_edge});
+    backend.inject(PointerMove{Point{Left{0}, Top{0}}});
+    if (!core.process_pending(shaper).has_value() || backend.cursor() != CursorShape::Default || backend.cursor_requests() != 1) return false;
+    backend.inject(PointerButton{on_edge, MouseButton::Left, ButtonState::Released, jgui_test::serial(2)});
+    return core.process_pending(shaper).has_value() && backend.cursor() == CursorShape::ResizeLeft && backend.cursor_requests() == 2;
+}
+static_assert(cursor_stays_during_a_capture_and_catches_up_after());
+
+// A window with no frame says nothing about it, and the pointer must still look like something, once.
+consteval bool cursor_with_no_frame_is_the_arrow() {
+    ApplicationCore core{HeadlessBackend{cursor_window}, window(label<ClickTag>("x"))};
+    const BlockShaper shaper;
+    auto& backend = jgui_test::backend(core);
+    backend.inject(PointerMove{Point{Left{0}, Top{0}}, false, true});
+    backend.inject(PointerMove{Point{Left{1}, Top{1}}});
+    return core.process_pending(shaper).has_value() && backend.cursor() == CursorShape::Default && backend.cursor_requests() == 1;
+}
+static_assert(cursor_with_no_frame_is_the_arrow());
+
+// A request from a callback goes the same way, and is carried out after the delivery.
+consteval bool callback_can_ask_for_a_cursor() {
+    ApplicationCore core{HeadlessBackend{cursor_window}, window(button<ClickTag>("x", [](auto& u) -> void { u.request_cursor(CursorShape::ResizeTop); }))};
+    const BlockShaper shaper;
+    if (!core.process_pending(shaper).has_value()) return false;
+    const Point on_button = jgui_test::inside(core.ui().get<ClickTag>().bounds(), 1, 1);
+    auto& backend = jgui_test::backend(core);
+    backend.inject(PointerButton{on_button, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(1)});
+    backend.inject(PointerButton{on_button, MouseButton::Left, ButtonState::Released, jgui_test::serial(2)});
+    return core.process_pending(shaper).has_value() && backend.cursor() == CursorShape::ResizeTop;
+}
+static_assert(callback_can_ask_for_a_cursor());
 
 // --- The real demo tree and application logic, from injected events to pixels, during compilation ---
 constexpr Size small_window{Width{120}, Height{60}};

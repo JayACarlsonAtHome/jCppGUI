@@ -69,6 +69,11 @@ public:
         resize_edge_ = edge;
     }
 
+    constexpr void set_cursor(CursorShape shape) noexcept {
+        cursor_ = shape;
+        ++cursor_requests_;
+    }
+
     // --- For tests ---
     constexpr void set_display_holding(bool holding) noexcept { display_holding_ = holding; }
     [[nodiscard]] constexpr std::uint32_t pixel(Point p) const {
@@ -79,6 +84,8 @@ public:
     [[nodiscard]] constexpr std::optional<Serial> move_serial() const noexcept { return move_serial_; }
     [[nodiscard]] constexpr std::optional<Serial> resize_serial() const noexcept { return resize_serial_; }
     [[nodiscard]] constexpr std::optional<ResizeEdge> resize_edge() const noexcept { return resize_edge_; }
+    [[nodiscard]] constexpr std::optional<CursorShape> cursor() const noexcept { return cursor_; }
+    [[nodiscard]] constexpr std::size_t cursor_requests() const noexcept { return cursor_requests_; }
 
 private:
     BackendEventQueue events_{};
@@ -90,6 +97,8 @@ private:
     std::optional<Serial> move_serial_{};
     std::optional<Serial> resize_serial_{};
     std::optional<ResizeEdge> resize_edge_{};
+    std::optional<CursorShape> cursor_{};
+    std::size_t cursor_requests_{};
 };
 
 static_assert(Backend<HeadlessBackend>);

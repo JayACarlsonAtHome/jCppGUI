@@ -32,6 +32,8 @@ ack before a commit, no write to a held buffer, no attach of a held buffer, ids,
 - **Keymaps.** A pipe, a directory, a short file, 1 MiB with no terminator, size 0xFFFFFFFF, format 7, and none at all. A valid
   one followed by extreme keys, modifiers and states.
 - **The pointer.** `wl_fixed` extremes, bogus buttons and states, a leave with no enter, a burst of motion, and events of later versions.
+- **The pointer's look.** `cursor-shape-v1` over all 8 edges and the middle, with each request's serial, device and shape value held to the protocol, only changes
+  sent, and re-entering on a corner. A compositor without it, the global going away, the seat or the pointer going with a shape set, and a drag across the edges.
 - **The connection.** 70,000 events at once, a sudden disconnect at each stage, part of a message and then a hang-up, a size that
   is too small, too large or not aligned, an unknown opcode or object, arguments too short, a string with no terminator, a
   keymap with no descriptor, a protocol error on an object (`EPROTO`, which had never run) and on `wl_display`.
@@ -58,6 +60,8 @@ time, and a system crash may lose more than that: see `docs/Architecture.md`.
 - **Interactive behaviour in a real session has been checked only by hand, if at all.** Clicking, dragging, resizing and
   closing depend on the compositor. No test presses a real pointer. The test compositor only shows the toolkit's side of them,
   against what this project understood the protocol to be.
+- **No test has seen a resize cursor on a real screen.** GNOME Shell's library names `wp_cursor_shape_manager_v1`, but what a cursor looks like, and that the
+  compositor accepts these requests during real pointer motion, can only be checked by hand. The test compositor enforces what this project read in the protocol.
 - **Against a real compositor, the only automatic check is `demo --smoke`,** which is skipped with no `WAYLAND_DISPLAY`. The keymap rule
   was checked against one real keymap, from GNOME. Others have not been tried.
 - **Paths still with no real test:**
@@ -87,7 +91,8 @@ time, and a system crash may lose more than that: see `docs/Architecture.md`.
 - Layout is a simple flow, not a layout manager. Overlapping widgets are possible but untested.
 - A window's side is at most 8192 pixels, and frames wait if the compositor holds too much.
 - Scale is fixed at 1, so the window is upscaled on HiDPI outputs.
-- The frame has no maximize or minimize control, and the resize edges show no resize cursor.
+- The frame has no maximize or minimize control.
+- A compositor without `cursor-shape-v1` gets no resize cursors, only the drawn arrow.
 - No key repeat, popups, drop-down menus, clipboard, drag and drop, themes or accessibility.
 - No X11, Windows or macOS, and no C++26 or modules.
 - No CI.

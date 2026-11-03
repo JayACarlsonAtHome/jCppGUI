@@ -142,11 +142,11 @@ check "C-style cast" '\((const\s+)?(u?int(8|16|32|64)_t|std::u?int(8|16|32|64)_t
 in_raw() { grep -nP -- "$1" "${sources[@]}"; }
 report "std::variant without a comment" "$(in_raw 'std::variant' | grep -v '//')"
 report "a quoted include that is not .hpp, so a checked file could pull in an unchecked one" \
-  "$(in_raw '^\s*#\s*include\s*"[^"]*"' | grep -vP '\.hpp"' | grep -vP '^src/wayland/\w+\.(cpp|hpp):\d+:\s*#\s*include\s*"xdg-shell-client-protocol\.h"')"
+  "$(in_raw '^\s*#\s*include\s*"[^"]*"' | grep -vP '\.hpp"' | grep -vP '^src/wayland/\w+\.(cpp|hpp):\d+:\s*#\s*include\s*"(xdg-shell|cursor-shape-v1)-client-protocol\.h"')"
 report "an include through a macro" "$(in_raw '^\s*#\s*include\s+[A-Za-z_]' | grep -v '^src/text/text\.cpp:')"
 report "an embedded file" "$(in_raw '^\s*#\s*embed\b|__has_embed')"
 report "Wayland or xkb header above the backend line" \
-  "$(in_raw '^\s*#\s*include.*(wayland-client|xkbcommon|xdg-shell)' | grep -vP '^(src/wayland/|tests/test_untrusted\.cpp:|tests/test_injection\.cpp:)')"
+  "$(in_raw '^\s*#\s*include.*(wayland-client|xkbcommon|xdg-shell|cursor-shape)' | grep -vP '^(src/wayland/|tests/test_untrusted\.cpp:|tests/test_injection\.cpp:)')"
 report "libwayland-server, which brings untyped callbacks in" "$(in_raw '^\s*#\s*include.*wayland-server')"
 report "libwayland in the test compositor, which speaks the wire protocol by itself" "$(in_raw "^\\s*#\\s*include.*wayland-" | grep "^tests/fake_compositor/")"
 report "font library header outside src/text" \

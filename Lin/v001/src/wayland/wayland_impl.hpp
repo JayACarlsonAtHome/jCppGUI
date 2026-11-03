@@ -36,6 +36,7 @@
 #include "trampoline.hpp"
 #include "untrusted.hpp"
 #include "wire_access.hpp"
+#include "cursor-shape-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 
 namespace jgui::inline v001::detail {
@@ -48,6 +49,7 @@ constexpr std::uint32_t compositor_version = 4;  // for wl_surface.damage_buffer
 constexpr std::uint32_t shm_version = 1;
 constexpr std::uint32_t wm_base_version = 2;
 constexpr std::uint32_t seat_version = 5;  // for release requests and pointer frames
+constexpr std::uint32_t cursor_shape_version = 1;  // every shape used here is in version 1
 
 constexpr std::size_t max_wire_string_bytes = 4096;  // libwayland refuses a longer message
 constexpr std::size_t max_frame_buffers = 4;
@@ -77,6 +79,8 @@ using Surface = CResource<wl_surface, wl_surface_destroy>;
 using XdgSurface = CResource<xdg_surface, xdg_surface_destroy>;
 using Toplevel = CResource<xdg_toplevel, xdg_toplevel_destroy>;
 using SyncCallback = CResource<wl_callback, wl_callback_destroy>;
+using CursorShapeManager = CResource<wp_cursor_shape_manager_v1, wp_cursor_shape_manager_v1_destroy>;
+using CursorShapeDevice = CResource<wp_cursor_shape_device_v1, wp_cursor_shape_device_v1_destroy>;
 
 // The calls into the C libraries that can fail by giving back nothing, or by refusing a listener. They are a template
 // parameter only so that a test can make one of them fail: production always uses this one, and nothing here
@@ -98,6 +102,9 @@ struct LibWayland {
     [[nodiscard]] static xdg_toplevel* get_toplevel(xdg_surface* surface) noexcept { return xdg_surface_get_toplevel(surface); }
     [[nodiscard]] static wl_pointer* get_pointer(wl_seat* seat) noexcept { return wl_seat_get_pointer(seat); }
     [[nodiscard]] static wl_keyboard* get_keyboard(wl_seat* seat) noexcept { return wl_seat_get_keyboard(seat); }
+    [[nodiscard]] static wp_cursor_shape_device_v1* get_cursor_device(wp_cursor_shape_manager_v1* manager, wl_pointer* pointer) noexcept {
+        return wp_cursor_shape_manager_v1_get_pointer(manager, pointer);
+    }
     [[nodiscard]] static wl_shm_pool* create_pool(wl_shm* shm, int fd, std::int32_t bytes) noexcept { return wl_shm_create_pool(shm, fd, bytes); }
     [[nodiscard]] static wl_buffer* create_buffer(wl_shm_pool* pool, std::int32_t width, std::int32_t height, std::int32_t stride) noexcept {
         return wl_shm_pool_create_buffer(pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
@@ -195,6 +202,21 @@ static_assert(cursor_colour('X') == 0xFF000000U && cursor_colour('.') == 0xFFFFF
     }
 }
 
+[[nodiscard]] constexpr std::uint32_t cursor_shape_value(CursorShape shape) noexcept {
+    switch (shape) {
+        case CursorShape::ResizeTop: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_N_RESIZE;
+        case CursorShape::ResizeBottom: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_S_RESIZE;
+        case CursorShape::ResizeLeft: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_W_RESIZE;
+        case CursorShape::ResizeRight: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_E_RESIZE;
+        case CursorShape::ResizeTopLeft: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NW_RESIZE;
+        case CursorShape::ResizeTopRight: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NE_RESIZE;
+        case CursorShape::ResizeBottomLeft: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SW_RESIZE;
+        case CursorShape::ResizeBottomRight: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SE_RESIZE;
+        case CursorShape::Default:
+        default: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+    }
+}
+
 template <>
 struct GlobalInterface<wl_compositor> {
     static constexpr const wl_interface* value = &wl_compositor_interface;
@@ -210,6 +232,11 @@ struct GlobalInterface<xdg_wm_base> {
 template <>
 struct GlobalInterface<wl_seat> {
     static constexpr const wl_interface* value = &wl_seat_interface;
+};
+
+template <>
+struct GlobalInterface<wp_cursor_shape_manager_v1> {
+    static constexpr const wl_interface* value = &wp_cursor_shape_manager_v1_interface;
 };
 
 // Whether reading the display may sleep: never, only while nothing is queued for the toolkit, or until something comes.
@@ -240,7 +267,10 @@ struct BasicWaylandImpl {
     void on_seat_capabilities(wl_seat* object, std::uint32_t capabilities) noexcept;
     void on_seat_name(wl_seat*, const char*) noexcept {}
     void on_pointer_enter(wl_pointer* object, std::uint32_t serial, wl_surface*, wl_fixed_t x, wl_fixed_t y) noexcept;
-    void on_pointer_leave(wl_pointer*, std::uint32_t, wl_surface*) noexcept { record(PointerLeave{}); }
+    void on_pointer_leave(wl_pointer*, std::uint32_t, wl_surface*) noexcept {
+        enter_serial.reset();
+        record(PointerLeave{});
+    }
     void on_pointer_motion(wl_pointer*, std::uint32_t, wl_fixed_t x, wl_fixed_t y) noexcept;
     void on_pointer_button(wl_pointer*, std::uint32_t serial, std::uint32_t, std::uint32_t button,
                            std::uint32_t state) noexcept;
@@ -265,6 +295,9 @@ struct BasicWaylandImpl {
     [[nodiscard]] std::expected<void, Error> pump(PumpWait wait);
     [[nodiscard]] std::expected<void, Error> roundtrip();
     [[nodiscard]] std::expected<void, Error> create_cursor();
+    void make_cursor_device() noexcept;
+    void forget_pointer() noexcept;
+    void set_cursor_shape(CursorShape shape) noexcept;
     [[nodiscard]] std::optional<Error> take_failure() noexcept { return std::exchange(failure, std::nullopt); }
     [[nodiscard]] Error connection_error() const;
 
@@ -312,7 +345,13 @@ struct BasicWaylandImpl {
     WmBase wm_base{};
     Seat seat{};
     std::uint32_t seat_name{};
+    // Optional, so the drawn arrow below stays for a compositor without it. A device goes before the pointer it belongs
+    // to, and the manager after both, which this order gives.
+    CursorShapeManager cursor_shapes{};
+    std::uint32_t cursor_shapes_name{};
     PointerObject pointer{};
+    CursorShapeDevice cursor_device{};
+    std::optional<std::uint32_t> enter_serial{};
     KeyboardObject keyboard{};
     Surface surface{};
     XdgSurface xdg{};
@@ -431,13 +470,43 @@ void BasicWaylandImpl<Api>::on_global(wl_registry* object, std::uint32_t name, c
         seat_name = name;
         if (!Api::template listen<wl_seat_add_listener>(seat.get(), Listeners<Api>::seat, *this))
             fail(ErrorCode::System, "the wl_seat listener was refused");
+    } else if (kind == wp_cursor_shape_manager_v1_interface.name && !cursor_shapes) {
+        // A null here only means no shapes: this protocol is optional, so the drawn arrow goes on being used.
+        cursor_shapes.reset(Api::template bind<wp_cursor_shape_manager_v1>(object, name, cursor_shape_version));
+        cursor_shapes_name = name;
+        make_cursor_device();
     }
+}
+
+// Needs both the manager and the pointer, which can arrive in either order.
+template <class Api>
+void BasicWaylandImpl<Api>::make_cursor_device() noexcept {
+    if (cursor_shapes && pointer && !cursor_device) cursor_device.reset(Api::get_cursor_device(cursor_shapes.get(), pointer.get()));
+}
+
+template <class Api>
+void BasicWaylandImpl<Api>::forget_pointer() noexcept {
+    cursor_device.reset();
+    pointer.reset();
+    enter_serial.reset();
+}
+
+// Only ever with the serial of the latest enter, as the protocol wants, and so only while the pointer is here.
+template <class Api>
+void BasicWaylandImpl<Api>::set_cursor_shape(CursorShape shape) noexcept {
+    if (cursor_device && enter_serial) wp_cursor_shape_device_v1_set_shape(cursor_device.get(), *enter_serial, cursor_shape_value(shape));
 }
 
 template <class Api>
 void BasicWaylandImpl<Api>::on_global_remove(wl_registry*, std::uint32_t name) noexcept {
+    if (cursor_shapes && name == cursor_shapes_name) {
+        cursor_device.reset();
+        cursor_shapes.reset();
+        // No shape can be asked for now, so a pointer already here goes back to the drawn arrow.
+        if (pointer && enter_serial && cursor_surface) wl_pointer_set_cursor(pointer.get(), *enter_serial, cursor_surface.get(), 0, 0);
+    }
     if (seat && name == seat_name) {
-        pointer.reset();
+        forget_pointer();
         keyboard.reset();
         xkb_state_object.reset();
         xkb_keymap_object.reset();
@@ -469,9 +538,11 @@ void BasicWaylandImpl<Api>::on_seat_capabilities(wl_seat* object, std::uint32_t 
             fail(ErrorCode::System, "wl_pointer could not be created");
         } else if (!Api::template listen<wl_pointer_add_listener>(pointer.get(), Listeners<Api>::pointer, *this)) {
             fail(ErrorCode::System, "the wl_pointer listener was refused");
+        } else {
+            make_cursor_device();
         }
     } else if (!has_pointer && pointer) {
-        pointer.reset();
+        forget_pointer();
         record(PointerLeave{});
     }
     if (has_keyboard && !keyboard) {
@@ -491,9 +562,11 @@ void BasicWaylandImpl<Api>::on_seat_capabilities(wl_seat* object, std::uint32_t 
 template <class Api>
 void BasicWaylandImpl<Api>::on_pointer_enter(wl_pointer* object, std::uint32_t serial, wl_surface*, wl_fixed_t x,
                                    wl_fixed_t y) noexcept {
-    if (cursor_surface) wl_pointer_set_cursor(object, serial, cursor_surface.get(), 0, 0);
+    enter_serial = serial;
+    // With shapes, the toolkit says which one as soon as it has seen where this is. Without, it is always the arrow.
+    if (!cursor_device && cursor_surface) wl_pointer_set_cursor(object, serial, cursor_surface.get(), 0, 0);
     pointer_position = Point{Left{wl_fixed_to_int(x)}, Top{wl_fixed_to_int(y)}};
-    record(PointerMove{pointer_position});
+    record(PointerMove{pointer_position, false, true});
 }
 
 template <class Api>

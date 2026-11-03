@@ -175,7 +175,7 @@ see `SECURITY.md`.
 
 ## What a callback can reach
 
-A callback receives the `Window`, and can use only `get<Tag>()`, `send<Message>()`, `size()` and the three requests.
+A callback receives the `Window`, and can use only `get<Tag>()`, `send<Message>()`, `size()` and the four requests.
 
 - **The tree's machinery is private.** `dispatch`, `notify`, `clear_damage`, `layout`, `paint`, `damaged`, `capture_active`,
   `set_size` and `take_requests` are private, with `ApplicationCore` as a friend, so an attempt does not compile. Neither
@@ -276,8 +276,7 @@ allowlist, which also rules out shebangs. Scripts run as `bash bsir.sh` and
 ## The window frame
 
 GNOME does not draw title bars for Wayland clients, so the toolkit draws a minimal frame: a title
-strip with no text, a close box, and resize edges and corners. It also draws its own pointer arrow,
-because the protocol leaves the pointer's look undefined until a client sets one.
+strip with no text, a close box, and resize edges and corners.
 
 `WindowFrame<Metrics, Children...>` is a widget like any other, and it holds the window's content the
 way `MenuBar` holds its buttons:
@@ -296,11 +295,29 @@ jgui::window(jgui::window_frame<MyMetrics>(jgui::menu_bar(...), content));
   paints on top. The frame's own close-box state survives the pointer crossing a widget, which a
   sibling could not do, because the tree tells a sibling below the widget that the pointer left.
 - **Reaching the window system.** A widget cannot see the backend. It asks the `Window` it receives as
-  `ui`: `request_move(serial)`, `request_resize(serial, edge)` or `request_close()`. These are typed
+  `ui`: `request_move(serial)`, `request_resize(serial, edge)`, `request_cursor(shape)` or `request_close()`. These are typed
   fields, and `ApplicationCore` carries them out through the backend when the dispatch returns, in the
   same call that delivered the press. `PointerPress` carries the press's serial for this. Close goes
   through the same `on(CloseEvent)` as a close from the compositor.
 - **Size.** The `Window` holds the validated window size, set as soon as a resize arrives, so a press
   queued behind a resize is judged at the new size even before the next layout.
 - **A window with no frame** also works, with no chrome. Clearing the focus on a press is the frame's
-  job, so such a window does not do it.
+  job, so such a window does not do it, and its pointer is always the plain arrow.
+
+### What the pointer looks like
+
+The protocol leaves the pointer's look undefined at each enter, so a client must say. `CursorShape` is a typed request, and `set_cursor` is
+part of the `Backend` concept, so all of this runs headless and in `static_assert`.
+
+- **The shape comes from the frame's own hit test.** `cursor_for` maps each of the 8 `ResizeEdge` values to its shape and everything else to
+  the arrow. The frame asks on each motion, and on an enter, which a backend delivers as a `PointerMove` marked `entered`.
+- **Only a change is sent.** `ApplicationCore` remembers the shape it last asked for, and forgets it at each enter.
+- **Nothing changes while a press is captured,** such as a drag off the Help button. When that press is released, the frame asks for what is under the
+  pointer then, because a drag can end over an edge with no motion to say so.
+- **On Wayland it uses `cursor-shape-v1`, as an optional global.** The compositor draws the user's own themed cursors, so this process parses no XCursor file and
+  does not use libwayland-cursor, which maps files in. Each request carries the serial of the latest enter. The device goes before its pointer on
+  teardown, on losing the seat and on losing the pointer. The protocol has no events, so it needs no listener and no new untyped pointer. Its generated tables name
+  the tablet protocol's tool, so that protocol's tables are built too, and nothing else of it is used.
+- **A compositor without it gets no resize cursors.** It keeps the small arrow we draw, set at each enter, over the whole window. If the global
+  goes away while running, or binding it or making the device fails, it is the same: none of those is an error.
+- A window that is resized under a still pointer shows the old shape until the next motion.

@@ -35,6 +35,8 @@ constexpr ObjectId toplevel{9};
 constexpr ObjectId pool{10};
 constexpr ObjectId buffer{11};
 constexpr ObjectId pointer{13};
+constexpr ObjectId cursor_manager{14};
+constexpr ObjectId cursor_device{15};
 
 // Sends hand-made requests through one end of a socket pair.
 class Client {
@@ -74,6 +76,13 @@ public:
         request(MessageWriter{surface, 9}.i32(0).i32(0).i32(2).i32(2).finish());
         return request(MessageWriter{surface, 6}.finish());
     }
+    // A pointer, and a cursor shape device for it, on top of a window.
+    Client& up_to_cursor_device() {
+        up_to_window().request(MessageWriter{seat, 0}.object(pointer).finish());
+        bind(cursor_shape_name, "wp_cursor_shape_manager_v1", 1, cursor_manager);
+        return request(MessageWriter{cursor_manager, 1}.object(cursor_device).object(pointer).finish());
+    }
+    Client& set_shape(std::uint32_t serial, std::uint32_t shape) { return request(MessageWriter{cursor_device, 1}.u32(serial).u32(shape).finish()); }
     Client& ack(std::uint32_t serial) { return request(MessageWriter{xdg_surface, 4}.u32(serial).finish()); }
     void finish() { socket_ = UniqueFd{}; }
     [[nodiscard]] bool failed() const noexcept { return failed_; }
@@ -98,6 +107,26 @@ struct WritesWhileHeld {
         const std::array<std::uint32_t, 1> changed{0x12345678U};
         static_cast<void>(jgui::detail::write_at<std::uint32_t>(session.pool(0).file.get(), changed, 0));
         session.release(commit.buffer);
+    }
+};
+
+// The window as PlainScript has it, with the pointer coming in as soon as there is one: its serial comes out as 2.
+struct EntersAtOnce {
+    void on(Session& session, const SurfaceReady&) { static_cast<void>(session.configure(2, 2)); }
+    void on(Session&, const BufferCommitted&) {}
+    void on(Session&, const SeatBound&) {}
+    void on(Session& session, const PointerCreated&) { session.pointer_enter(wire::Fixed::from_int(1), wire::Fixed::from_int(1)); }
+};
+constexpr std::uint32_t enter_serial = 2;
+
+// The same, and the pointer has left again by the time anything is asked of it.
+struct EntersAndLeaves {
+    void on(Session& session, const SurfaceReady&) { static_cast<void>(session.configure(2, 2)); }
+    void on(Session&, const BufferCommitted&) {}
+    void on(Session&, const SeatBound&) {}
+    void on(Session& session, const PointerCreated&) {
+        session.pointer_enter(wire::Fixed::from_int(1), wire::Fixed::from_int(1));
+        session.pointer_leave();
     }
 };
 
@@ -225,5 +254,38 @@ int main() {
         c.request(MessageWriter{pointer, 0}.u32(99).object(surface).i32(0).i32(0).finish());
     });
     must_see(check, "already committed", [](Client& c) { c.up_to_window().request(MessageWriter{compositor_object, 0}.object(ObjectId{50}).finish()).request(MessageWriter{ObjectId{50}, 6}.finish()).request(MessageWriter{wm_base, 2}.object(ObjectId{51}).object(ObjectId{50}).finish()); });
+
+    // --- The cursor shape protocol ---
+    const auto cursor_clean = violations_from<EntersAtOnce>([](Client& c) {
+        c.up_to_cursor_device().set_shape(enter_serial, wire::shape_default).set_shape(enter_serial, wire::shape_last_of_version_1);
+        c.request(MessageWriter{cursor_device, 0}.finish()).request(MessageWriter{pointer, 1}.finish()).request(MessageWriter{cursor_manager, 0}.finish());
+    });
+    for (const std::string& violation : cursor_clean) std::cerr << "unexpected: " << violation << '\n';
+    check(cursor_clean.empty(), "a correct client of the cursor shape protocol is not accused of anything");
+    must_see<EntersAtOnce>(check, "other than the latest enter", [](Client& c) { c.up_to_cursor_device().set_shape(enter_serial + 1, wire::shape_default); });
+    must_see<EntersAtOnce>(check, "other than the latest enter", [](Client& c) { c.up_to_cursor_device().set_shape(1, wire::shape_default); });
+    must_see(check, "other than the latest enter", [](Client& c) { c.up_to_cursor_device().set_shape(1, wire::shape_default); });
+    must_see<EntersAndLeaves>(check, "other than the latest enter", [](Client& c) { c.up_to_cursor_device().set_shape(enter_serial, wire::shape_default); });
+    must_see<EntersAtOnce>(check, "invalid cursor shape", [](Client& c) { c.up_to_cursor_device().set_shape(enter_serial, 0); });
+    must_see<EntersAtOnce>(check, "invalid cursor shape", [](Client& c) { c.up_to_cursor_device().set_shape(enter_serial, wire::shape_last_of_version_1 + 1); });
+    must_see(check, "other than the current pointer", [](Client& c) {
+        c.up_to_window().request(MessageWriter{seat, 0}.object(pointer).finish());
+        c.bind(cursor_shape_name, "wp_cursor_shape_manager_v1", 1, cursor_manager);
+        c.request(MessageWriter{cursor_manager, 1}.object(cursor_device).object(surface).finish());
+    });
+    must_see(check, "other than the current pointer", [](Client& c) {
+        c.up_to_window();
+        c.bind(cursor_shape_name, "wp_cursor_shape_manager_v1", 1, cursor_manager);
+        c.request(MessageWriter{cursor_manager, 1}.object(cursor_device).object(pointer).finish());
+    });
+    must_see(check, "second cursor shape device", [](Client& c) { c.up_to_cursor_device().request(MessageWriter{cursor_manager, 1}.object(ObjectId{50}).object(pointer).finish()); });
+    must_see(check, "released before its cursor shape device", [](Client& c) { c.up_to_cursor_device().request(MessageWriter{pointer, 1}.finish()); });
+    must_see(check, "destroyed before its device", [](Client& c) { c.up_to_cursor_device().request(MessageWriter{cursor_manager, 0}.finish()); });
+    must_see<EntersAtOnce>(check, "beside a cursor shape device", [](Client& c) { c.up_to_cursor_device().request(MessageWriter{pointer, 0}.u32(enter_serial).object(surface).i32(0).i32(0).finish()); });
+    must_see(check, "no tablet", [](Client& c) { c.up_to_cursor_device().request(MessageWriter{cursor_manager, 2}.object(ObjectId{50}).object(pointer).finish()); });
+    must_see(check, "above the version", [](Client& c) {
+        c.request(MessageWriter{wire::display_id, 1}.object(registry).finish());
+        c.bind(cursor_shape_name, "wp_cursor_shape_manager_v1", 2, cursor_manager);
+    });
     return check.finish();
 }

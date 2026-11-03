@@ -50,6 +50,7 @@ public:
     std::expected<void, Error> sync();
     void begin_move(Serial serial) noexcept;
     void begin_resize(Serial serial, ResizeEdge edge) noexcept;
+    void set_cursor(CursorShape shape) noexcept;
 
 private:
     WaylandBackend(std::unique_ptr<BackendEventQueue> events,

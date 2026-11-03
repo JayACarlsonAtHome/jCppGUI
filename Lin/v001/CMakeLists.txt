@@ -101,6 +101,22 @@ target_compile_options(jgui_warnings INTERFACE ${JGUI_WARNING_FLAGS})
 set(XDG_SHELL_XML ${WAYLAND_PROTOCOLS_DIR}/stable/xdg-shell/xdg-shell.xml)
 set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${GENERATED_DIR})
+# cursor-shape is optional at run time, and it names the tablet protocol's tool in its tables, so that protocol's tables are
+# generated too. Nothing here uses a tablet. This is why neither libwayland-cursor nor any cursor file is needed.
+set(CURSOR_SHAPE_XML ${WAYLAND_PROTOCOLS_DIR}/staging/cursor-shape/cursor-shape-v1.xml)
+set(TABLET_XML ${WAYLAND_PROTOCOLS_DIR}/stable/tablet/tablet-v2.xml)
+add_custom_command(
+  OUTPUT ${GENERATED_DIR}/cursor-shape-v1-client-protocol.h
+  COMMAND ${WAYLAND_SCANNER} client-header ${CURSOR_SHAPE_XML} ${GENERATED_DIR}/cursor-shape-v1-client-protocol.h
+  DEPENDS ${CURSOR_SHAPE_XML} VERBATIM)
+add_custom_command(
+  OUTPUT ${GENERATED_DIR}/cursor-shape-v1-protocol.c
+  COMMAND ${WAYLAND_SCANNER} private-code ${CURSOR_SHAPE_XML} ${GENERATED_DIR}/cursor-shape-v1-protocol.c
+  DEPENDS ${CURSOR_SHAPE_XML} VERBATIM)
+add_custom_command(
+  OUTPUT ${GENERATED_DIR}/tablet-v2-protocol.c
+  COMMAND ${WAYLAND_SCANNER} private-code ${TABLET_XML} ${GENERATED_DIR}/tablet-v2-protocol.c
+  DEPENDS ${TABLET_XML} VERBATIM)
 add_custom_command(
   OUTPUT ${GENERATED_DIR}/xdg-shell-client-protocol.h
   COMMAND ${WAYLAND_SCANNER} client-header ${XDG_SHELL_XML} ${GENERATED_DIR}/xdg-shell-client-protocol.h
@@ -113,7 +129,10 @@ add_custom_command(
 # The generated glue is compiled without our warning flags.
 add_library(jgui_xdg_glue STATIC
   ${GENERATED_DIR}/xdg-shell-protocol.c
-  ${GENERATED_DIR}/xdg-shell-client-protocol.h)
+  ${GENERATED_DIR}/xdg-shell-client-protocol.h
+  ${GENERATED_DIR}/cursor-shape-v1-protocol.c
+  ${GENERATED_DIR}/cursor-shape-v1-client-protocol.h
+  ${GENERATED_DIR}/tablet-v2-protocol.c)
 target_include_directories(jgui_xdg_glue SYSTEM PUBLIC ${GENERATED_DIR})
 target_link_libraries(jgui_xdg_glue PUBLIC PkgConfig::WAYLAND_CLIENT PRIVATE jgui_hardening)
 
@@ -215,7 +234,8 @@ set(JGUI_FAKE_SCENARIOS
   truncated_then_gone truncated_during_connect truncated_during_first_frame
   arguments_too_short string_not_terminated keymap_with_no_descriptor
   protocol_error_on_surface protocol_error_on_display protocol_error_on_nothing signal_storm
-  monitor_real_frames monitor_never_release monitor_versus_none monitor_cannot_write)
+  monitor_real_frames monitor_never_release monitor_versus_none monitor_cannot_write
+  cursor_all_edges cursor_no_protocol cursor_seat_removed cursor_pointer_flap cursor_manager_removed cursor_manager_late cursor_during_drag)
 foreach(scenario ${JGUI_FAKE_SCENARIOS})
   add_test(NAME fake_${scenario} COMMAND test_fake_compositor ${scenario})
   set_tests_properties(fake_${scenario} PROPERTIES TIMEOUT 300

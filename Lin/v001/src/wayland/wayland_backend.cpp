@@ -129,4 +129,6 @@ void WaylandBackend::begin_resize(Serial serial, ResizeEdge edge) noexcept {
         xdg_toplevel_resize(impl_->core.toplevel.get(), impl_->core.seat.get(), detail::WireAccess::number(serial), detail::resize_edge_value(edge));
 }
 
+void WaylandBackend::set_cursor(CursorShape shape) noexcept { impl_->core.set_cursor_shape(shape); }
+
 }  // namespace jgui::inline v001
