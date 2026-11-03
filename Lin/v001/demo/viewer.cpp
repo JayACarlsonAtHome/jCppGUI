@@ -38,11 +38,12 @@ int main(int argc, char** argv) {
         return exit_usage;
     }
     const auto path = arguments->size() == 2 ? viewer::checked_path(arguments->at(1)) : default_path();
-    const auto file = path ? jgui::read_jtext_file(*path) : std::expected<jgui::JTextFile, jgui::Error>{std::unexpected(path.error())};
+    // What the file holds becomes typed rows here, and its text goes when this statement ends.
+    auto loaded = viewer::load_file(path ? jgui::read_jtext_file(*path) : std::expected<jgui::JTextFile, jgui::Error>{std::unexpected(path.error())});
 
     auto backend = jgui::WaylandBackend::create(jgui::WaylandOptions{.title = viewer::window_title_for(path), .app_id = "jcppgui.viewer", .size = jgui::Size{jgui::Width{1000}, jgui::Height{600}}});
     if (!backend) return report(backend.error());
-    auto app = jgui::make_application(std::move(*backend), viewer::make_ui(viewer::load_file(file)));
+    auto app = jgui::make_application(std::move(*backend), viewer::make_ui(std::move(loaded)));
     if (!app) return report(app.error());
     const auto result = app->run();
     return result ? EXIT_SUCCESS : report(result.error());
