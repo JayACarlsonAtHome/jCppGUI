@@ -275,6 +275,11 @@ static_assert(refused_on("=== jText File ===\n=== Section: S ===\n 1. ?# x\n", 3
 static_assert(refused_on("=== jText File ===\n=== Section: S ===\n=== End Section ===\n 1. ?# x\n", 4, "between sections"));
 static_assert(refused_on("=== jText File ===\nwords\n", 2, "number"), "a stray line in the header");
 
+static_assert(refused_on(one_section(two_fields, " # not in the first column\n"), 8, "number"), "found by comparing with jText's own parser");
+static_assert(refused_on("=== jText File ===\n #|#\xE2\x96\xAE\xE2\x96\x8C x\n", 2, "number"), "and so");
+static_assert(refused_on("=== jText File ===\n=== End File ===\n // late\n", 3, "outside any block"));
+static_assert(refused_on(" // first\n", 1, "not a jText file"));
+
 // --- What this reader does not do yet, and says so ---
 static_assert(refused_on("=== jText File ===\n=== Section: S ===\n=== <#include#> Fields: f.jtFlds ===\n", 3, "include"));
 static_assert(refused_on("=== jText File ===\n=== Section: S ===\n=== Fields ===\n=== <#include#> Fields: f.jtFlds ===\n", 4, "include"));

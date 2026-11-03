@@ -188,7 +188,8 @@ struct JTextLine {
     return trimmed_jtext(line.substr(opening.size(), line.size() - opening.size() - closing.size()));
 }
 
-[[nodiscard]] constexpr bool is_jtext_comment_line(std::string_view trimmed) noexcept { return trimmed.starts_with('#') || trimmed.starts_with("//"); }
+// A line that starts with one of these, in its first column as the format says. jText's own parser reads " # x" in a block as a broken line.
+[[nodiscard]] constexpr bool is_jtext_comment_line(std::string_view line) noexcept { return line.starts_with('#') || line.starts_with("//"); }
 
 // Levels of one value, in a field declaration or a header line: one splice at either end is decoration, and every level between
 // must hold something. Hands each level to the visitor in turn, and the answer is how many there were, or empty on an empty one.
@@ -273,8 +274,8 @@ private:
             record_open_ = false;
             return {};
         }
-        if (state_ == State::Start) return take_first_line(trimmed);
-        if (is_jtext_comment_line(trimmed)) return {};
+        if (state_ == State::Start) return take_first_line(line, trimmed);
+        if (is_jtext_comment_line(line)) return {};
         if (trimmed.starts_with("===")) return take_marker(trimmed);
         if (state_ == State::Header) return take_header_line(line);
         if (state_ == State::Fields) return take_field_line(line);
@@ -283,9 +284,9 @@ private:
     }
 
     // What the first lines say decides whether this reader will go on at all.
-    [[nodiscard]] constexpr std::expected<void, Error> take_first_line(std::string_view trimmed) {
+    [[nodiscard]] constexpr std::expected<void, Error> take_first_line(std::string_view line, std::string_view trimmed) {
         if (trimmed.starts_with("# JText File") || (trimmed.starts_with("-- ") && trimmed.ends_with(" --"))) return refuse("this is a light-profile jText file, which is not supported yet");
-        if (is_jtext_comment_line(trimmed)) return {};
+        if (is_jtext_comment_line(line)) return {};
         if (trimmed == "=== jText File ===") {
             state_ = State::Header;
             return {};
