@@ -24,7 +24,11 @@ namespace jgui::inline v001 {
 namespace {
 
 constexpr FT_UInt font_pixel_size = 14;
-constexpr FT_Int32 glyph_load_flags = FT_LOAD_DEFAULT | FT_LOAD_NO_BITMAP;
+// The one place glyphs are told how to load, for FreeType directly and for HarfBuzz's use of the same face. Fonts are
+// untrusted, so no hinting: their bytecode must not run. Both flags are needed, because FreeType ignores
+// FT_LOAD_NO_HINTING alone for a "tricky" font, and a font is taken as tricky by the family name it claims.
+constexpr FT_Int32 glyph_load_flags = FT_LOAD_NO_BITMAP | FT_LOAD_NO_HINTING | FT_LOAD_NO_AUTOHINT;
+static_assert((glyph_load_flags & FT_LOAD_NO_HINTING) != 0 && (glyph_load_flags & FT_LOAD_NO_AUTOHINT) != 0);
 
 using FontConfig = detail::CResource<FcConfig, FcConfigDestroy>;
 using FontPattern = detail::CResource<FcPattern, FcPatternDestroy>;

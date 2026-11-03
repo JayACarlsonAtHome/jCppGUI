@@ -19,11 +19,20 @@ skeleton, and what follows is the design intent and what the tests cover.
 | Protocol errors | End `run()` with an `Error` that includes `wl_display_get_error`, and on `EPROTO` the protocol error's code and interface. |
 | The connection ending | A hang-up ends `run()` with an `Error`, also with part of a message left over, which libwayland never reports by itself. A roundtrip goes through the same loop, so it ends too. A compositor that stays connected and never answers makes a roundtrip wait for ever: there is no timeout. |
 | Events of later versions | libwayland passes on an event of a version never bound, and aborts on an empty listener entry. Every entry is set, so none is empty, and a new event in a later header is a compile error. |
-| Font files | **Untrusted input.** Metrics, bitmap sizes, pitch and pixel mode are checked. A shaped run over 8192 glyphs is refused before anything adds up or renders, because a font's substitution rules can expand one character into many. HarfBuzz's two glyph counts must agree. Glyph bitmaps over 512 pixels per side are refused before they are copied, a pitch is limited before it is multiplied, and every position is clipped to the run. FreeType and HarfBuzz themselves still parse the font file, and a bug there is not something our checks can stop. |
+| Font files | **Untrusted input.** Metrics, bitmap sizes, pitch and pixel mode are checked. A shaped run over 8192 glyphs is refused before anything adds up or renders, because a font's substitution rules can expand one character into many. HarfBuzz's two glyph counts must agree. Glyph bitmaps over 512 pixels per side are refused before they are copied, a pitch is limited before it is multiplied, and every position is clipped to the run. FreeType and HarfBuzz themselves still parse the font file, and a bug there is not something our checks can stop. Hinting is off: see below. |
 | Text | Strict UTF-8 validation and a 4096-byte limit before shaping. A `TextRun` whose coverage does not hold one byte per pixel aborts, in every build. |
 | Program arguments | `program_arguments` refuses a negative count, more than 4096 arguments, a null argument and one over 128 KiB, and returns copies. |
 | C strings | `string_from_c` stops at the terminator or at a limit, and refuses a string over the limit: a global's name, a protocol error's interface, fontconfig's path and each argument. A name compared with it comes from the generated glue, which is built into this program. |
 | Clipboard, files, images | Not implemented. They will be trust boundaries when they exist. |
+
+**Font hinting is off, so that an untrusted font's bytecode does not run.** Every glyph loads with `FT_LOAD_NO_HINTING | FT_LOAD_NO_AUTOHINT`, set
+once in `src/text/text.cpp` and given to both FreeType and HarfBuzz's `hb-ft`. Both flags are needed. FreeType ignores
+`FT_LOAD_NO_HINTING` alone for a "tricky" font, as `freetype.h` documents, and `tt_check_trickyness` takes a font as tricky by the
+family name it claims, so a hostile font could otherwise ask for its bytecode to run. This was read in the source of FreeType
+2.14.3, the installed version: `tt_glyph_load` keeps hinting off only with both flags, `tt_loader_init` runs `fpgm` and `prep` only for a
+hinted load, and `FT_Load_Glyph` uses the autohinter only when neither flag is set. So the autohinter stays off too.
+**The limit is plain:** the interpreter is unreachable only through our load path, and only as far as FreeType honours these
+flags. No test runs a hostile font to show it, and FreeType still parses every table of the font.
 
 Exceptions never cross a C callback. Every listener handler must be `noexcept`, which the trampoline's
 template pattern enforces at compile time, and failures are recorded for the event loop to report
