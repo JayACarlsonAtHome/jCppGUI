@@ -132,9 +132,8 @@ Not shown: the viewer on a real screen, with a real pointer, or a file that chan
 
 ## Known limits
 
-- **`bsir.sh` has not been run end to end**, on any system. **It still needs the owner to run it**, because it needs sudo. It is
-  written for Fedora only and stops on a system with no `dnf`. Only its syntax, its usage text and its recipes' check lines
-  have been tried.
+- **`bsir.sh` has been run end to end only once that is recorded**: by the owner, on Fedora 44, reported on 2026-11-03. It is
+  written for Fedora only and stops on a system with no `dnf`. Its install path has only been tried as far as that machine needed.
 - A compositor that stays connected and never answers makes `connect` wait for ever. There is no timeout.
 
 - One font, one size, one line. No text editing, input methods or font selection. No bidirectional
