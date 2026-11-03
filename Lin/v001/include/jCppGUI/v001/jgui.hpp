@@ -18,6 +18,7 @@
 #include "label.hpp"
 #include "menu_bar.hpp"
 #include "message.hpp"
+#include "panels.hpp"
 #include "pool.hpp"
 #include "program_arguments.hpp"
 #include "scroll_bar.hpp"
