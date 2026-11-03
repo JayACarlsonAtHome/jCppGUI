@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <chrono>
 #include <concepts>
+#include <expected>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -24,6 +25,7 @@
 #include <string_view>
 #include <thread>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -33,8 +35,11 @@
 #include "jCppGUI/v001/jgui.hpp"
 #include "jCppGUI/v001/redraw_monitor.hpp"
 #include "jCppGUI/v001/wayland_backend.hpp"
+#include "jCppGUI/v001/headless_backend.hpp"
 #include "monitor_helpers.hpp"
 #include "test_access.hpp"
+#include "viewer_helpers.hpp"
+#include "viewer_ui.hpp"
 
 namespace {
 
@@ -1698,12 +1703,458 @@ template <DemoPlace Place>
     return 0;
 }
 
+// --- The real viewer program, against nothing but this compositor ---
+
+// The window the program should be showing, made here in the compositor's process with the same code and the same file: a headless
+// application, sent the same events, whose every pixel can be compared with what arrived. On its own that shows only that the
+// program and this agree, so the scripts also look for text they name themselves, drawn on its own with the real font.
+class ViewerReference {
+public:
+    using LoadedFile = std::expected<jgui::JTextFile, jgui::Error>;
+    using App = std::remove_cvref_t<decltype(*jgui::make_application(jgui::HeadlessBackend{jgui::Size{}}, viewer::make_ui(viewer::LoadedFile{})))>;
+
+    ViewerReference(const LoadedFile& file, std::int32_t width, std::int32_t height)
+        : app_{*jgui::make_application(jgui::HeadlessBackend{jgui::Size{jgui::Width{width}, jgui::Height{height}}}, viewer::make_ui(viewer::load_file(file)))} {
+        settle();
+    }
+
+    void settle() {
+        if (!app_.process_pending()) std::cerr << "the reference window failed\n";
+    }
+    template <class Event>
+    void deliver(const Event& event) {
+        jgui_test::backend(app_).inject(event);
+        settle();
+    }
+    template <class Tag>
+    void click() {
+        const jgui::Point at = centre_of<Tag>();
+        deliver(jgui::PointerMove{at});
+        deliver(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Pressed, jgui_test::serial(1)});
+        deliver(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Released, jgui_test::serial(1)});
+    }
+    template <class Tag>
+    [[nodiscard]] auto& get() {
+        return app_.ui().template get<Tag>();
+    }
+    template <class Tag>
+    [[nodiscard]] jgui::Point centre_of() {
+        const jgui::Rect area = get<Tag>().bounds();
+        return jgui_test::inside(area, jgui_test::number(area.width()) / 2, jgui_test::number(area.height()) / 2);
+    }
+
+    // Whether what arrived is this window, pixel for pixel.
+    [[nodiscard]] bool same_picture(std::span<const std::uint32_t> pixels) {
+        const jgui::HeadlessBackend& backend = jgui_test::backend(app_);
+        const auto width = static_cast<std::size_t>(jgui_test::number(backend.size().width()));
+        const auto height = static_cast<std::size_t>(jgui_test::number(backend.size().height()));
+        if (pixels.size() != width * height) return false;
+        for (std::size_t y = 0; y < height; ++y)
+            for (std::size_t x = 0; x < width; ++x)
+                if (pixels[y * width + x] != backend.pixel(jgui::Point{jgui::Left{static_cast<std::int32_t>(x)}, jgui::Top{static_cast<std::int32_t>(y)}})) return false;
+        return true;
+    }
+
+private:
+    App app_;
+};
+
+// Whether this text, drawn with the real font in the theme's text colour over that background, is at that place in a picture of that width.
+[[nodiscard]] bool text_is_at(std::span<const std::uint32_t> pixels, std::int32_t picture_width, jgui::Point at, std::string_view text, jgui::Color background) {
+    auto engine = jgui::TextEngine::create();
+    if (!engine) return false;
+    auto run = engine->shape(text);
+    if (!run) return false;
+    const jgui::Size size = run->size();
+    std::vector<std::uint32_t> drawn(static_cast<std::size_t>(jgui_test::number(size.width())) * static_cast<std::size_t>(jgui_test::number(size.height())), background.argb);
+    auto buffer = jgui::PixelBuffer::create(drawn, size, jgui::PixelBuffer::tight_stride(size));
+    if (!buffer) return false;
+    {
+        const jgui::Canvas canvas{*buffer};
+        canvas.draw_text(jgui::Point{}, *run, jgui::theme::text);
+    }
+    const auto stride = static_cast<std::size_t>(picture_width);
+    const auto left = static_cast<std::size_t>(jgui_test::number(at.left()));
+    const auto top = static_cast<std::size_t>(jgui_test::number(at.top()));
+    const auto across = static_cast<std::size_t>(jgui_test::number(size.width()));
+    const auto down = static_cast<std::size_t>(jgui_test::number(size.height()));
+    std::size_t differs_from_background = 0;
+    for (std::size_t y = 0; y < down; ++y) {
+        for (std::size_t x = 0; x < across; ++x) {
+            const std::size_t where = (top + y) * stride + left + x;
+            if (where >= pixels.size() || left + x >= stride) return false;
+            if (pixels[where] != drawn[y * across + x]) return false;
+            if (drawn[y * across + x] != background.argb) ++differs_from_background;
+        }
+    }
+    return differs_from_background != 0;
+}
+
+// Where a grid draws the header of a column, and the cell of a column in a row on the screen.
+template <class Grid>
+[[nodiscard]] jgui::Width width_before(const Grid& grid, std::size_t column) {
+    jgui::Width width{};
+    for (std::size_t i = 0; i < column; ++i) width = width + grid.column_width(i);
+    return width;
+}
+template <class Grid>
+[[nodiscard]] jgui::Point header_text_at(const Grid& grid, std::size_t column) {
+    const jgui::Rect area = grid.header_area();
+    return jgui::Point{jgui::left_after((jgui::left_after(area.left() + width_before(grid, column))) + jgui::theme::cell_pad_x), jgui::top_after(area.top() + jgui::theme::cell_pad_y)};
+}
+template <class Grid>
+[[nodiscard]] jgui::Point cell_text_at(const Grid& grid, std::size_t row, std::size_t column) {
+    const jgui::Rect area = grid.body_area();
+    const jgui::Top row_top = jgui::top_after(area.top() + repeated_extent(grid.row_height(), row));
+    return jgui::Point{jgui::left_after((jgui::left_after(area.left() + width_before(grid, column))) + jgui::theme::cell_pad_x), jgui::top_after(row_top + jgui::theme::cell_pad_y)};
+}
+[[nodiscard]] inline jgui::Point label_text_at(const jgui::Rect& label) {
+    return jgui::Point{jgui::left_after(label.left() + jgui::theme::label_pad_x), jgui::top_after(label.top() + jgui::theme::label_pad_y)};
+}
+
+constexpr std::int32_t viewer_width = 900;
+constexpr std::int32_t viewer_height = 500;
+
+// What each script keeps: where the file is, as the program was told it, and the buffer that came last.
+struct ViewerState {
+    std::string path{};
+    std::optional<ObjectId> latest{};
+    std::size_t commits_seen{};
+
+    void on_commit(Session& session, const BufferCommitted& commit) {
+        if (latest) session.release(*latest);
+        latest = commit.buffer;
+        commits_seen = commit.index + 1;
+    }
+    // Compares what came last with the reference. An empty answer means the picture could not be read, which is a violation.
+    [[nodiscard]] std::vector<std::uint32_t> picture(Session& session) const {
+        if (!latest) return {};
+        auto pixels = session.pixels_of(*latest);
+        return pixels ? std::move(*pixels) : std::vector<std::uint32_t>{};
+    }
+    [[nodiscard]] ViewerReference::LoadedFile file() const { return jgui::read_jtext_file(path); }
+};
+
+enum class ViewerFile : std::uint8_t { Good, Large, Missing, Malformed, Symlink, PathNotText, GoodInBase, NoBase };
+
+// What a scenario's file is, what the program is started with, and where it stands. Everything is under its own temporary directory.
+struct ViewerSetup {
+    std::filesystem::path program{};
+    std::string path{};
+    std::vector<std::string> arguments{};
+};
+
+void put_file(const std::filesystem::path& where, std::string_view text) {
+    const UniqueFd file{::open(where.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, S_IRUSR | S_IWUSR)};
+    if (file.get() >= 0) static_cast<void>(jgui::detail::write_at(file.get(), std::span{text}, 0));
+}
+
+[[nodiscard]] ViewerSetup set_up_viewer(ViewerFile kind, const std::filesystem::path& top) {
+    ViewerSetup setup;
+    const char* built = std::getenv("JGUI_TEST_VIEWER");
+    if (built == nullptr) return setup;
+    setup.program = built;
+    const std::filesystem::path named = top / "some.jtext";
+    switch (kind) {
+        case ViewerFile::Good: put_file(named, jgui_test::redraw_file_text()); break;
+        case ViewerFile::Large: put_file(named, jgui_test::redraw_file_text(65536)); break;
+        case ViewerFile::Malformed: put_file(named, "=== jText File ===\n=== Section: Frames ===\n 1. ?# x\n"); break;
+        case ViewerFile::Symlink:
+            put_file(top / "real.jtext", jgui_test::redraw_file_text());
+            std::filesystem::create_symlink(top / "real.jtext", named);
+            break;
+        case ViewerFile::GoodInBase:
+        case ViewerFile::NoBase: {
+            const std::filesystem::path base = top / (kind == ViewerFile::GoodInBase ? "v321" : "plain");
+            setup.program = base / "build" / "preset" / "jcppgui-viewer";
+            std::filesystem::create_directories(setup.program.parent_path());
+            std::filesystem::copy_file(built, setup.program);
+            if (kind == ViewerFile::GoodInBase) put_file(base / jgui::default_redraw_file_name, jgui_test::redraw_file_text());
+            setup.path = (base / jgui::default_redraw_file_name).string();
+            return setup;
+        }
+        case ViewerFile::Missing:
+        case ViewerFile::PathNotText:
+        default:
+            break;
+    }
+    setup.path = kind == ViewerFile::PathNotText ? "\xFF.jtext" : named.string();
+    setup.arguments.push_back(setup.path);
+    return setup;
+}
+
+constexpr std::size_t frames_reason_column = 2;
+constexpr std::size_t damage_tag_column = 3;
+
+// The first picture: every pixel, the title, and text that can only be there if the file was read.
+struct ViewerFirstFrame {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr ViewerFile viewer_file = ViewerFile::Good;
+    ViewerState state{};
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ViewerReference reference{state.file(), viewer_width, viewer_height};
+        const std::vector<std::uint32_t> pixels = state.picture(session);
+        if (!reference.same_picture(pixels)) session.violation("the first frame is not the window that was expected");
+        const auto& grid = reference.get<viewer::FramesGridTag>();
+        if (!text_is_at(pixels, viewer_width, header_text_at(grid, 0), "Frame_ID", jgui::theme::bar)) session.violation("no header text for the first column");
+        if (!text_is_at(pixels, viewer_width, header_text_at(grid, frames_reason_column), "Reason", jgui::theme::bar)) session.violation("no header text for the third column");
+        if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 0, 0), "1", jgui::theme::background)) session.violation("no id in the first row");
+        if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 0, frames_reason_column), "FirstFrame", jgui::theme::background)) session.violation("no reason in the first row");
+        if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 1, frames_reason_column), "WidgetDamage", jgui::theme::background)) session.violation("no reason in the second row");
+        if (!text_is_at(pixels, viewer_width, label_text_at(reference.get<viewer::StatusLine>().bounds()), "Frames: 200 rows", jgui::theme::background)) session.violation("no status line");
+        if (session.title() != "jCppGUI viewer: some.jtext") session.violation("the title does not name the file: " + session.title());
+        if (session.app_id() != "jcppgui.viewer") session.violation("another app id: " + session.app_id());
+        session.close_window();
+    }
+};
+
+// A click on each of two buttons, through the wire, and each section in the window after it.
+struct ViewerSectionSwitch {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr ViewerFile viewer_file = ViewerFile::Good;
+    enum class Step : std::uint8_t { First, ClickedDamage, ClickedRun, Done };
+    ViewerState state{};
+    Step step{Step::First};
+    std::vector<std::uint32_t> frames_picture{};
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ViewerReference reference{state.file(), viewer_width, viewer_height};
+        switch (step) {
+            case Step::First: {
+                frames_picture = state.picture(session);
+                const jgui::Point at = reference.centre_of<viewer::DamageButton>();
+                pointer_enter(session, jgui_test::number(at.left()), jgui_test::number(at.top()));
+                left_click(session, jgui_test::number(at.left()), jgui_test::number(at.top()));
+                step = Step::ClickedDamage;
+                return;
+            }
+            case Step::ClickedDamage: {
+                reference.click<viewer::DamageButton>();
+                const std::vector<std::uint32_t> pixels = state.picture(session);
+                if (pixels == frames_picture) session.violation("the click changed nothing");
+                if (!reference.same_picture(pixels)) session.violation("the Damage section is not the window that was expected");
+                const auto& grid = reference.get<viewer::DamageGridTag>();
+                if (!text_is_at(pixels, viewer_width, header_text_at(grid, damage_tag_column), "Tag", jgui::theme::bar)) session.violation("no Damage header");
+                if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 0, damage_tag_column), "HelpButton", jgui::theme::background)) session.violation("no Damage row");
+                if (!text_is_at(pixels, viewer_width, label_text_at(reference.get<viewer::StatusLine>().bounds()), "Damage: 200 rows", jgui::theme::background)) session.violation("no status for Damage");
+                const jgui::Point at = reference.centre_of<viewer::RunButton>();
+                left_click(session, jgui_test::number(at.left()), jgui_test::number(at.top()));
+                step = Step::ClickedRun;
+                return;
+            }
+            case Step::ClickedRun: {
+                reference.click<viewer::DamageButton>();
+                reference.click<viewer::RunButton>();
+                const std::vector<std::uint32_t> pixels = state.picture(session);
+                if (!reference.same_picture(pixels)) session.violation("the Run section is not the window that was expected");
+                const auto& grid = reference.get<viewer::RunGridTag>();
+                if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 0, 1), "for the viewer", jgui::theme::background)) session.violation("no label in the Run row");
+                if (!text_is_at(pixels, viewer_width, label_text_at(reference.get<viewer::StatusLine>().bounds()), "Run: 1 row", jgui::theme::background)) session.violation("no status for Run");
+                session.close_window();
+                step = Step::Done;
+                return;
+            }
+            case Step::Done:
+            default:
+                return;
+        }
+    }
+};
+
+// A wheel notch over the grid, through the wire: three rows up. Row 4 is on top after it.
+struct ViewerWheelScroll {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr ViewerFile viewer_file = ViewerFile::Good;
+    ViewerState state{};
+    bool scrolled{};
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ViewerReference reference{state.file(), viewer_width, viewer_height};
+        const jgui::Rect body = reference.get<viewer::FramesGridTag>().body_area();
+        const jgui::Point at = jgui_test::inside(body, 100, 100);
+        if (!scrolled) {
+            scrolled = true;
+            pointer_enter(session, jgui_test::number(at.left()), jgui_test::number(at.top()));
+            scroll_frame_of_steps(session, 1);
+            return;
+        }
+        reference.deliver(jgui::PointerMove{at});
+        reference.deliver(jgui::PointerScroll{at, jgui::ScrollDown::of_steps(1), jgui::ScrollAcross{}});
+        const std::vector<std::uint32_t> pixels = state.picture(session);
+        if (!reference.same_picture(pixels)) session.violation("after the wheel, it is not the window that was expected");
+        const auto& grid = reference.get<viewer::FramesGridTag>();
+        if (grid.scroll_down() != repeated_extent(grid.row_height(), 3)) session.violation("one notch of the reference is not three rows, so this test proves nothing");
+        if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 0, 0), "4", jgui::theme::background)) session.violation("the fourth row is not on top");
+        session.close_window();
+    }
+};
+
+// The grid takes the whole of each new size: bigger, then smaller than its columns.
+struct ViewerResize {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr ViewerFile viewer_file = ViewerFile::Good;
+    static constexpr std::array<std::array<std::int32_t, 2>, 2> sizes{{{1100, 700}, {300, 200}}};
+    ViewerState state{};
+    std::size_t next{};
+    std::int32_t width{viewer_width};
+    std::int32_t height{viewer_height};
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const BufferCommitted& commit) {
+        state.on_commit(session, commit);
+        if (commit.width != width || commit.height != height) session.violation("a frame at another size than was configured");
+    }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ViewerReference reference{state.file(), width, height};
+        if (!reference.same_picture(state.picture(session))) session.violation("at this size, it is not the window that was expected: " + std::to_string(width) + "x" + std::to_string(height));
+        const jgui::Rect client = jgui::WindowFrame<jgui::DefaultFrameMetrics>::client_rect(jgui::Size{jgui::Width{width}, jgui::Height{height}});
+        const jgui::Rect grid = reference.get<viewer::FramesGridTag>().bounds();
+        if (grid.bottom() != client.bottom() || grid.right() != client.right()) session.violation("the grid does not reach the client area's far corner");
+        if (next == sizes.size()) {
+            session.close_window();
+            return;
+        }
+        width = sizes[next][0];
+        height = sizes[next][1];
+        ++next;
+        session.configure(width, height);
+    }
+};
+
+// A file that cannot be shown leaves a window that says why. Its buttons still work, and it closes as any window does.
+template <ViewerFile Kind>
+struct ViewerRefused {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr ViewerFile viewer_file = Kind;
+    ViewerState state{};
+    bool clicked{};
+    [[nodiscard]] static constexpr std::string_view says() {
+        if (Kind == ViewerFile::Missing) return "cannot look at";
+        if (Kind == ViewerFile::Malformed) return "jText line 3: a line stands outside any block";
+        if (Kind == ViewerFile::Symlink) return "refused";
+        if (Kind == ViewerFile::NoBase) return "the viewer has no base directory";
+        return "the path is not text that can be shown";
+    }
+    [[nodiscard]] ViewerReference::LoadedFile file() const {
+        if (Kind == ViewerFile::NoBase) {
+            const std::filesystem::path program = std::filesystem::path{state.path}.parent_path() / "build" / "preset" / "jcppgui-viewer";
+            return std::unexpected(jgui::Error{jgui::ErrorCode::System, "the viewer has no base directory: no folder named v and three digits contains the executable: " + program.string()});
+        }
+        if (Kind == ViewerFile::PathNotText) return std::unexpected(jgui::Error{jgui::ErrorCode::InvalidUtf8, std::string{says()}});
+        return state.file();
+    }
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ViewerReference reference{file(), viewer_width, viewer_height};
+        if (clicked) reference.click<viewer::DamageButton>();
+        const std::vector<std::uint32_t> pixels = state.picture(session);
+        if (!reference.same_picture(pixels)) session.violation("this is not the window that was expected");
+        const jgui::Rect line = reference.get<viewer::StatusLine>().bounds();
+        if (!text_is_at(pixels, viewer_width, label_text_at(line), says(), jgui::theme::background)) session.violation("the reason is not where the grid would be");
+        if (reference.get<viewer::SectionGrids>().shown()) session.violation("a grid shows for a file that was refused");
+        if (session.title() != (Kind == ViewerFile::PathNotText || Kind == ViewerFile::NoBase ? "jCppGUI viewer" : "jCppGUI viewer: some.jtext")) session.violation("another title: " + session.title());
+        if (clicked) {
+            session.close_window();
+            return;
+        }
+        clicked = true;
+        const jgui::Point at = reference.centre_of<viewer::DamageButton>();
+        pointer_enter(session, jgui_test::number(at.left()), jgui_test::number(at.top()));
+        left_click(session, jgui_test::number(at.left()), jgui_test::number(at.top()));
+    }
+};
+
+// With no argument, the file in the base directory of a copy of the program, and nothing else.
+struct ViewerFileInItsBase {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr ViewerFile viewer_file = ViewerFile::GoodInBase;
+    ViewerState state{};
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ViewerReference reference{state.file(), viewer_width, viewer_height};
+        const std::vector<std::uint32_t> pixels = state.picture(session);
+        if (!reference.same_picture(pixels)) session.violation("this is not the window that was expected");
+        if (!text_is_at(pixels, viewer_width, label_text_at(reference.get<viewer::StatusLine>().bounds()), "Frames: 200 rows", jgui::theme::background)) session.violation("the base directory's file was not read");
+        if (session.title() != "jCppGUI viewer: redraw_monitor.jtext") session.violation("another title: " + session.title());
+        session.close_window();
+    }
+};
+
+// The largest file the monitor writes, through the real program: its first frame, and a frame after a wheel at its largest step.
+struct ViewerLargeFile {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr ViewerFile viewer_file = ViewerFile::Large;
+    ViewerState state{};
+    bool first_checked{};
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        if (first_checked) {
+            session.close_window();
+            return;
+        }
+        first_checked = true;
+        ViewerReference reference{state.file(), viewer_width, viewer_height};
+        const std::vector<std::uint32_t> pixels = state.picture(session);
+        if (!reference.same_picture(pixels)) session.violation("this is not the window that was expected");
+        if (!text_is_at(pixels, viewer_width, label_text_at(reference.get<viewer::StatusLine>().bounds()), "Frames: 65536 rows", jgui::theme::background)) session.violation("the status does not say 65536 rows");
+        const jgui::Point at = jgui_test::inside(reference.get<viewer::FramesGridTag>().body_area(), 100, 100);
+        pointer_enter(session, jgui_test::number(at.left()), jgui_test::number(at.top()));
+        scroll_frame_of_steps(session, jgui::max_scroll_steps);
+    }
+};
+
+// Runs in the scenario's client process. The real program starts in a directory of its own, and it must end well.
+[[nodiscard]] int run_the_real_viewer(const ViewerSetup& setup, const std::filesystem::path& top) {
+    const std::filesystem::path errors = top / "errors.txt";
+    // Two arguments are a mistake it says at once, before it opens any window.
+    if (jgui_test::run_program(setup.program, "jcppgui-viewer", top, {"one", "two"}, errors) != 2) {
+        std::cerr << "too many arguments did not end in the usage message\n";
+        return 1;
+    }
+    const int status = jgui_test::run_program(setup.program, "jcppgui-viewer", top, setup.arguments, errors);
+    std::cout << "the viewer ended with " << status << " and said: " << read_text_file(errors.string()) << '\n';
+    return status;
+}
+
+template <class Script>
+[[nodiscard]] bool run_viewer_scenario() {
+    const jgui_test::TemporaryDirectory temporary;
+    const std::filesystem::path top = std::filesystem::canonical(temporary.path());
+    if (jgui::application_base_from((top / "program").string())) {
+        std::cerr << "a folder above the temporary directory is named like a version, so this test would prove nothing: " << top << '\n';
+        return false;
+    }
+    const ViewerSetup setup = set_up_viewer(Script::viewer_file, top);
+    if (setup.program.empty()) {
+        std::cerr << "JGUI_TEST_VIEWER must be set\n";
+        return false;
+    }
+    Script script{};
+    script.state.path = setup.path;
+    return run_scenario(script, GlobalSet{}, [&] { return run_the_real_viewer(setup, top); });
+}
+
 struct MonitorVersusNone {};
 
 template <class Script>
 [[nodiscard]] bool run_one() {
     if constexpr (std::same_as<Script, MonitorVersusNone>) {
         return run_monitor_versus_none();
+    } else if constexpr (requires { Script::viewer_file; }) {
+        return run_viewer_scenario<Script>();
     } else if constexpr (requires { Script::place; }) {
         return run_scenario(Script{}, GlobalSet{}, [] { return run_the_real_demo<Script::place>(); });
     } else if constexpr (requires { &Script::grid_is_right; }) {
@@ -1796,6 +2247,17 @@ constexpr auto scenarios = std::tuple{
     Named<GridPointerGoneDuringCapture>{"grid_pointer_gone_during_capture"},
     Named<GridSeatGoneDuringCapture>{"grid_seat_gone_during_capture"},
     Named<GridCursor>{"grid_cursor"},
+    Named<ViewerFirstFrame>{"viewer_first_frame"},
+    Named<ViewerSectionSwitch>{"viewer_section_switch"},
+    Named<ViewerWheelScroll>{"viewer_wheel_scroll"},
+    Named<ViewerResize>{"viewer_resize"},
+    Named<ViewerRefused<ViewerFile::Missing>>{"viewer_missing_file"},
+    Named<ViewerRefused<ViewerFile::Malformed>>{"viewer_malformed_file"},
+    Named<ViewerRefused<ViewerFile::Symlink>>{"viewer_refused_symlink"},
+    Named<ViewerRefused<ViewerFile::PathNotText>>{"viewer_path_not_text"},
+    Named<ViewerRefused<ViewerFile::NoBase>>{"viewer_copy_with_no_base"},
+    Named<ViewerFileInItsBase>{"viewer_file_in_its_base"},
+    Named<ViewerLargeFile>{"viewer_65536_rows"},
 };
 
 }  // namespace

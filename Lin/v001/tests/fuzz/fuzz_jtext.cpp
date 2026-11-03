@@ -14,6 +14,7 @@
 #include "jCppGUI/v001/datagrid.hpp"
 #include "jCppGUI/v001/jtext.hpp"
 #include "jCppGUI/v001/redraw_monitor.hpp"
+#include "viewer_ui.hpp"
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size);
 
@@ -71,6 +72,10 @@ void check_accepted(const JTextFile& file) {
             static_cast<void>(get_top_one_int(section, name));
         }
         read_as_rows<AnyGrid>(section);
+        read_as_rows<viewer::RunGrid>(section);
+        read_as_rows<viewer::FramesGrid>(section);
+        read_as_rows<viewer::DamageGrid>(section);
+        read_as_rows<viewer::DeferredGrid>(section);
     }
 }
 

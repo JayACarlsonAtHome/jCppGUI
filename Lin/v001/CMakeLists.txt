@@ -178,12 +178,17 @@ if(JGUI_FUZZ)
       COMMAND ${JGUI_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/run.sh ${harness} smoke)
     set_tests_properties(fuzz_smoke_${harness} PROPERTIES TIMEOUT 120)
   endforeach()
+  target_include_directories(fuzz_jtext PRIVATE demo)
   return()
 endif()
 
 # --- Demo ---
 add_executable(jcppgui-demo demo/demo.cpp)
 target_link_libraries(jcppgui-demo PRIVATE jgui_wayland jgui_text jgui_program jgui_monitor jgui_warnings)
+
+# --- The viewer: shows a redraw monitor's file ---
+add_executable(jcppgui-viewer demo/viewer.cpp)
+target_link_libraries(jcppgui-viewer PRIVATE jgui_wayland jgui_text jgui_program jgui_jtext jgui_warnings)
 
 # --- Tests ---
 enable_testing()
@@ -243,8 +248,20 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 else()
   target_compile_options(test_datagrid PRIVATE -fconstexpr-ops-limit=400000000)
 endif()
+# The viewer's whole window runs in static_assert, many frames of it, which needs a higher step budget on both compilers.
+jgui_test(test_viewer)
+target_include_directories(test_viewer PRIVATE demo)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(test_viewer PRIVATE -fconstexpr-steps=400000000)
+else()
+  target_compile_options(test_viewer PRIVATE -fconstexpr-ops-limit=800000000)
+endif()
 # What a frame of the grid costs, printed by hand, in a release build: docs/Maturity.md has what it said. Not a test.
 jgui_test_program(measure_datagrid)
+# What reading the largest monitor file costs, and a frame of it, the same way.
+jgui_test_program(measure_viewer)
+target_include_directories(measure_viewer PRIVATE src)
+target_link_libraries(measure_viewer PRIVATE jgui_jtext)
 
 jgui_test(test_untrusted)
 target_include_directories(test_untrusted PRIVATE src src/wayland)
@@ -253,7 +270,8 @@ target_link_libraries(test_untrusted PRIVATE jgui_wayland jgui_program)
 # The real WaylandBackend against a scripted compositor, with no screen. Each scenario is one test.
 jgui_test_program(test_fake_compositor)
 target_include_directories(test_fake_compositor PRIVATE src src/wayland)
-target_link_libraries(test_fake_compositor PRIVATE jgui_wayland jgui_program jgui_monitor)
+add_dependencies(test_fake_compositor jcppgui-viewer)
+target_link_libraries(test_fake_compositor PRIVATE jgui_wayland jgui_program jgui_monitor jgui_jtext)
 set(JGUI_FAKE_SCENARIOS
   happy_path keyboard_path
   configure_1x1 configure_0x0 configure_negative configure_int32_max configure_8192x1 configure_1x8192 configure_119x119 configure_flood
@@ -269,7 +287,8 @@ set(JGUI_FAKE_SCENARIOS
   monitor_real_frames monitor_never_release monitor_versus_none monitor_cannot_write
   demo_as_built demo_copy_under_a_base demo_copy_with_no_base
   cursor_all_edges cursor_no_protocol cursor_seat_removed cursor_pointer_flap cursor_manager_removed cursor_manager_late cursor_during_drag
-  grid_axis_hostile grid_axis_no_enter grid_wheel_then_pixels grid_resize_during_thumb_drag grid_pointer_gone_during_capture grid_seat_gone_during_capture grid_cursor)
+  grid_axis_hostile grid_axis_no_enter grid_wheel_then_pixels grid_resize_during_thumb_drag grid_pointer_gone_during_capture grid_seat_gone_during_capture grid_cursor
+  viewer_first_frame viewer_section_switch viewer_wheel_scroll viewer_resize viewer_missing_file viewer_malformed_file viewer_refused_symlink viewer_path_not_text viewer_copy_with_no_base viewer_file_in_its_base viewer_65536_rows)
 foreach(scenario ${JGUI_FAKE_SCENARIOS})
   add_test(NAME fake_${scenario} COMMAND test_fake_compositor ${scenario})
   set_tests_properties(fake_${scenario} PROPERTIES TIMEOUT 300
@@ -278,6 +297,10 @@ endforeach()
 # These three start the real demo program itself, so the base directory it finds is a real one.
 set_property(TEST fake_demo_as_built fake_demo_copy_under_a_base fake_demo_copy_with_no_base APPEND PROPERTY
   ENVIRONMENT "JGUI_TEST_DEMO=$<TARGET_FILE:jcppgui-demo>" "JGUI_TEST_BASE=${CMAKE_CURRENT_SOURCE_DIR}")
+# These start the real viewer program itself, against the same compositor.
+foreach(scenario viewer_first_frame viewer_section_switch viewer_wheel_scroll viewer_resize viewer_missing_file viewer_malformed_file viewer_refused_symlink viewer_path_not_text viewer_copy_with_no_base viewer_file_in_its_base viewer_65536_rows)
+  set_property(TEST fake_${scenario} APPEND PROPERTY ENVIRONMENT "JGUI_TEST_VIEWER=$<TARGET_FILE:jcppgui-viewer>")
+endforeach()
 # One C call failing at a time, through the real implementation. It goes against the compositor above.
 jgui_test(test_injection)
 target_include_directories(test_injection PRIVATE src src/wayland)
@@ -376,6 +399,8 @@ jgui_compile_fail(monitor_not_in_the_umbrella "no template|FrameMonitor. is not 
 jgui_compile_fail(grid_member_no_format "no cell format")
 jgui_compile_fail(grid_column_wrong_row "belongs to another row type")
 jgui_compile_fail(grid_duplicate_column "have the same name")
+jgui_compile_fail(jtext_column_no_parse "no way to be read from text")
+jgui_compile_fail(jtext_result_ignored "unused-result|nodiscard|warn_unused_result|unused return value")
 jgui_compile_fail(grid_rows_result_ignored "unused-result|nodiscard|warn_unused_result|unused return value")
 jgui_compile_fail(panel_wrong_axis "no matching|no viable|could not convert|cannot convert|deduced conflicting|deduction")
 jgui_compile_fail(warn_narrowing "conversion\\]")

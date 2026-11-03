@@ -102,6 +102,14 @@ struct GlyphBitmap {
 }
 
 namespace detail {
+// A std::string of this text, one character at a time. A column's name can live in a template's argument, and with the hardening
+// flag -fno-delete-null-pointer-checks, g++ cannot compare that address in constant evaluation, which std::string's own copying does.
+[[nodiscard]] constexpr std::string text_copied_by_character(std::string_view text) {
+    std::string copy(text.size(), '\0');
+    std::ranges::copy(text, copy.begin());
+    return copy;
+}
+
 // What every caption must pass, at compile time or when it is set, and again before it is shaped.
 [[nodiscard]] constexpr std::expected<void, Error> check_caption(std::string_view text) {
     if (text.size() > max_caption_bytes) return make_error(ErrorCode::TextTooLong, "caption is over 4096 bytes");
@@ -221,9 +229,8 @@ namespace detail {
 // show, and the widget draws no text. It is not tried again until the text changes.
 class ShapedCaption {
 public:
-    // Appended and not constructed from, because the string's constructor compares the pointer with null, and g++ will not
-    // do that at compile time for text inside a template argument, which is where a column's title is.
-    constexpr explicit ShapedCaption(CheckedText text) { text_.append(text.view()); }
+    // A column's title is inside a template argument: see text_copied_by_character.
+    constexpr explicit ShapedCaption(CheckedText text) : text_{text_copied_by_character(text.view())} {}
 
     [[nodiscard]] constexpr std::string_view text() const noexcept { return text_; }
     [[nodiscard]] constexpr const std::optional<TextRun>& run() const noexcept { return run_; }

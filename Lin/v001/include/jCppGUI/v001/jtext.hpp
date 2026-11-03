@@ -537,7 +537,7 @@ private:
 [[nodiscard]] constexpr std::expected<std::size_t, Error> get_field_index(const JTextSection& section, std::string_view field) {
     for (std::size_t i = 0; i < section.field_count(); ++i)
         if (section.field_name(i) == field) return i;
-    return make_error(ErrorCode::FileFormat, "the section " + std::string{section.name()} + " has no field named " + std::string{field});
+    return make_error(ErrorCode::FileFormat, "the section " + std::string{section.name()} + " has no field named " + detail::text_copied_by_character(field));
 }
 
 [[nodiscard]] constexpr std::size_t get_row_count(const JTextSection& section) noexcept { return section.row_count(); }
