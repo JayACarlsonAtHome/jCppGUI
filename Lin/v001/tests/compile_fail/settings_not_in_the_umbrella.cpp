@@ -5,7 +5,8 @@
 #include "jCppGUI/v001/settings_recorder.hpp"
 #endif
 
+using Recorder = jgui::SettingsRecorder<>;
+
 int main() {
-    const jgui::SettingsRecorderOptions options{};
-    static_cast<void>(options);
+    static_cast<void>(sizeof(Recorder));
 }
