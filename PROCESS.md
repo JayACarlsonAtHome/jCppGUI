@@ -61,8 +61,11 @@ None of this replaces reading the code: see `docs/Review_Checklist.md`.
 
 **Paths.** Every location derives from one base directory, the script's own directory or the CMake
 source directory, plus relative paths. No absolute path is allowed anywhere in the repository, with
-no exceptions and no allowlist. Scripts have no shebang and run as `bash <script>`. CMake finds bash
-with `find_program`.
+no allowlist and one exception, which the owner approved on 2026-11-02: the kernel's `proc/self/exe` link, with its leading
+slash, as one quoted literal, once, in `Lin/v001/src/base_directory.cpp`, because a running program has no other way to learn
+where its executable really is. `tests/check_source_rules.sh` enforces exactly that, and `tests/check_rules_selftest.sh` shows the
+literal refused anywhere else and any other absolute path refused in that file. Scripts have no shebang and run as
+`bash <script>`. CMake finds bash with `find_program`.
 The compile-fail tests prove the compiler rejects the mistakes it is meant to catch.
 
 Remove anything superseded in the same change. Leave no commented-out code or stubs.

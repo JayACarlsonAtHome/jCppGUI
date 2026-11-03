@@ -5,6 +5,7 @@
 
 #include "application.hpp"
 #include "backend.hpp"
+#include "base_directory.hpp"
 #include "button.hpp"
 #include "canvas.hpp"
 #include "error.hpp"

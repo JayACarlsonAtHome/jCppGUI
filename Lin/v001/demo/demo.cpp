@@ -1,7 +1,7 @@
 // File: demo/demo.cpp
 // Purpose: Opens a 640x480 window with a menu bar holding a Help button. --smoke waits for the first
 //          configure, presents one frame and exits 0, for testing against a live compositor. --redraw-monitor
-//          runs the same window with the redraw monitor, which records to redraw_monitor.jtext in the working directory.
+//          runs the same window with the redraw monitor, which records to redraw_monitor.jtext in the application base directory.
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>

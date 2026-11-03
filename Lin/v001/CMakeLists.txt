@@ -149,14 +149,14 @@ target_link_libraries(jgui_wayland
   PUBLIC jgui_hardening PkgConfig::XKBCOMMON jgui_xdg_glue
   PRIVATE jgui_warnings)
 
-add_library(jgui_program STATIC src/program_arguments.cpp)
+add_library(jgui_program STATIC src/program_arguments.cpp src/base_directory.cpp)
 target_include_directories(jgui_program PUBLIC include)
 target_link_libraries(jgui_program PUBLIC jgui_hardening PRIVATE jgui_warnings)
 
 # The redraw monitor's file: only a program that uses FileSink links it.
 add_library(jgui_monitor STATIC src/monitor/file_sink.cpp)
 target_include_directories(jgui_monitor PUBLIC include PRIVATE src)
-target_link_libraries(jgui_monitor PUBLIC jgui_hardening PRIVATE jgui_warnings)
+target_link_libraries(jgui_monitor PUBLIC jgui_hardening PRIVATE jgui_warnings jgui_program)
 
 find_program(JGUI_BASH bash REQUIRED)
 
@@ -235,12 +235,16 @@ set(JGUI_FAKE_SCENARIOS
   arguments_too_short string_not_terminated keymap_with_no_descriptor
   protocol_error_on_surface protocol_error_on_display protocol_error_on_nothing signal_storm
   monitor_real_frames monitor_never_release monitor_versus_none monitor_cannot_write
+  demo_as_built demo_copy_under_a_base demo_copy_with_no_base
   cursor_all_edges cursor_no_protocol cursor_seat_removed cursor_pointer_flap cursor_manager_removed cursor_manager_late cursor_during_drag)
 foreach(scenario ${JGUI_FAKE_SCENARIOS})
   add_test(NAME fake_${scenario} COMMAND test_fake_compositor ${scenario})
   set_tests_properties(fake_${scenario} PROPERTIES TIMEOUT 300
     ENVIRONMENT "JGUI_TEST_KEYMAP=${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/seeds/keymap/minimal.xkb")
 endforeach()
+# These three start the real demo program itself, so the base directory it finds is a real one.
+set_property(TEST fake_demo_as_built fake_demo_copy_under_a_base fake_demo_copy_with_no_base APPEND PROPERTY
+  ENVIRONMENT "JGUI_TEST_DEMO=$<TARGET_FILE:jcppgui-demo>" "JGUI_TEST_BASE=${CMAKE_CURRENT_SOURCE_DIR}")
 # One C call failing at a time, through the real implementation. It goes against the compositor above.
 jgui_test(test_injection)
 target_include_directories(test_injection PRIVATE src src/wayland)
@@ -256,6 +260,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   target_compile_options(test_redraw_monitor PRIVATE -fconstexpr-steps=50000000)
 endif()
 
+# Where the base directory is: the rule in static_assert, and at run time this program started from copies and links of itself.
+jgui_test(test_base_directory)
+target_link_libraries(test_base_directory PRIVATE jgui_monitor jgui_program)
+set_property(TEST test_base_directory APPEND PROPERTY
+  ENVIRONMENT "JGUI_TEST_SELF=$<TARGET_FILE:test_base_directory>" "JGUI_TEST_BASE=${CMAKE_CURRENT_SOURCE_DIR}")
+
 jgui_test(test_fake_compositor_rules)
 target_include_directories(test_fake_compositor_rules PRIVATE src src/wayland)
 target_link_libraries(test_fake_compositor_rules PRIVATE jgui_wayland)
@@ -264,8 +274,10 @@ add_test(NAME fake_compositor_lists_match COMMAND test_fake_compositor --expect-
 
 add_test(NAME demo_smoke COMMAND jcppgui-demo --smoke)
 set_tests_properties(demo_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
-add_test(NAME demo_smoke_redraw_monitor COMMAND jcppgui-demo --smoke --redraw-monitor WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_test(NAME demo_smoke_redraw_monitor COMMAND jcppgui-demo --smoke --redraw-monitor)
 set_tests_properties(demo_smoke_redraw_monitor PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+# Both write the one file in the base directory, and each would remove the other's temporary file.
+set_tests_properties(demo_smoke_redraw_monitor fake_demo_as_built PROPERTIES RESOURCE_LOCK jgui_base_directory_file)
 
 # --- Compile-fail tests: each case must fail with its diagnostic, and the same source must compile
 #     when the one mistake is left out, so a failure for an unrelated reason is caught. ---

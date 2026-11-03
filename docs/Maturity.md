@@ -49,7 +49,9 @@ libwayland's. `tests/fuzz/fuzz_backend.cpp` fuzzes the backend's input path thro
 `tests/test_redraw_monitor.cpp` runs it with a test clock in `static_assert`, through the application and the demo's tree, and at run time
 with the real font and the real file: a directory, a symlink, a dangling symlink, a pipe, a missing or unwritable directory and a real
 failed write under `RLIMIT_FSIZE`, each with the program going on. `tests/test_fake_compositor.cpp` runs it through the real backend, and shows the
-same frames, pixel for pixel, reach the compositor with a monitor and without.
+same frames, pixel for pixel, reach the compositor with a monitor and without. It also starts the real demo program from elsewhere, as built and as copies,
+and shows where the file lands, or the refusal when no `vNNN` folder is above it. `tests/test_base_directory.cpp` has the rule in `static_assert`, and at run time copies, links, and an executable
+replaced or removed while running. Not tested: the kernel's link itself failing to read, which needs a system with no `proc` mounted.
 
 Not shown: a long interactive session against a real compositor, and how long writing takes with a full 65536 rows. Nothing in this repository
 checks the file with jText's validator, because it does not depend on jText. A crash loses more than about a second after a quiet

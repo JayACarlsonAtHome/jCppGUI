@@ -104,6 +104,40 @@ must_catch tests/evil.sh "absolute path" "cat ${slash}etc/passwd"
 must_catch tests/evil.sh "shebang" "#!${slash}bin/sh"
 must_catch tests/evil.cpp "C-style cast" 'int x = (int)y;'
 
+# --- The one excepted literal: refused anywhere but its one file, and that file is still scanned for all else ---
+excepted_file="src/base_directory.cpp"
+kernel_link="${slash}proc/self/exe"
+for elsewhere in tests/evil.cpp src/evil.cpp src/monitor/base_directory.cpp include/jCppGUI/v001/evil.hpp demo/evil.cpp; do
+  must_catch "$elsewhere" "absolute path" "const char* p = \"$kernel_link\";"
+done
+must_catch tests/evil.sh "absolute path" "readlink $kernel_link"
+must_catch notes.md "absolute path" "It reads \"$kernel_link\"."
+# must_catch_in_excepted <what is added to the excepted file>
+must_catch_in_excepted() {
+  local saved="$work/saved_excepted"
+  ran=$((ran + 1))
+  cp "$tree/$excepted_file" "$saved" || exit 2
+  printf '%s\n' "$1" >> "$tree/$excepted_file"
+  output="$(rules)"
+  status=$?
+  cp "$saved" "$tree/$excepted_file" || exit 2
+  if [ "$status" -eq 0 ]; then
+    echo "MISSED in the excepted file: $1"
+    failed=$((failed + 1))
+  elif ! grep -qF "absolute path" <<<"$output"; then
+    echo "CAUGHT FOR ANOTHER REASON in the excepted file: $1"
+    echo "$output"
+    failed=$((failed + 1))
+  fi
+}
+must_catch_in_excepted "const char* p = \"${slash}etc/passwd\";"
+must_catch_in_excepted "const char* p = \"${slash}proc/self/cwd\";"
+must_catch_in_excepted "const char* p = \"$kernel_link/x\";"
+must_catch_in_excepted "const char* p = \"${kernel_link}2\";"
+must_catch_in_excepted "// $kernel_link"
+must_catch_in_excepted "const char* again = \"$kernel_link\";"
+must_catch_in_excepted "const char* a = \"${slash}etc/x\"; const char* b = \"$kernel_link\";"
+
 # --- A source file outside the four directories ---
 must_catch stray.cpp "source outside" 'int x;'
 

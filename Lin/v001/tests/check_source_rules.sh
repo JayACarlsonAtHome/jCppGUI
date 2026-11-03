@@ -152,16 +152,28 @@ report "libwayland in the test compositor, which speaks the wire protocol by its
 report "font library header outside src/text" \
   "$(in_raw '^\s*#\s*include.*(ft2build|fontconfig|hb\.h|hb-ft)' | grep -v '^src/text/')"
 
-# --- No absolute paths in the repository, with no exceptions, and so no shebangs. Source anywhere else is refused. ---
+# --- No absolute paths in the repository, and so no shebangs. Source anywhere else is refused. There is one exception, which
+#     the owner approved on 2026-11-02: the kernel's link to the running executable, as this one quoted literal, once, in this
+#     one file. It is built from parts so that this script stays clean. Everything else in that file is scanned as usual. ---
 cd "$REPO_DIR" || exit 2
+slash=/
+excepted_file="Lin/v001/src/base_directory.cpp"
+excepted_literal="\"${slash}proc/self/exe\""
 tracked="$(git ls-files --cached --others --exclude-standard)" || { echo "git ls-files failed: these rules need a git checkout"; exit 2; }
 [ -n "$tracked" ] || { echo "git ls-files found nothing"; exit 2; }
+absolute_path='(^|[^[:alnum:]_.~}/-])/(home|mnt|usr|tmp|etc|opt|var|root|run|srv|bin|sbin|lib|lib64|dev|proc|sys|boot|media)/'
 paths=""
 shebangs=""
 strays=""
 while IFS= read -r file; do
   [ -f "$file" ] || continue
-  found="$(grep -nHE '(^|[^[:alnum:]_.~}/-])/(home|mnt|usr|tmp|etc|opt|var|root|run|srv|bin|sbin|lib|lib64|dev|proc|sys|boot|media)/' "$file")"
+  if [ "$file" = "$excepted_file" ]; then
+    found="$(grep -oF -- "$excepted_literal" "$file" | wc -l)"
+    [ "$found" -gt 1 ] && paths+="$file: the one excepted literal is there $found times"$'\n'
+    found="$(sed "s|$excepted_literal||" "$file" | grep -nHE --label="$file" "$absolute_path")"
+  else
+    found="$(grep -nHE "$absolute_path" "$file")"
+  fi
   [ -n "$found" ] && paths+="$found"$'\n'
   found="$(grep -nH '^#!' "$file")"
   [ -n "$found" ] && shebangs+="$found"$'\n'

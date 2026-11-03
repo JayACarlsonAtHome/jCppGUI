@@ -29,6 +29,7 @@
 
 #include "fake_compositor/harness.hpp"
 #include "help_ui.hpp"
+#include "jCppGUI/v001/base_directory.hpp"
 #include "jCppGUI/v001/redraw_monitor.hpp"
 #include "jCppGUI/v001/wayland_backend.hpp"
 #include "monitor_helpers.hpp"
@@ -1071,6 +1072,22 @@ struct MonitorCannotWrite {
     }
 };
 
+// The real demo program, started from a working directory of its own and told a false argv[0], with --redraw-monitor. It
+// draws its frame and is told to close. Under test is where its file lands, and that a first frame is reached either way.
+enum class DemoPlace : std::uint8_t { AsBuilt, CopyUnderABase, CopyWithNoBase };
+template <DemoPlace Place>
+struct RealDemo {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr DemoPlace place = Place;
+    void on(Session& session, const BufferCommitted& commit) {
+        session.release(commit.buffer);
+        session.close_window();
+    }
+    void finish(Session& session) const {
+        if (session.commits_with_buffer() == 0) session.violation("the demo did not reach its first frame");
+    }
+};
+
 // What arrives at the compositor, for comparing a run with a monitor and one without.
 struct CommitRecord {
     std::vector<std::vector<std::uint32_t>> pictures{};
@@ -1197,12 +1214,85 @@ template <class Script>
     return true;
 }
 
+// Runs in the scenario's client process, and the demo is a child of that. Every folder here that is named like a version
+// is a trap: only the base directory may ever hold the file.
+template <DemoPlace Place>
+[[nodiscard]] int run_the_real_demo() {
+    using std::filesystem::path;
+    const char* built = std::getenv("JGUI_TEST_DEMO");
+    const char* source = std::getenv("JGUI_TEST_BASE");
+    if (built == nullptr || source == nullptr) {
+        std::cerr << "JGUI_TEST_DEMO and JGUI_TEST_BASE must be set\n";
+        return 1;
+    }
+    const jgui_test::TemporaryDirectory temporary;
+    const path top = std::filesystem::canonical(temporary.path());
+    if (jgui::application_base_from((top / "program").string())) {
+        std::cerr << "a folder above the temporary directory is named like a version, so this test would prove nothing: " << top << '\n';
+        return 1;
+    }
+    const path working_directory = top / "v888" / "here";
+    const path false_home = top / "v777";
+    std::filesystem::create_directories(working_directory);
+    std::filesystem::create_directories(false_home);
+
+    path program{built};
+    path base = std::filesystem::canonical(source);
+    if (Place != DemoPlace::AsBuilt) {
+        base = Place == DemoPlace::CopyUnderABase ? top / "v321" : top / "plain";
+        program = base / "build" / "preset" / "jcppgui-demo";
+        std::filesystem::create_directories(program.parent_path());
+        std::filesystem::copy_file(built, program);
+    }
+    const path file = base / jgui::default_redraw_file_name;
+    std::error_code absent;
+    const auto before = std::filesystem::last_write_time(file, absent);
+
+    const path errors = top / "errors.txt";
+    const int status = jgui_test::run_program(program, (false_home / "jcppgui-demo").string(), working_directory, {"--redraw-monitor"}, errors);
+    const std::string said = read_text_file(errors.string());
+    std::cout << "the demo ended with " << status << " and said: " << said << '\n';
+
+    bool found_elsewhere = false;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator{top}) {
+        if (entry.path().filename().string().starts_with(jgui::default_redraw_file_name) && entry.path() != file) {
+            std::cerr << "a file where it should not be: " << entry.path() << '\n';
+            found_elsewhere = true;
+        }
+    }
+    if (found_elsewhere || !std::filesystem::is_empty(working_directory) || !std::filesystem::is_empty(false_home)) {
+        std::cerr << "the working directory or argv[0]'s folder was used\n";
+        return 1;
+    }
+    if (Place == DemoPlace::CopyWithNoBase) {
+        if (status != 1 || !said.contains("no base directory") || !said.contains("no folder named v") || std::filesystem::exists(file)) {
+            std::cerr << "the demo with no base directory did not refuse cleanly\n";
+            return 1;
+        }
+        return 0;
+    }
+    std::error_code gone;
+    const auto after = std::filesystem::last_write_time(file, gone);
+    if (status != 0 || gone || (!absent && after == before)) {
+        std::cerr << "no new file at " << file << '\n';
+        return 1;
+    }
+    if (!jgui_test::blocks_all_close(read_text_file(file.string()))) {
+        std::cerr << "not a whole file at " << file << '\n';
+        return 1;
+    }
+    std::cout << "the file is at " << file << '\n';
+    return 0;
+}
+
 struct MonitorVersusNone {};
 
 template <class Script>
 [[nodiscard]] bool run_one() {
     if constexpr (std::same_as<Script, MonitorVersusNone>) {
         return run_monitor_versus_none();
+    } else if constexpr (requires { Script::place; }) {
+        return run_scenario(Script{}, GlobalSet{}, [] { return run_the_real_demo<Script::place>(); });
     } else if constexpr (requires { requires Script::monitored; }) {
         return run_scenario(Script{}, GlobalSet{}, [] { return run_monitored_client<Script>(); });
     } else {
@@ -1272,6 +1362,9 @@ constexpr auto scenarios = std::tuple{
     Named<MonitorNeverRelease>{"monitor_never_release"},
     Named<MonitorVersusNone>{"monitor_versus_none"},
     Named<MonitorCannotWrite>{"monitor_cannot_write"},
+    Named<RealDemo<DemoPlace::AsBuilt>>{"demo_as_built"},
+    Named<RealDemo<DemoPlace::CopyUnderABase>>{"demo_copy_under_a_base"},
+    Named<RealDemo<DemoPlace::CopyWithNoBase>>{"demo_copy_with_no_base"},
     Named<CursorAllEdges>{"cursor_all_edges"},
     Named<CursorNoProtocol>{"cursor_no_protocol"},
     Named<CursorSeatRemoved>{"cursor_seat_removed"},

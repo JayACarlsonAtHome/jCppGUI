@@ -34,6 +34,7 @@ namespace {
 using namespace jgui;
 using jgui_test::BlockShaper;
 using jgui_test::MemorySink;
+using jgui_test::TemporaryDirectory;
 using jgui_test::TestClock;
 
 using TestMonitor = FrameMonitor<TestClock, MemorySink>;
@@ -516,28 +517,6 @@ static_assert(unwritable_row_is_counted_and_left_out());
     return text;
 }
 
-// A directory for one test, gone at the end of it.
-class TemporaryDirectory {
-public:
-    TemporaryDirectory() {
-        path_ = (std::filesystem::temp_directory_path() / "jcppgui-monitor-XXXXXX").string();
-        if (::mkdtemp(path_.data()) == nullptr) path_.clear();
-    }
-    TemporaryDirectory(const TemporaryDirectory&) = delete;
-    TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
-    ~TemporaryDirectory() {
-        std::error_code ignored;
-        std::filesystem::permissions(path_, std::filesystem::perms::owner_all, ignored);
-        std::filesystem::remove_all(path_, ignored);
-    }
-    [[nodiscard]] const std::string& path() const noexcept { return path_; }
-    [[nodiscard]] std::filesystem::path file() const { return std::filesystem::path{path_} / default_redraw_file_name; }
-    [[nodiscard]] std::filesystem::path temporary() const { return std::filesystem::path{path_} / "redraw_monitor.jtext.tmp"; }
-
-private:
-    std::string path_{};
-};
-
 using RealTimeMonitor = FrameMonitor<SteadyClock, FileSink>;
 
 [[nodiscard]] RealTimeMonitor monitor_in(const std::string& directory, std::int64_t write_interval_ns = 1'000'000'000) {
@@ -654,17 +633,17 @@ void test_replaces_an_old_file(jgui_test::Checker& check) {
     check(::stat(directory.file().c_str(), &status) == 0 && (status.st_mode & 0777U) == 0600U, "leaves mode 0600");
 }
 
-void test_base_directory_is_held(jgui_test::Checker& check) {
+void test_directory_is_held(jgui_test::Checker& check) {
     const TemporaryDirectory first;
     const TemporaryDirectory second;
     const std::filesystem::path before = std::filesystem::current_path();
     std::filesystem::current_path(first.path());
-    FileSink sink;
+    FileSink sink{"."};
     std::filesystem::current_path(second.path());
-    check(sink.file_name() == "redraw_monitor.jtext" && sink.save("x\n").has_value(), "the default name, in the working directory");
+    check(sink.file_name() == "redraw_monitor.jtext" && sink.save("x\n").has_value(), "the default name, in a directory given by a relative path");
     std::filesystem::current_path(before);
-    check(std::filesystem::exists(first.file()), "where it was when the sink was made");
-    check(!std::filesystem::exists(second.file()), "and not where it is now");
+    check(std::filesystem::exists(first.file()), "where that path led when the sink was made");
+    check(!std::filesystem::exists(second.file()), "and not where it leads now");
 }
 
 // Whatever is wrong with the place, the program goes on and the reason can be read. The monitor stops at the first failure.
@@ -720,9 +699,13 @@ void test_failed_writes(jgui_test::Checker& check) {
         check(::mkfifo(pipe.c_str(), 0600) == 0, "a pipe at the path");
         check_program_carries_on(check, monitor_in(directory.path()), "not a regular file", "is refused, with no wait on it");
     }
-    check_program_carries_on(check, monitor_in("no/such/directory/here"), "cannot open the directory", "a base directory that does not exist");
-    check_program_carries_on(check, RealTimeMonitor{SteadyClock{}, FileSink{".", "a/b"}}, "plain name", "a file name with a directory in it");
-    check_program_carries_on(check, RealTimeMonitor{SteadyClock{}, FileSink{".", ".."}}, "plain name", "a file name that is the parent");
+    {
+        const TemporaryDirectory directory;
+        check_program_carries_on(check, monitor_in(directory.path() + "/no/such/directory"), "cannot open the directory", "a directory that does not exist");
+        check_program_carries_on(check, RealTimeMonitor{SteadyClock{}, FileSink{directory.path(), "a/b"}}, "plain name", "a file name with a directory in it");
+        check_program_carries_on(check, RealTimeMonitor{SteadyClock{}, FileSink{directory.path(), ".."}}, "plain name", "a file name that is the parent");
+        check(std::filesystem::is_empty(directory.path()), "and nothing is written for any of them");
+    }
     if (::geteuid() != 0) {
         const TemporaryDirectory directory;
         check(::chmod(directory.path().c_str(), 0500) == 0, "a directory that cannot be written");
@@ -762,7 +745,7 @@ int main() {
     test_monitor_changes_nothing(check);
     test_real_file(check);
     test_replaces_an_old_file(check);
-    test_base_directory_is_held(check);
+    test_directory_is_held(check);
     test_failed_writes(check);
     test_write_cut_short(check);
     return check.finish();

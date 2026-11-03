@@ -98,7 +98,7 @@ jCppGUI/
   `Lin/v002` or any C++26 code.
 - Each `<OS>/<version>` is a self-contained world. Do not add a shared source directory.
 - Namespace: `namespace jgui::inline v001`, so `jgui::Button` works for consumers.
-- No absolute paths anywhere, with no allowlist, so no shebangs: scripts run as `bash <script>`.
+- No absolute paths anywhere, with no allowlist, so no shebangs: scripts run as `bash <script>`. The one exception came later: see `PROCESS.md`.
   Everything is found relative to the script or `CMAKE_SOURCE_DIR`.
 - Textual headers only in this slice. A modules front-end comes later.
 - The repository exists, with branches `main`, `test-work` and `dev-work` and a remote named
@@ -396,7 +396,7 @@ text field.
 - A CTest script fails the build on any banned type-erasure token from the Type rule, in all our
   source. `void*` is allowed only in the trampoline helper.
 - `grep` finds no `new `, `delete `, C-style casts in `src/` outside the documented exceptions, and
-  no absolute paths in the repository.
+  no absolute paths in the repository, apart from the later exception in `PROCESS.md`.
 - The report lists each done item above with its evidence, files created, and anything that could
   not be verified. Interactive behaviour (dragging, resizing, clicking) is listed for the owner to
   check by hand.

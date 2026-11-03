@@ -233,7 +233,9 @@ the output, so the same logic and the same file text run in `static_assert` with
 
 **The limits of "a crash loses about a second".** That holds while frames keep coming. The loop sleeps with no timer, so rows recorded just before a quiet time wait for the next event, and a crash in the quiet time loses them. The file is not flushed to the disk with `fsync`, so a crash of the whole system can lose more.
 
-The file's place is the working directory when the monitor is made, as the application's base directory, or a directory given to `FileSink`. See `docs/SECURITY.md`.
+The file's place is the application's base directory (see below), or a directory given to `FileSink`. With no base directory to be found, the monitor refuses: the program carries on, nothing is written, and the reason is readable at exit. See `docs/SECURITY.md`.
+
+**The application's base directory** is the `vNNN` folder that contains the running executable, so for `Lin/v001/build/gcc-release/jcppgui-demo` it is `Lin/v001`, and the file is `Lin/v001/redraw_monitor.jtext`. `application_base_from`, in `base_directory.hpp`, is the rule as a pure function: from the executable's parent folder upward, the nearest name that is exactly `v` and three digits, and the file name never counts. It refuses a relative or empty path and a path with no such folder, and also a repeated or trailing slash and a `.` or `..` name, which the kernel never reports and which walking up by text could get wrong. `application_base_directory` applies it to the kernel's `proc/self/exe` link. It never looks at `argv[0]`, the environment or where the program was started from. So a symbolic link to the executable finds the base of what it leads to, and a copy or a hard link stands for itself. An executable replaced or removed while running is refused, as is one whose real name ends the same way as the kernel's ` (deleted)` mark.
 
 ## Frames
 
@@ -271,7 +273,8 @@ found relative to the script or to `CMakeLists.txt`.
 **The paths rule.** Every location derives from one base directory, the script's own directory or the
 CMake source directory, plus relative paths. No absolute path is allowed in the repository, with no
 allowlist, which also rules out shebangs. Scripts run as `bash bsir.sh` and
-`bash tests/check_source_rules.sh`.
+`bash tests/check_source_rules.sh`. The one exception, which the owner approved, is the kernel's `proc/self/exe` link as one
+literal in `src/base_directory.cpp`, enforced by that script: see `PROCESS.md`.
 
 ## The window frame
 

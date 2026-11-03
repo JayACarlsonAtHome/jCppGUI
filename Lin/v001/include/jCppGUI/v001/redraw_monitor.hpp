@@ -62,12 +62,15 @@ namespace detail {
 }  // namespace detail
 
 // Saves to a file named in a directory, by writing a temporary file beside it and renaming that over it, so a reader
-// sees a whole file or the one before. The directory is opened once, here, so later changes of working directory do
-// not move the file. Anything wrong is an Error from save: this never ends the program. Defined in src/monitor/.
+// sees a whole file or the one before. The directory is opened once, here, and held, so the file's place cannot change
+// later. Anything wrong, including no base directory to be found, is an Error from save: this never ends the program.
+// Defined in src/monitor/.
 class FileSink {
 public:
-    // The application's base directory is the working directory, unless it is given.
-    explicit FileSink(std::string_view base_directory = ".", std::string_view file_name = default_redraw_file_name);
+    // In the application's base directory: see base_directory.hpp.
+    FileSink();
+    // In a directory the caller names, such as a test's own.
+    explicit FileSink(std::string_view directory, std::string_view file_name = default_redraw_file_name);
     FileSink(const FileSink&) = delete;
     FileSink& operator=(const FileSink&) = delete;
     FileSink(FileSink&& other) noexcept;
@@ -78,6 +81,8 @@ public:
     [[nodiscard]] std::string_view file_name() const noexcept { return name_; }
 
 private:
+    void open_directory(const std::string& directory);
+
     std::string name_;
     int directory_{-1};
     std::optional<Error> refused_{};

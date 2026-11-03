@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "file_io.hpp"
+#include "jCppGUI/v001/base_directory.hpp"
 #include "jCppGUI/v001/redraw_monitor.hpp"
 
 namespace jgui::inline v001 {
@@ -54,18 +55,30 @@ enum class Found : std::uint8_t { Nothing, RegularFile };
 
 }  // namespace
 
-FileSink::FileSink(std::string_view base_directory, std::string_view file_name) : name_{file_name} {
+FileSink::FileSink() : name_{default_redraw_file_name} {
+    const auto base = application_base_directory();
+    if (base) {
+        open_directory(*base);
+    } else {
+        refused_ = Error{base.error().code, "the redraw monitor has no base directory: " + base.error().message};
+    }
+}
+
+FileSink::FileSink(std::string_view directory, std::string_view file_name) : name_{file_name} {
     if (!detail::redraw_file_name_fits(file_name)) {
         refused_ = Error{ErrorCode::System, "the redraw monitor's file must be a plain name in its directory"};
         return;
     }
-    const std::string base{base_directory};
-    if (base.empty() || base.contains('\0')) {
-        refused_ = Error{ErrorCode::System, "the redraw monitor's base directory is not a path"};
+    open_directory(std::string{directory});
+}
+
+void FileSink::open_directory(const std::string& directory) {
+    if (directory.empty() || directory.contains('\0')) {
+        refused_ = Error{ErrorCode::System, "the redraw monitor's directory is not a path"};
         return;
     }
-    directory_ = ::open(base.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (directory_ < 0) refused_ = failure("the redraw monitor cannot open the directory", base, errno).error();
+    directory_ = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (directory_ < 0) refused_ = failure("the redraw monitor cannot open the directory", directory, errno).error();
 }
 
 FileSink::FileSink(FileSink&& other) noexcept
