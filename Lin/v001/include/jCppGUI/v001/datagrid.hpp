@@ -134,7 +134,7 @@ public:
     using row_type = Row;
     using column_types = std::tuple<Columns...>;
 
-    constexpr DataGrid() : headers_{detail::ShapedCaption{Columns::title()}...}, widths_{Columns::start_width()...} {}
+    constexpr DataGrid() : headers_{detail::ShapedCaption{Columns::title()}...}, widths_{Columns::start_width()...}, shown_{Columns::start_width()...} {}
     DataGrid(const DataGrid&) = delete;
     DataGrid& operator=(const DataGrid&) = delete;
     constexpr DataGrid(DataGrid&&) = default;
@@ -164,7 +164,7 @@ public:
     [[nodiscard]] constexpr std::optional<GridSort> sort() const noexcept { return sort_; }
     [[nodiscard]] constexpr Height scroll_down() const noexcept { return down_.offset(); }
     [[nodiscard]] constexpr Width scroll_across() const noexcept { return across_.offset(); }
-    [[nodiscard]] constexpr Width column_width(std::size_t column) const { return widths_.at(column); }
+    [[nodiscard]] constexpr Width column_width(std::size_t column) const { return shown_.at(column); }
     [[nodiscard]] constexpr Height row_height() const noexcept { return row_height_; }
     [[nodiscard]] constexpr bool focused() const noexcept { return focused_; }
     [[nodiscard]] constexpr Rect bounds() const noexcept { return bounds_; }
@@ -179,6 +179,7 @@ public:
     template <TextShaper Shaper>
     constexpr std::expected<Rect, Error> layout(const TreeKey&, Rect area, const Shaper& text) {
         bounds_ = area;
+        inner_ = area.inset(theme::grid_border_across, theme::grid_border_down);
         row_height_ = std::clamp(text.line_height() + theme::cell_pad_y + theme::cell_pad_y, Height{1}, Height{max_grid_row_height});
         place_parts();
         if (auto shaped = shape_headers(text); !shaped) return std::unexpected(std::move(shaped.error()));
@@ -187,13 +188,15 @@ public:
     }
 
     constexpr void paint(const TreeKey&, Canvas& canvas) {
-        const Canvas local = canvas.clipped(bounds_);
-        local.fill_rect(bounds_, theme::background);
+        const Canvas whole = canvas.clipped(bounds_);
+        paint_border(whole);
+        const Canvas local = whole.clipped(inner_);
+        local.fill_rect(inner_, theme::background);
         paint_body(local.clipped(body_));
         paint_header(local);
+        paint_filler(local);
         down_.paint(local);
         across_.paint(local);
-        if (focused_) local.stroke_rect(bounds_, theme::focus_edge);
     }
 
     template <class U>
@@ -309,11 +312,11 @@ private:
 
     [[nodiscard]] constexpr std::optional<std::size_t> boundary_at(Point at) const noexcept {
         if (!header_.contains(at)) return std::nullopt;
-        return boundary_near(std::span<const Width>{widths_}, columns_origin(), at.left(), grid_boundary_reach);
+        return boundary_near(std::span<const Width>{shown_}, columns_origin(), at.left(), grid_boundary_reach);
     }
 
     [[nodiscard]] constexpr std::optional<std::size_t> column_at(Point at) const noexcept {
-        return span_index_at(std::span<const Width>{widths_}, columns_origin(), at.left());
+        return span_index_at(std::span<const Width>{shown_}, columns_origin(), at.left());
     }
 
     [[nodiscard]] constexpr CursorShape cursor_at(Point at) const noexcept {
@@ -326,21 +329,47 @@ private:
         ui.request_cursor(shape);
     }
 
-    // Where each part goes, from the bounds and from how much there is to show. Anything that changes either comes here,
+    // Where each part goes, inside the border, from the bounds and from how much there is to show. Anything that changes either comes here,
     // and this is what keeps both offsets clamped.
     constexpr void place_parts() noexcept {
-        const Height header_height = std::min(row_height_, bounds_.height());
+        const Height header_height = std::min(row_height_, inner_.height());
         const Size content{total_width(std::span<const Width>{widths_}), repeated_extent(row_height_, rows_.size())};
-        const Size room{bounds_.width(), bounds_.height() - header_height};
+        const Size room{inner_.width(), inner_.height() - header_height};
         const ScrollBarsNeeded bars = scroll_bars_needed(content, room, theme::scroll_bar_across, theme::scroll_bar_down);
         const Width body_width = bars.down ? room.width() - theme::scroll_bar_across : room.width();
         const Height body_height = bars.across ? room.height() - theme::scroll_bar_down : room.height();
-        header_ = Rect{bounds_.origin(), Size{body_width, header_height}};
-        body_ = Rect{Point{bounds_.left(), top_after(header_.bottom())}, Size{body_width, body_height}};
-        const Rect track_down = bars.down ? Rect{Point{left_after(body_.right()), body_.top()}, Size{bounds_.right() - left_after(body_.right()), body_height}} : Rect{};
-        const Rect track_across = bars.across ? Rect{Point{body_.left(), top_after(body_.bottom())}, Size{body_width, bounds_.bottom() - top_after(body_.bottom())}} : Rect{};
+        header_ = Rect{inner_.origin(), Size{body_width, header_height}};
+        body_ = Rect{Point{inner_.left(), top_after(header_.bottom())}, Size{body_width, body_height}};
+        const Rect track_down = bars.down ? Rect{Point{left_after(body_.right()), body_.top()}, Size{inner_.right() - left_after(body_.right()), body_height}} : Rect{};
+        const Rect track_across = bars.across ? Rect{Point{body_.left(), top_after(body_.bottom())}, Size{body_width, inner_.bottom() - top_after(body_.bottom())}} : Rect{};
         down_.place(track_down, content.height(), body_height);
         across_.place(track_across, content.width(), body_width);
+        // The columns end at the grid. The last one takes a little room left over, and a lot is a plain filler, which is no column: its header says so
+        // and takes no click or drag. The last column never shows narrower than it was set, so no text is cut for this.
+        shown_ = widths_;
+        filler_ = Rect{};
+        filler_header_ = Rect{};
+        if (content.width() < body_width) {
+            const Width spare = body_width - content.width();
+            if (spare < widths_.back()) {
+                shown_.back() = shown_.back() + spare;
+            } else {
+                const Left filler_left = left_after(body_.left() + content.width());
+                filler_ = Rect{Point{filler_left, body_.top()}, Size{spare, body_height}};
+                filler_header_ = Rect{Point{filler_left, header_.top()}, Size{spare, header_height}};
+            }
+        }
+    }
+
+    // Four strips around the contents. Focus darkens the line touching them, so the soft colour always shows.
+    constexpr void paint_border(const Canvas& whole) const {
+        const Width across = theme::grid_border_across;
+        const Height down = theme::grid_border_down;
+        whole.fill_rect(Rect{bounds_.origin(), Size{bounds_.width(), down}}, theme::grid_border);
+        whole.fill_rect(Rect{Point{bounds_.left(), bounds_.bottom() - down}, Size{bounds_.width(), down}}, theme::grid_border);
+        whole.fill_rect(Rect{Point{bounds_.left(), inner_.top()}, Size{across, inner_.height()}}, theme::grid_border);
+        whole.fill_rect(Rect{Point{bounds_.right() - across, inner_.top()}, Size{across, inner_.height()}}, theme::grid_border);
+        if (focused_) whole.stroke_rect(bounds_.inset(across - Width{1}, down - Height{1}), theme::focus_edge);
     }
 
     template <class Bar>
@@ -356,7 +385,7 @@ private:
             drag_ = Drag::ColumnBoundary;
             dragged_column_ = *boundary;
             pressed_at_ = at.left();
-            width_at_press_ = widths_[*boundary];
+            width_at_press_ = shown_[*boundary];
         } else if (const auto column = column_at(at); column) {
             drag_ = Drag::HeaderPress;
             dragged_column_ = *column;
@@ -420,7 +449,9 @@ private:
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> shape_headers(const Shaper& text) {
         for (detail::ShapedCaption& header : headers_)
-            if (auto shaped = header.shape_with(text); !shaped) return shaped;
+            if (auto shaped = header.shape_with(text); !shaped) return std::unexpected(std::move(shaped.error()));
+        if (auto shaped = filler_title_long_.shape_with(text); !shaped) return std::unexpected(std::move(shaped.error()));
+        if (auto shaped = filler_title_short_.shape_with(text); !shaped) return std::unexpected(std::move(shaped.error()));
         return {};
     }
 
@@ -435,7 +466,7 @@ private:
         Left start = columns_origin();
         [&]<std::size_t... I>(std::index_sequence<I...>) {
             const auto shape_one_column = [&]<std::size_t K>(std::integral_constant<std::size_t, K>) {
-                const Right end = start + widths_[K];
+                const Right end = start + shown_[K];
                 const bool shows = left_after(end) > body_.left() && start < left_after(body_.right());
                 if (result && shows) result = shape_column<K>(text);
                 start = left_after(end);
@@ -448,7 +479,7 @@ private:
     template <std::size_t K, TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> shape_column(const Shaper& text) {
         using C = ColumnAt<K>;
-        const std::size_t most_bytes = detail::cell_bytes_worth_shaping(widths_[K]);
+        const std::size_t most_bytes = detail::cell_bytes_worth_shaping(shown_[K]);
         for (std::size_t r = 0; r < visible_.count; ++r) {
             const auto& cell = CellFormat<typename C::Value>::text(C::value_of(rows_[order_[visible_.first + r]]));
             const std::string_view whole{cell};
@@ -475,9 +506,9 @@ private:
             if (selected_position_ == position) body.fill_rect(row, theme::button_pressed);
             Left start = columns_origin();
             for (std::size_t k = 0; k < column_count; ++k) {
-                const Right end = start + widths_[k];
+                const Right end = start + shown_[k];
                 if (const auto& run = cells_[r * column_count + k]; run) {
-                    const Canvas cell = body.clipped(Rect{Point{start, top}, Size{widths_[k], row_height_}});
+                    const Canvas cell = body.clipped(Rect{Point{start, top}, Size{shown_[k], row_height_}});
                     cell.draw_text(Point{left_after(start + theme::cell_pad_x), top_after(top + theme::cell_pad_y)}, *run, theme::text);
                 }
                 start = left_after(end);
@@ -485,7 +516,7 @@ private:
             body.fill_rect(Rect{Point{body_.left(), row.bottom() - one_down}, Size{body_.width(), one_down}}, theme::bar_edge);
         }
         Left start = columns_origin();
-        for (const Width width : widths_) {
+        for (const Width width : shown_) {
             const Right end = start + width;
             body.fill_rect(Rect{Point{end - one_across, body_.top()}, Size{one_across, body_.height()}}, theme::bar_edge);
             start = left_after(end);
@@ -496,13 +527,13 @@ private:
         constexpr Height one_down{1};
         constexpr Width one_across{1};
         // The strip goes the whole way across, so nothing is left blank above a scroll bar.
-        const Rect strip{bounds_.origin(), Size{bounds_.width(), header_.height()}};
+        const Rect strip{inner_.origin(), Size{inner_.width(), header_.height()}};
         local.fill_rect(strip, theme::bar);
         const Canvas head = local.clipped(header_);
         Left start = columns_origin();
         for (std::size_t k = 0; k < column_count; ++k) {
-            const Right end = start + widths_[k];
-            const Rect cell_area{Point{start, header_.top()}, Size{widths_[k], header_.height()}};
+            const Right end = start + shown_[k];
+            const Rect cell_area{Point{start, header_.top()}, Size{shown_[k], header_.height()}};
             const Canvas cell = head.clipped(cell_area);
             if (const auto& run = headers_[k].run(); run) cell.draw_text(Point{left_after(start + theme::cell_pad_x), top_after(header_.top() + theme::cell_pad_y)}, *run, theme::text);
             if (sort_ && sort_->column == k) paint_sort_mark(cell, cell_area, sort_->descending);
@@ -510,6 +541,22 @@ private:
             start = left_after(end);
         }
         local.fill_rect(Rect{Point{strip.left(), strip.bottom() - one_down}, Size{strip.width(), one_down}}, theme::bar_edge);
+    }
+
+    // The filler under a header like any other, with the longest title that fits it with its padding, if one does.
+    constexpr void paint_filler(const Canvas& local) const {
+        constexpr Width one_across{1};
+        local.fill_rect(filler_, theme::grid_filler);
+        if (filler_header_.empty()) return;
+        local.fill_rect(Rect{Point{filler_header_.right() - one_across, filler_header_.top()}, Size{one_across, filler_header_.height()}}, theme::bar_edge);
+        const Canvas head = local.clipped(filler_header_);
+        const Point at{left_after(filler_header_.left() + theme::cell_pad_x), top_after(filler_header_.top() + theme::cell_pad_y)};
+        for (const detail::ShapedCaption* title : {&filler_title_long_, &filler_title_short_}) {
+            if (const auto& run = title->run(); run && run->size().width() + theme::cell_pad_x + theme::cell_pad_x <= filler_header_.width()) {
+                head.draw_text(at, *run, theme::text);
+                return;
+            }
+        }
     }
 
     // A small solid triangle at the far end of the header: its point up for ascending, down for descending.
@@ -528,7 +575,9 @@ private:
     std::vector<Row> rows_{};
     std::vector<std::uint32_t> order_{};
     std::array<detail::ShapedCaption, column_count> headers_;
+    // The widths set, by the program or by a drag, and the widths as drawn, which differ only in the last column.
     std::array<Width, column_count> widths_;
+    std::array<Width, column_count> shown_;
     // What layout shaped for the rows in view, by row and then column. Bounded by the window's height and the column count.
     std::vector<std::optional<TextRun>> cells_{};
     ItemRange visible_{};
@@ -536,6 +585,11 @@ private:
     ScrollBar<DownAxis> down_{};
     ScrollBar<AcrossAxis> across_{};
     Rect bounds_{};
+    Rect inner_{};
+    Rect filler_{};
+    Rect filler_header_{};
+    detail::ShapedCaption filler_title_long_{CheckedText{"Gap Fill Only"}};
+    detail::ShapedCaption filler_title_short_{CheckedText{"Fill Only"}};
     Rect header_{};
     Rect body_{};
     Height row_height_{};

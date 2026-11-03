@@ -1099,6 +1099,8 @@ template <class Script>
 
 constexpr std::int32_t in_the_body_x = 400;
 constexpr std::int32_t in_the_body_y = 200;
+// Past the text and short of the filler, which covers a row's highlight.
+constexpr std::int32_t in_the_last_column_x = 200;
 constexpr std::int32_t in_the_bar_x = 630;  // the bar is the last 12 of a client area ending at 636
 
 void scroll_frame_of_steps(Session& session, std::int32_t steps) {
@@ -1207,7 +1209,7 @@ struct GridWheelThenPixels {
     [[nodiscard]] ColourRun band(Session& session) const {
         if (!latest) return ColourRun{};
         const auto pixels = session.pixels_of(*latest);
-        return pixels ? colour_run_at(*pixels, in_the_body_x, jgui::theme::button_pressed.argb) : ColourRun{};
+        return pixels ? colour_run_at(*pixels, in_the_last_column_x, jgui::theme::button_pressed.argb) : ColourRun{};
     }
     void on(Session& session, const BufferCommitted& commit) {
         if (latest) session.release(*latest);
@@ -1348,15 +1350,15 @@ struct GridSeatGoneDuringCapture {
         if (session.commits_with_buffer() == 0 || !session.seat()) return;
         ++idles;
         if (idles == 1) {
-            pointer_enter(session, 104, 26);  // the first boundary, in the header
+            pointer_enter(session, 108, 30);  // the first boundary, in the header
             pointer_button(session, wire::button_left, wire::button_pressed);
-            pointer_motion(session, 200, 26);
+            pointer_motion(session, 204, 30);
             session.queue(event::seat_capabilities(*session.seat(), wire::capability_keyboard));
         } else if (idles == 2) {
             session.queue(event::seat_capabilities(*session.seat(), wire::capability_pointer | wire::capability_keyboard));
         } else if (idles == 3) {
-            pointer_enter(session, 300, 26);
-            pointer_motion(session, 400, 26);
+            pointer_enter(session, 304, 30);
+            pointer_motion(session, 404, 30);
         } else {
             session.close_window();
         }
@@ -1375,20 +1377,20 @@ struct GridCursor {
         return [&session](std::size_t i) {
             switch (i) {
                 case 0:
-                case 1: pointer_motion(session, 104, 26); break;
-                case 2: pointer_motion(session, 104, in_the_body_y); break;
+                case 1: pointer_motion(session, 108, 30); break;
+                case 2: pointer_motion(session, 108, in_the_body_y); break;
                 case 3: pointer_motion(session, on_left_edge_x, on_left_edge_y); break;
                 case 4:
-                    pointer_motion(session, 104, 26);
+                    pointer_motion(session, 108, 30);
                     pointer_button(session, wire::button_left, wire::button_pressed);
                     break;
-                case 5: pointer_motion(session, 150, 300); break;
+                case 5: pointer_motion(session, 154, 300); break;
                 case 6:
-                    pointer_motion(session, 150, 26);
+                    pointer_motion(session, 154, 30);
                     pointer_button(session, wire::button_left, wire::button_released);
                     break;
                 // Still on the boundary, which came along with the drag: the release must have kept its shape, so this sends nothing.
-                case 7: pointer_motion(session, 150, 26); break;
+                case 7: pointer_motion(session, 154, 30); break;
                 default: pointer_motion(session, in_the_body_x, in_the_body_y); break;
             }
         };

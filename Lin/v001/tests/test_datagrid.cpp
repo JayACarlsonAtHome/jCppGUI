@@ -116,8 +116,12 @@ struct Rig {
     ApplicationCore<HeadlessBackend, Window<Echo, SmallGrid>> core;
 };
 
-// The grid's body starts one row down. Row r, if not scrolled, is at this y.
-[[nodiscard]] constexpr std::int32_t row_y(std::int32_t row) { return small_row_height * (row + 1) + 1; }
+// The border: everything in the grid starts this far in.
+constexpr std::int32_t side = 4;
+constexpr std::int32_t top_edge = 4;
+
+// The grid's body starts one row below the border. Row r, if not scrolled, is at this y.
+[[nodiscard]] constexpr std::int32_t row_y(std::int32_t row) { return top_edge + small_row_height * (row + 1) + 1; }
 
 // --- Selection ---
 [[nodiscard]] constexpr bool click_selects_and_tells() {
@@ -148,17 +152,17 @@ static_assert(click_selects_and_tells());
     if (rig.grid().selected() != GridRow{0} || rig.echo().told != 3) return false;  // the second Up changed nothing
     rig.key(Key::End);
     if (rig.grid().selected() != GridRow{19}) return false;
-    // 20 rows of 8 in a body of 52: the last row's bottom is at the view's.
-    if (rig.grid().scroll_down() != Height{108}) return false;
-    rig.key(Key::PageUp);  // six whole rows in view
-    if (rig.grid().selected() != GridRow{13} || rig.grid().scroll_down() != Height{104}) return false;
+    // 20 rows of 8 in a body of 44: the last row's bottom is at the view's.
+    if (rig.grid().scroll_down() != Height{116}) return false;
+    rig.key(Key::PageUp);  // five whole rows in view
+    if (rig.grid().selected() != GridRow{14} || rig.grid().scroll_down() != Height{112}) return false;
     rig.key(Key::Home);
     if (rig.grid().selected() != GridRow{0} || rig.grid().scroll_down() != Height{}) return false;
     rig.key(Key::PageDown);
-    if (rig.grid().selected() != GridRow{6}) return false;
+    if (rig.grid().selected() != GridRow{5}) return false;
     const std::uint64_t settled = rig.frames();
     rig.deliver(KeyEvent{Key::Down, ModifierMask{}, false});
-    return rig.grid().selected() == GridRow{6} && rig.frames() == settled;  // a release does nothing
+    return rig.grid().selected() == GridRow{5} && rig.frames() == settled;  // a release does nothing
 }
 static_assert(keys_move_the_selection_and_keep_it_showing());
 
@@ -192,11 +196,11 @@ static_assert(focus_goes_when_the_frame_says());
     rig.wheel(1);
     if (rig.grid().scroll_down() != Height{24} || rig.frames() != before + 1) return false;  // three rows
     rig.wheel(int_max);
-    if (rig.grid().scroll_down() != Height{108} || rig.frames() != before + 2) return false;
+    if (rig.grid().scroll_down() != Height{116} || rig.frames() != before + 2) return false;
     rig.wheel(int_max);
     if (rig.frames() != before + 2) return false;  // the same offset: nothing to draw
     rig.deliver(PointerScroll{Rig<>::at(10, 20), ScrollDown::of_pixels(-5), ScrollAcross{}});
-    if (rig.grid().scroll_down() != Height{103}) return false;
+    if (rig.grid().scroll_down() != Height{111}) return false;
     rig.deliver(PointerScroll{Rig<>::at(10, 20), ScrollDown::of_pixels(int_min), ScrollAcross{}});
     if (rig.grid().scroll_down() != Height{}) return false;
     rig.deliver(PointerScroll{Rig<>::at(10, 20), ScrollDown{}, ScrollAcross{}});
@@ -214,10 +218,10 @@ static_assert(scrolling_outside_goes_nowhere());
 [[nodiscard]] constexpr bool a_bar_shows_only_when_needed() {
     Rig<> few{2};
     if (!few.grid().thumb_down().empty() || !few.grid().thumb_across().empty()) return false;
-    if (few.grid().body_area().width() != Width{120}) return false;
+    if (few.grid().body_area().width() != Width{112}) return false;
     Rig<> many{20};
     if (many.grid().thumb_down().empty() || !many.grid().thumb_across().empty()) return false;
-    if (many.grid().body_area().width() != Width{108}) return false;
+    if (many.grid().body_area().width() != Width{100}) return false;
     Rig<> narrow{2, Size{Width{60}, Height{60}}};
     if (!narrow.grid().thumb_down().empty() || narrow.grid().thumb_across().empty()) return false;
     Rig<> both{20, Size{Width{60}, Height{60}}};
@@ -238,14 +242,14 @@ static_assert(a_bar_shows_only_when_needed());
     rig.wheel(1);
     if (rig.grid().scroll_down() != dragged) return false;  // a held thumb says where the offset is
     rig.move(x, int_max);
-    if (rig.grid().scroll_down() != Height{108}) return false;
+    if (rig.grid().scroll_down() != Height{116}) return false;
     rig.move(x, int_min);
     if (rig.grid().scroll_down() != Height{}) return false;
     rig.release(x, y);
     if (jgui_test::capture_active(rig.core.ui())) return false;
     // In the trough below the thumb, then above it: a view each way.
-    rig.click(x, 59);
-    if (rig.grid().scroll_down() != Height{52}) return false;
+    rig.click(x, 55);
+    if (rig.grid().scroll_down() != Height{44}) return false;
     const Rect moved = rig.grid().thumb_down();
     if (moved.top() <= thumb.top()) return false;
     rig.click(x, number(thumb.top()));
@@ -259,10 +263,10 @@ static_assert(thumb_drag_and_trough_paging());
 [[nodiscard]] constexpr bool offsets_clamp_when_rows_or_size_change() {
     Rig<> rig{20};
     rig.wheel(int_max);
-    if (rig.grid().scroll_down() != Height{108}) return false;
+    if (rig.grid().scroll_down() != Height{116}) return false;
     if (!rig.grid().set_rows(small_rows(10))) return false;
     rig.settle();
-    if (rig.grid().scroll_down() != Height{28}) return false;  // 80 - 52
+    if (rig.grid().scroll_down() != Height{36}) return false;  // 80 - 44
     rig.deliver(ResizeEvent{Size{Width{120}, Height{200}}});
     if (rig.grid().scroll_down() != Height{} || !rig.grid().thumb_down().empty()) return false;
     if (!rig.grid().set_rows(small_rows(0))) return false;
@@ -294,7 +298,7 @@ static_assert(the_smallest_windows_hold());
     if (!rig.grid().set_rows(std::vector<SmallRow>{SmallRow{Left{0}, "B", true}, SmallRow{Left{1}, "A", true}, SmallRow{Left{2}, "B", false}, SmallRow{Left{3}, "C", false}})) return false;
     rig.settle();
     rig.click(10, row_y(0));  // row 0, a "B"
-    rig.click(40, 2);         // the second column's header
+    rig.click(40, 4);         // the second column's header
     const auto order = [&](std::array<std::uint32_t, 4> wanted) {
         const auto shown = rig.grid().display_order();
         for (std::size_t i = 0; i < wanted.size(); ++i)
@@ -306,70 +310,114 @@ static_assert(the_smallest_windows_hold());
     if (rig.grid().rows()[0].name != "B") return false;  // the rows themselves have not moved
     rig.key(Key::Down);
     if (rig.grid().selected() != GridRow{2}) return false;  // the next one as shown
-    rig.click(40, 2);
+    rig.click(40, 4);
     if (rig.grid().sort() != GridSort{1, true} || !order({3, 0, 2, 1})) return false;  // ties in their own order both ways
     if (rig.grid().selected() != GridRow{2}) return false;
-    rig.click(40, 2);
+    rig.click(40, 4);
     if (rig.grid().sort() != GridSort{1, false}) return false;
-    rig.click(10, 2);  // another column starts ascending
+    rig.click(10, 4);  // another column starts ascending
     if (rig.grid().sort() != GridSort{0, false} || !order({0, 1, 2, 3})) return false;
-    rig.click(70, 2);  // a bool: false first
+    rig.click(70, 4);  // a bool: false first
     return order({2, 3, 0, 1});
 }
 static_assert(a_header_sorts_and_a_second_click_reverses());
 
 [[nodiscard]] constexpr bool a_header_press_ended_elsewhere_does_not_sort() {
     Rig<> rig{4};
-    rig.press(10, 2);
+    rig.press(10, 4);
     if (!jgui_test::capture_active(rig.core.ui())) return false;
-    rig.release(40, 2);
+    rig.release(40, 4);
     if (rig.grid().sort()) return false;
-    rig.press(10, 2);
+    rig.press(10, 4);
     rig.release(10, 30);
     if (rig.grid().sort()) return false;
-    // Nowhere past the last column is a column.
-    rig.click(110, 2);
-    return !rig.grid().sort();
+    // Above a scroll bar is no column.
+    Rig<> barred{20};
+    barred.click(110, 4);
+    return !barred.grid().sort();
 }
 static_assert(a_header_press_ended_elsewhere_does_not_sort());
 
 [[nodiscard]] constexpr bool a_boundary_drags_to_resize_within_limits() {
     Rig<> rig{4};
-    // The first column's boundary is at x = 30.
-    rig.press(30, 2);
+    // The first column's boundary is at x = 34.
+    rig.press(34, 4);
     if (!jgui_test::capture_active(rig.core.ui())) return false;
-    rig.move(50, 40);
+    rig.move(54, 40);
     if (rig.grid().column_width(0) != Width{50}) return false;
     const std::uint64_t settled = rig.frames();
-    rig.move(50, 50);
+    rig.move(54, 50);
     if (rig.frames() != settled) return false;  // no change of width, nothing to draw
-    rig.move(int_min, 2);
+    rig.move(int_min, 4);
     if (rig.grid().column_width(0) != grid_column_least) return false;
-    rig.move(int_max, 2);
+    rig.move(int_max, 4);
     if (rig.grid().column_width(0) != grid_column_most) return false;
     if (rig.grid().thumb_across().empty()) return false;  // a very wide column brings a bar
-    rig.move(40, 2);
-    rig.release(40, 2);
+    rig.move(44, 4);
+    rig.release(44, 4);
     if (rig.grid().column_width(0) != Width{40} || rig.grid().sort()) return false;  // a drag does not also sort
     return !jgui_test::capture_active(rig.core.ui());
 }
 static_assert(a_boundary_drags_to_resize_within_limits());
 
+// The columns reach the grid's edge: the last one takes a little room, a lot becomes a filler, and the last column never gets narrower than it was set.
+[[nodiscard]] constexpr bool the_room_left_is_taken_up() {
+    Rig<> rig{2};  // 30 + 30 + 24 in a body of 112 leaves 28, more than the last column: a filler
+    if (rig.grid().column_width(2) != Width{24} || rig.grid().column_width(0) != Width{30}) return false;
+    const std::int32_t filler_x = side + 84;
+    if (rig.pixel(filler_x - 1, 20) != theme::bar_edge.argb || !rig.grid().thumb_across().empty()) return false;
+    // It goes over the row lines to the bottom of the body, under a header like the others: the bar's colour, a line below and a line at its end.
+    for (const std::int32_t y : {row_y(0), row_y(0) + small_row_height - 2, 60 - top_edge - 1})
+        if (rig.pixel(filler_x, y) != theme::grid_filler.argb) return false;
+    if (rig.pixel(filler_x, top_edge) != theme::bar.argb || rig.pixel(filler_x, top_edge + 7) != theme::bar_edge.argb) return false;
+    if (rig.pixel(side + 111, top_edge + 2) != theme::bar_edge.argb) return false;
+    if (rig.pixel(side + 111, 20) != theme::grid_filler.argb || rig.pixel(side + 112, 20) != theme::grid_border.argb) return false;
+    // 28 across holds the short title, at 2 a byte with its padding, and not the long one.
+    if (rig.pixel(filler_x + 4, top_edge + 2) != theme::text.argb || rig.pixel(filler_x + 21, top_edge + 5) != theme::text.argb) return false;
+    if (rig.pixel(filler_x + 22, top_edge + 2) != theme::bar.argb) return false;
+    // It is no column: its header does not sort, and it shows no boundary.
+    rig.click(filler_x + 14, top_edge + 2);
+    if (rig.grid().sort()) return false;
+    rig.move(filler_x + 14, top_edge + 2);
+    if (rig.backend().cursor() != CursorShape::Default) return false;
+    // 24 across holds neither title.
+    Rig<> untitled{2, Size{Width{116}, Height{60}}};
+    if (untitled.pixel(filler_x + 4, top_edge + 2) != theme::bar.argb) return false;
+    // 116 across holds the long one, which runs on past where the short one ends.
+    Rig<> wide{2, Size{Width{212}, Height{60}}};
+    if (wide.pixel(filler_x + 4 + 25, top_edge + 2) != theme::text.argb || wide.pixel(filler_x + 4 + 26, top_edge + 2) != theme::bar.argb) return false;
+    // A scroll bar takes some of the room, and what is left is a little: 16 goes to the last column.
+    Rig<> tall{20};
+    if (tall.grid().column_width(2) != Width{40} || tall.pixel(side + 99, 20) != theme::bar_edge.argb) return false;
+    // Another column growing takes the room, and the filler goes.
+    rig.press(side + 30, 4);
+    rig.move(side + 50, 4);
+    rig.release(side + 50, 4);
+    if (rig.grid().column_width(0) != Width{50} || rig.grid().column_width(2) != Width{32} || rig.pixel(side + 111, 20) == theme::grid_filler.argb) return false;
+    // Too narrow: the set width, and a bar.
+    rig.deliver(ResizeEvent{Size{Width{60}, Height{60}}});
+    if (rig.grid().column_width(2) != Width{24} || rig.grid().thumb_across().empty()) return false;
+    // Room again brings the filler back.
+    rig.deliver(ResizeEvent{Size{Width{200}, Height{60}}});
+    return rig.grid().column_width(2) == Width{24} && rig.grid().thumb_across().empty() && rig.pixel(190, 20) == theme::grid_filler.argb;
+}
+static_assert(the_room_left_is_taken_up());
+
 [[nodiscard]] constexpr bool the_pointer_shows_a_boundary() {
     Rig<> rig{4};
-    rig.move(10, 2);
+    rig.move(10, 4);
     if (rig.backend().cursor() != CursorShape::Default) return false;
-    rig.move(30, 2);
+    rig.move(34, 4);
     if (rig.backend().cursor() != CursorShape::ResizeColumn) return false;
-    rig.press(30, 2);
+    rig.press(34, 4);
     rig.move(80, 40);  // nothing changes while it is held
     if (rig.backend().cursor() != CursorShape::ResizeColumn) return false;
-    rig.move(80, 2);
-    rig.release(80, 2);  // the boundary came along, so the pointer is still on it
+    rig.move(80, 4);
+    rig.release(80, 4);  // the boundary came along, so the pointer is still on it
     if (rig.backend().cursor() != CursorShape::ResizeColumn) return false;
     rig.move(10, 30);
     if (rig.backend().cursor() != CursorShape::Default) return false;
-    rig.move(30, 30);  // the same place in the body is no boundary
+    rig.move(34, 30);  // the same place in the body is no boundary
     return rig.backend().cursor() == CursorShape::Default;
 }
 static_assert(the_pointer_shows_a_boundary());
@@ -386,8 +434,8 @@ using FramedGrid = DataGrid<FrameGridTag, SmallRow, NoGridMessage, Column<"L", &
         backend.inject(event);
         require(core.process_pending(SolidShaper{}).has_value(), "a frame failed");
     };
-    // The client area starts at 4, 24, and the first boundary is 30 in.
-    const Point boundary{Left{34}, Top{26}};
+    // The client area starts at 4, 24, the border takes 4 more each way, and the first boundary is 30 in.
+    const Point boundary{Left{38}, Top{30}};
     go(PointerMove{boundary});
     if (backend.cursor() != CursorShape::ResizeColumn) return false;
     const Point edge{Left{1}, Top{50}};
@@ -440,8 +488,8 @@ static_assert(a_menu_bar_above_keeps_working());
     const std::uint64_t settled = rig.frames();
     for (std::int32_t x = 0; x < 120; x += 7) rig.move(x, 30);
     for (std::int32_t y = 0; y < 60; y += 3) rig.move(50, y);
-    rig.move(30, 2);
-    rig.move(10, 2);
+    rig.move(34, 4);
+    rig.move(10, 4);
     rig.deliver(PointerLeave{});
     rig.move(500, 500);
     return rig.frames() == settled;
@@ -457,13 +505,13 @@ static_assert(motion_with_nothing_changing_draws_nothing());
     if (jgui_test::capture_active(rig.core.ui())) return false;
     rig.move(number(thumb.left()) + 2, 59);
     if (rig.grid().scroll_down() != Height{}) return false;
-    rig.press(30, 2);
+    rig.press(34, 4);
     rig.deliver(PointerLeave{});
-    rig.move(70, 2);
+    rig.move(70, 4);
     if (rig.grid().column_width(0) != Width{30}) return false;
-    rig.press(10, 2);
+    rig.press(10, 4);
     rig.deliver(PointerLeave{});
-    rig.release(10, 2);
+    rig.release(10, 4);
     return !rig.grid().sort();
 }
 static_assert(a_leave_ends_every_capture());
@@ -490,28 +538,52 @@ static_assert(a_size_change_under_a_held_thumb_holds());
 [[nodiscard]] constexpr bool the_picture_is_right() {
     Rig<> rig{20};
     // The header strip, in its own colour, with the first column's title on it.
-    if (rig.pixel(60, 7) != theme::bar_edge.argb || rig.pixel(115, 1) != theme::bar.argb) return false;
-    if (rig.pixel(4, 2) != theme::text.argb) return false;  // "L" starts after the padding, two down
+    if (rig.pixel(60, top_edge + 7) != theme::bar_edge.argb || rig.pixel(115, top_edge + 1) != theme::bar.argb) return false;
+    if (rig.pixel(side + 4, top_edge + 2) != theme::text.argb) return false;  // "L" starts after the padding, two down
     // A column line and a row line.
-    if (rig.pixel(29, 12) != theme::bar_edge.argb || rig.pixel(100, row_y(0) + small_row_height - 2) != theme::bar_edge.argb) return false;
+    if (rig.pixel(side + 29, top_edge + 12) != theme::bar_edge.argb || rig.pixel(100, row_y(0) + small_row_height - 2) != theme::bar_edge.argb) return false;
     // Nothing selected yet, then the highlight the width of the row.
     if (rig.pixel(100, row_y(1)) != theme::background.argb) return false;
     rig.click(10, row_y(1));
     if (rig.pixel(100, row_y(1)) != theme::button_pressed.argb || rig.pixel(100, row_y(0)) != theme::background.argb) return false;
-    // The focus outline.
-    if (rig.pixel(0, 30) != theme::focus_edge.argb) return false;
     // The bar: its thumb at the top, and its trough below.
     const Rect thumb = rig.grid().thumb_down();
     if (rig.pixel(number(thumb.left()) + 3, number(thumb.top()) + 1) != theme::button_edge.argb) return false;
-    if (rig.pixel(number(thumb.left()) + 3, 57) != theme::bar.argb) return false;
+    if (rig.pixel(number(thumb.left()) + 3, 55) != theme::bar.argb) return false;
     // A sort mark, and it turns over: the top row of the triangle is one pixel going up, and five going down.
-    rig.click(10, 2);
-    const std::int32_t mark_left = 30 - 14;
-    if (rig.pixel(mark_left + 4, 2) != theme::text.argb || rig.pixel(mark_left + 2, 2) == theme::text.argb) return false;
-    rig.click(10, 2);
-    return rig.pixel(mark_left + 2, 2) == theme::text.argb && rig.pixel(mark_left + 6, 2) == theme::text.argb;
+    rig.click(10, 4);
+    const std::int32_t mark_left = side + 30 - 14;
+    if (rig.pixel(mark_left + 4, top_edge + 2) != theme::text.argb || rig.pixel(mark_left + 2, top_edge + 2) == theme::text.argb) return false;
+    rig.click(10, 4);
+    return rig.pixel(mark_left + 2, top_edge + 2) == theme::text.argb && rig.pixel(mark_left + 6, top_edge + 2) == theme::text.argb;
 }
 static_assert(the_picture_is_right());
+
+// Every side has its full width of border, focus darkens only the line touching the contents, and a press on it selects nothing.
+[[nodiscard]] constexpr bool the_border_goes_all_round_and_keeps_its_colour() {
+    Rig<> rig{20};
+    // The window is 120 by 60. Each side, outermost pixel first.
+    const auto line_is = [&](std::int32_t x, std::int32_t y, std::uint32_t colour) { return rig.pixel(x, y) == colour; };
+    const auto soft = theme::grid_border.argb;
+    const auto strong = theme::focus_edge.argb;
+    const auto sides_are = [&](std::uint32_t last) {
+        for (std::int32_t i = 0; i < side; ++i) {
+            const std::uint32_t wanted = i == side - 1 ? last : soft;
+            if (!line_is(i, 30, wanted) || !line_is(119 - i, 30, wanted) || !line_is(60, 59 - i, wanted)) return false;
+        }
+        for (std::int32_t i = 0; i < top_edge; ++i)
+            if (!line_is(60, i, i == top_edge - 1 ? last : soft)) return false;
+        return true;
+    };
+    if (!sides_are(soft)) return false;
+    if (rig.grid().body_area().left() != Left{side} || rig.grid().header_area().top() != Top{top_edge}) return false;
+    rig.click(0, row_y(1));
+    if (!rig.grid().focused() || rig.grid().selected() || !sides_are(strong)) return false;
+    // The bar and the body stop at the border.
+    const Rect thumb = rig.grid().thumb_down();
+    return number(thumb.right()) == 120 - side && number(rig.grid().body_area().bottom()) == 60 - top_edge;
+}
+static_assert(the_border_goes_all_round_and_keeps_its_colour());
 
 // A cell's text is cut at its column, and scrolled text does not reach the header.
 struct LongRow {
@@ -530,15 +602,15 @@ using LongGrid = DataGrid<LongTag, LongRow, NoGridMessage, Column<"A", &LongRow:
     if (!core.process_pending(SolidShaper{})) return false;
     HeadlessBackend& backend = jgui_test::backend(core);
     const auto colour = [&](std::int32_t x, std::int32_t y) { return backend.pixel(Point{Left{x}, Top{y}}); };
-    if (colour(10, 11) != theme::text.argb) return false;
+    if (colour(10, top_edge + 11) != theme::text.argb) return false;
     // Column A's last pixel is its line, and past it the empty column B is plain.
-    if (colour(29, 11) != theme::bar_edge.argb || colour(30, 11) != theme::background.argb || colour(40, 11) != theme::background.argb) return false;
+    if (colour(side + 29, top_edge + 11) != theme::bar_edge.argb || colour(side + 30, top_edge + 11) != theme::background.argb || colour(side + 40, top_edge + 11) != theme::background.argb) return false;
     // Half a row scrolled: the row's text is cut at the header's bottom edge.
     backend.inject(PointerScroll{Point{Left{10}, Top{20}}, ScrollDown::of_pixels(4), ScrollAcross{}});
     if (!core.process_pending(SolidShaper{})) return false;
-    for (std::int32_t y = 0; y < 7; ++y)
+    for (std::int32_t y = 0; y < top_edge + 7; ++y)
         if (colour(25, y) == theme::text.argb) return false;
-    return colour(10, 8) == theme::text.argb || colour(10, 9) == theme::text.argb;
+    return colour(10, top_edge + 8) == theme::text.argb || colour(10, top_edge + 9) == theme::text.argb;
 }
 static_assert(text_stays_inside_its_cell());
 
@@ -548,8 +620,8 @@ static_assert(text_stays_inside_its_cell());
     auto& grid = core.ui().get<GridTag>();
     if (!grid.set_rows(small_rows(5000))) return false;
     if (!core.process_pending(SolidShaper{})) return false;
-    // 7 rows show, in part or whole, by 3 columns.
-    return grid.cells_shaped() == 21;
+    // 6 rows show, in part or whole in a body of 44, by 3 columns.
+    return grid.cells_shaped() == 18;
 }
 static_assert(only_what_shows_is_shaped());
 
@@ -559,7 +631,7 @@ static_assert(only_what_shows_is_shaped());
     if (!grid.set_rows(std::vector<LongRow>{LongRow{"refused", "fine"}})) return false;
     if (!core.process_pending(SolidShaper{})) return false;
     HeadlessBackend& backend = jgui_test::backend(core);
-    if (backend.pixel(Point{Left{5}, Top{11}}) != theme::background.argb || backend.pixel(Point{Left{35}, Top{11}}) != theme::text.argb) return false;
+    if (backend.pixel(Point{Left{side + 5}, Top{top_edge + 11}}) != theme::background.argb || backend.pixel(Point{Left{side + 35}, Top{top_edge + 11}}) != theme::text.argb) return false;
     if (!grid.set_rows(std::vector<LongRow>{LongRow{"broken", ""}})) return false;
     return !core.process_pending(SolidShaper{}).has_value();
 }
@@ -634,7 +706,7 @@ void test_the_real_font(Checker& check) {
     jgui_test::click(*app, jgui_test::inside(body, 300, number(grid.row_height()) * 2));
     check(grid.selected() == GridRow{2}, "the row under the pointer, as scrolled");
     const Top lit_row = (body.top() + (repeated_extent(grid.row_height(), 2) + Height{3})) - scrolled;
-    check(backend.pixel(Point{left_after(body.left() + Width{500}), lit_row}) == theme::button_pressed.argb, "its row is lit");
+    check(backend.pixel(Point{left_after(body.left() + Width{200}), lit_row}) == theme::button_pressed.argb, "its row is lit");
 
     // The thumb is drawn where the grid says, in the bar beside the body.
     const Rect thumb = grid.thumb_down();

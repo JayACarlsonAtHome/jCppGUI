@@ -28,6 +28,8 @@ inline constexpr Color button_hover{0xFFCCD8EEU};
 inline constexpr Color button_pressed{0xFF9FB4D8U};
 inline constexpr Color button_edge{0xFF808080U};
 inline constexpr Color focus_edge{0xFF2050A0U};
+inline constexpr Color grid_border{0xFFB4CAE6U};
+inline constexpr Color grid_filler{0xFFEEF3F9U};
 inline constexpr Color frame_strip{0xFFD8D8D8U};
 inline constexpr Color frame_edge{0xFF707070U};
 inline constexpr Color close_normal{0xFFC8C8C8U};
@@ -44,6 +46,8 @@ inline constexpr Width scroll_bar_across{12};
 inline constexpr Height scroll_bar_down{12};
 inline constexpr Width cell_pad_x{4};
 inline constexpr Height cell_pad_y{2};
+inline constexpr Width grid_border_across{4};
+inline constexpr Height grid_border_down{4};
 }  // namespace theme
 
 namespace detail {
