@@ -15,6 +15,7 @@
 #include "events.hpp"
 #include "geometry.hpp"
 #include "text.hpp"
+#include "timer.hpp"
 
 namespace jgui::inline v001 {
 
@@ -84,6 +85,7 @@ concept Widget = requires(W& widget, const W& constant, const TreeKey& key, Canv
     { widget.notify(key, ui, ClearFocus{}) } -> std::same_as<void>;
     { widget.notify(key, ui, ClearDamage{}) } -> std::same_as<void>;
     { widget.notify(key, ui, CollectDead{}) } -> std::same_as<void>;
+    { widget.notify(key, ui, TimersDue{}) } -> std::same_as<void>;
 };
 
 template <Widget... C>

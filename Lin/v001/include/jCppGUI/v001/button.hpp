@@ -5,6 +5,7 @@
 
 #include <expected>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 #include "widget.hpp"
@@ -27,6 +28,13 @@ public:
     [[nodiscard]] constexpr bool hovered() const noexcept { return hovered_; }
     [[nodiscard]] constexpr bool pressed() const noexcept { return pressed_; }
     [[nodiscard]] constexpr bool focused() const noexcept { return focused_; }
+    [[nodiscard]] constexpr std::string_view caption() const noexcept { return caption_.text(); }
+    // Another caption, shaped and drawn in the next frame. The same one again changes nothing.
+    constexpr void set_caption(CheckedText caption) {
+        if (caption_.text() == caption.view()) return;
+        caption_.replace(caption);
+        damaged_ = true;
+    }
     // Why the caption cannot be drawn, when a shaper refused it. Empty otherwise.
     [[nodiscard]] constexpr const std::optional<Error>& text_error() const noexcept { return caption_.refusal(); }
 
@@ -131,6 +139,9 @@ public:
 
     template <class U>
     constexpr void notify(const TreeKey&, U&, const CollectDead&) {}
+
+    template <class U>
+    constexpr void notify(const TreeKey&, U&, const TimersDue&) {}
 
 private:
     detail::ShapedCaption caption_;

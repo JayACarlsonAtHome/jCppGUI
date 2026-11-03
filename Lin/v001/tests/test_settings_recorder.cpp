@@ -487,7 +487,7 @@ consteval bool own_widgets_keep_the_promise() {
     if (!demo_core.process_pending(shaper).has_value() || !click_help(demo_core)) return false;
     if (!jgui_test::monitor(demo_core).problems().empty()) return false;
     ApplicationCore viewer_core{HeadlessBackend{Size{Width{Across}, Height{Down}}}, viewer::make_ui(viewer::load_file(parse_jtext(jgui_test::redraw_file_text(3))), viewer::load_settings_file(parse_jtext(jgui_test::settings_file_text()))), test_recorder()};
-    return viewer_core.process_pending(shaper).has_value() && jgui_test::monitor(viewer_core).rows().size() == 17 && jgui_test::monitor(viewer_core).problems().empty();
+    return viewer_core.process_pending(shaper).has_value() && jgui_test::monitor(viewer_core).rows().size() == 19 && jgui_test::monitor(viewer_core).problems().empty();
 }
 static_assert(own_widgets_keep_the_promise<1, 1>());
 static_assert(own_widgets_keep_the_promise<3, 3>());

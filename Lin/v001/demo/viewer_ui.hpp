@@ -133,8 +133,10 @@ struct DamageButton;
 struct DeferredButton;
 struct ItemsButton;
 struct ProblemsButton;
+struct EveryFontButton;
 struct StatusLine;
 struct SectionGrids;
+struct ViewerWatchTag;
 
 inline constexpr std::string_view run_section = "Run";
 inline constexpr std::string_view frames_section = "Frames";
@@ -246,6 +248,29 @@ struct ShowSection {
     }
 };
 
+// Calls this with the grid showing now, in its own type. With none showing, it is not called.
+template <class U, class Visit>
+constexpr void with_displayed_grid(U& u, Visit&& visit) {
+    const std::optional<std::size_t> shown = u.template get<SectionGrids>().shown();
+    if (shown == run_position) visit(u.template get<RunGridTag>());
+    if (shown == frames_position) visit(u.template get<FramesGridTag>());
+    if (shown == damage_position) visit(u.template get<DamageGridTag>());
+    if (shown == deferred_position) visit(u.template get<DeferredGridTag>());
+    if (shown == items_position) visit(u.template get<ItemsGridTag>());
+    if (shown == problems_position) visit(u.template get<ProblemsGridTag>());
+}
+
+// What the font button does: every column of the grid showing, and no other grid, at once and with no wait.
+struct ToggleEveryFont {
+    template <class U>
+    constexpr void operator()(U& u) const {
+        with_displayed_grid(u, [](auto& grid) -> void { grid.set_every_column_font(grid.every_column_monospace() ? jgui::ColumnFont::Regular : jgui::ColumnFont::Monospace); });
+    }
+};
+
+inline constexpr jgui::CheckedText all_monospace_caption{"All monospace"};
+inline constexpr jgui::CheckedText all_regular_caption{"All regular"};
+
 // A message naming a long path can be longer than a line can hold, and the start of it is what matters.
 [[nodiscard]] constexpr std::string_view status_fitting_a_line(std::string_view status) noexcept { return jgui::utf8_prefix(status, jgui::max_caption_bytes); }
 
@@ -259,13 +284,46 @@ template <class Row>
     return checked ? *checked : jgui::CheckedText{status_when_refused};
 }
 
+// Takes no room and draws nothing. Each turn of the loop it keeps the font button's caption true to the grid showing, and puts why monospace was refused on the status line.
+class ViewerWatch {
+public:
+    using tag = ViewerWatchTag;
+
+    [[nodiscard]] constexpr jgui::Rect bounds() const noexcept { return jgui::Rect{}; }
+    constexpr void paint(const jgui::TreeKey&, jgui::Canvas&) {}
+    template <class Shaper>
+    constexpr std::expected<jgui::Rect, jgui::Error> layout(const jgui::TreeKey&, jgui::Rect area, const Shaper&) {
+        return area;
+    }
+    template <class U, class E>
+    constexpr bool handle(const jgui::TreeKey&, U&, const E&) {
+        return false;
+    }
+    template <class U, class E>
+    constexpr void notify(const jgui::TreeKey&, U&, const E&) {}
+
+    template <class U>
+    constexpr void notify(const jgui::TreeKey&, U& u, const jgui::TimersDue&) {
+        bool every_one = false;
+        std::optional<jgui::Error> refused{};
+        with_displayed_grid(u, [&](auto& grid) -> void {
+            every_one = grid.every_column_monospace();
+            refused = grid.take_font_refusal();
+        });
+        u.template get<EveryFontButton>().set_caption(every_one ? all_regular_caption : all_monospace_caption);
+        // status_text gives text that passes, so this is not refused.
+        if (refused) static_cast<void>(u.template get<StatusLine>().set_text(status_text("Monospace was refused: " + refused->message).view()));
+    }
+};
+
 // The whole window. It opens on the Frames section, the one with most to look at.
 [[nodiscard]] constexpr auto make_ui(LoadedFile loaded, LoadedSettings settings = LoadedSettings{}) {
     auto ui = jgui::window(jgui::window_frame(
         jgui::menu_bar(jgui::button<RunButton>("Run", show_of(loaded.run, run_position)), jgui::button<FramesButton>("Frames", show_of(loaded.frames, frames_position)),
                        jgui::button<DamageButton>("Damage", show_of(loaded.damage, damage_position)), jgui::button<DeferredButton>("Deferred", show_of(loaded.deferred, deferred_position)),
-                       jgui::button<ItemsButton>("Items", show_of(settings.items, items_position)), jgui::button<ProblemsButton>("Problems", show_of(settings.problems, problems_position))),
-        jgui::label<StatusLine>(status_text(loaded.frames.status)), jgui::one_shown<SectionGrids>(RunGrid{}, FramesGrid{}, DamageGrid{}, DeferredGrid{}, ItemsGrid{}, ProblemsGrid{})));
+                       jgui::button<ItemsButton>("Items", show_of(settings.items, items_position)), jgui::button<ProblemsButton>("Problems", show_of(settings.problems, problems_position)),
+                       jgui::button<EveryFontButton>(all_monospace_caption, ToggleEveryFont{})),
+        jgui::label<StatusLine>(status_text(loaded.frames.status)), jgui::one_shown<SectionGrids>(RunGrid{}, FramesGrid{}, DamageGrid{}, DeferredGrid{}, ItemsGrid{}, ProblemsGrid{}), ViewerWatch{}));
     ui.template get<SectionGrids>().show(loaded.frames.usable ? std::optional<std::size_t>{frames_position} : std::nullopt);
     // The reader holds no more rows than a grid does, as the static_assert above shows, so none of these refuses.
     static_cast<void>(ui.template get<RunGridTag>().set_rows(std::move(loaded.run.rows)));

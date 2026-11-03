@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -27,10 +28,12 @@
 #include "geometry.hpp"
 #include "index_sort.hpp"
 #include "message.hpp"
+#include "panels.hpp"
 #include "scroll_bar.hpp"
 #include "selection_step.hpp"
 #include "spans.hpp"
 #include "text.hpp"
+#include "timer.hpp"
 #include "widget.hpp"
 
 namespace jgui::inline v001 {
@@ -38,13 +41,16 @@ namespace jgui::inline v001 {
 inline constexpr std::size_t max_grid_rows = 1'000'000;
 inline constexpr std::int32_t max_grid_row_height = 2048;
 inline constexpr std::int32_t grid_column_default = 120;
-inline constexpr Width grid_column_least{24};
 inline constexpr Width grid_column_most{4096};
 inline constexpr Width grid_boundary_reach{4};
 inline constexpr std::int32_t grid_wheel_rows = 3;
 inline constexpr Width grid_sideways_step{48};
 inline constexpr Width grid_sort_mark_room{14};
 inline constexpr std::size_t grid_cell_most_bytes = 1024;
+inline constexpr Width grid_control_letter_pad{2};  // each side of the widest letter in a header button: its outline and one pixel
+inline constexpr Width grid_controls_gap{1};
+// How long after the last press on a column's header button the column itself changes. The button's letter changes at once.
+inline constexpr std::chrono::milliseconds grid_column_change_delay{300};
 
 // Every row, at the tallest a row can be, and any window under it, stays inside what a length can hold.
 static_assert(std::int64_t{max_grid_row_height} * std::int64_t{max_grid_rows} + 2 * max_buffer_side < std::int64_t{std::numeric_limits<std::int32_t>::max()});
@@ -61,6 +67,21 @@ struct GridSort {
     bool descending{};
     friend constexpr bool operator==(const GridSort&, const GridSort&) = default;
 };
+
+// What font a column's title and cells are drawn in. A shaper with no monospace face refuses that one, and the column stays regular.
+enum class ColumnFont : std::uint8_t { Regular, Monospace };
+
+// Where in its column a column's title and cells sit.
+enum class ColumnAlign : std::uint8_t { AtLeft, AtCenter, AtRight };
+
+[[nodiscard]] constexpr ColumnAlign next_column_align(ColumnAlign align) noexcept {
+    switch (align) {
+        case ColumnAlign::AtLeft: return ColumnAlign::AtCenter;
+        case ColumnAlign::AtCenter: return ColumnAlign::AtRight;
+        case ColumnAlign::AtRight:
+        default: return ColumnAlign::AtLeft;
+    }
+}
 
 // For a grid that tells nobody when its selection changes.
 struct NoGridMessage {};
@@ -96,7 +117,7 @@ struct Column {
 
     [[nodiscard]] static consteval std::string_view name() { return Name.view(); }
     [[nodiscard]] static consteval CheckedText title() { return CheckedText{Name.view()}; }
-    [[nodiscard]] static consteval Width start_width() { return std::clamp(Width{StartWidth}, grid_column_least, grid_column_most); }
+    [[nodiscard]] static consteval Width start_width() { return std::min(Width{StartWidth}, grid_column_most); }
     [[nodiscard]] static constexpr const Value& value_of(const Row& row) noexcept { return row.*Member; }
     [[nodiscard]] static constexpr Value& member_of(Row& row) noexcept { return row.*Member; }
 };
@@ -118,6 +139,50 @@ template <class... Columns>
     return std::min(whole_units_in(column, Width{2}) + 8, grid_cell_most_bytes);
 }
 
+// Where text this wide starts in a room this wide. Text too wide for the room starts where the room does, whatever the alignment, so its start shows.
+[[nodiscard]] constexpr Left aligned_left(Left from, Width room, Width text, ColumnAlign align) noexcept {
+    const Width spare = room - text;
+    switch (align) {
+        case ColumnAlign::AtCenter: return left_after(from + smaller_half_of(spare));
+        case ColumnAlign::AtRight: return left_after(from + spare);
+        case ColumnAlign::AtLeft:
+        default: return from;
+    }
+}
+
+// Where something this high goes to sit in the middle of a room this high.
+[[nodiscard]] constexpr Top centred_top(Top from, Height room, Height content) noexcept { return top_after(from + smaller_half_of(room - content)); }
+
+// The boundary's reach inside its own column, which ends with the pixel before the next column. The buttons stop short of it, so a boundary drag always starts.
+inline constexpr Width grid_boundary_reach_inside = grid_boundary_reach - Width{1};
+
+// Both of a header's buttons, side by side.
+[[nodiscard]] constexpr Width controls_width(Width button) noexcept { return button + grid_controls_gap + button; }
+
+// A column that shows its whole title: padding, the title, padding, the sort mark's room, both buttons and the boundary's reach.
+[[nodiscard]] constexpr Width whole_title_width(Width title, Width button) noexcept {
+    return theme::cell_pad_x + title + theme::cell_pad_x + grid_sort_mark_room + controls_width(button) + grid_boundary_reach_inside;
+}
+
+// The narrowest a drag can make a column: padding, one character, both buttons and the boundary's reach.
+[[nodiscard]] constexpr Width drag_floor_width(Width one_character, Width button) noexcept {
+    return std::min(theme::cell_pad_x + one_character + controls_width(button) + grid_boundary_reach_inside, grid_column_most);
+}
+
+// A header's two buttons, font then alignment, at the right end of the column's header, almost its full height: a pixel above, and the header's line below.
+struct ColumnButtons {
+    Rect font{};
+    Rect align{};
+};
+[[nodiscard]] constexpr ColumnButtons column_buttons_in(const Rect& cell, Width button) noexcept {
+    constexpr Height off_the_edge{1};
+    const Top top = top_after(cell.top() + off_the_edge);
+    const Size size{button, cell.height() - off_the_edge - off_the_edge};
+    const Left align_left = cell.right() - (grid_boundary_reach_inside + button);
+    const Left font_left = (align_left + Width{}) - (grid_controls_gap + button);
+    return ColumnButtons{Rect{Point{font_left, top}, size}, Rect{Point{align_left, top}, size}};
+}
+
 }  // namespace detail
 
 // Notify is a Message that takes one GridRow, sent when the selection changes, or NoGridMessage.
@@ -134,7 +199,8 @@ public:
     using row_type = Row;
     using column_types = std::tuple<Columns...>;
 
-    constexpr DataGrid() : headers_{detail::ShapedCaption{Columns::title()}...}, widths_{Columns::start_width()...}, shown_{Columns::start_width()...} {}
+    constexpr DataGrid()
+        : headers_{detail::ShapedCaption{Columns::title()}...}, monospace_headers_{detail::ShapedCaption{Columns::title()}...}, widths_{Columns::start_width()...}, shown_{Columns::start_width()...} {}
     DataGrid(const DataGrid&) = delete;
     DataGrid& operator=(const DataGrid&) = delete;
     constexpr DataGrid(DataGrid&&) = default;
@@ -175,14 +241,60 @@ public:
     // How many cells the last layout shaped: what a frame's text cost goes with.
     [[nodiscard]] constexpr std::size_t cells_shaped() const noexcept { return cells_shaped_; }
 
+    // What a column's buttons show, which is what was last chosen, and what its cells and title show, which follows after the wait.
+    [[nodiscard]] constexpr ColumnFont column_font(std::size_t column) const { return fonts_.at(column).chosen(); }
+    [[nodiscard]] constexpr ColumnAlign column_align(std::size_t column) const { return aligns_.at(column).chosen(); }
+    [[nodiscard]] constexpr ColumnFont column_font_applied(std::size_t column) const { return fonts_.at(column).applied(); }
+    [[nodiscard]] constexpr ColumnAlign column_align_applied(std::size_t column) const { return aligns_.at(column).applied(); }
+    // How many times a press has really changed how a column looks, after its wait.
+    [[nodiscard]] constexpr std::size_t column_changes() const noexcept { return column_changes_; }
+    [[nodiscard]] constexpr std::string_view column_title(std::size_t column) const { return headers_.at(column).text(); }
+    [[nodiscard]] constexpr Rect font_button(std::size_t column) const { return column_buttons(column).font; }
+    [[nodiscard]] constexpr Rect align_button(std::size_t column) const { return column_buttons(column).align; }
+    [[nodiscard]] constexpr bool every_column_monospace() const noexcept {
+        return std::ranges::all_of(fonts_, [](const DelayedChoice<ColumnFont>& font) { return font.chosen() == ColumnFont::Monospace; });
+    }
+
+    // These take effect at once, with no wait, and end any wait that column's button had started. A column that is not there is refused.
+    [[nodiscard]] constexpr std::expected<void, Error> set_column_font(std::size_t column, ColumnFont font) {
+        if (column >= column_count) return make_error(ErrorCode::SizeLimit, "the grid has no column at that position");
+        fonts_[column].set_now(font);
+        damaged_ = true;
+        return {};
+    }
+    [[nodiscard]] constexpr std::expected<void, Error> set_column_align(std::size_t column, ColumnAlign align) {
+        if (column >= column_count) return make_error(ErrorCode::SizeLimit, "the grid has no column at that position");
+        aligns_[column].set_now(align);
+        damaged_ = true;
+        return {};
+    }
+    constexpr void set_every_column_font(ColumnFont font) noexcept {
+        for (DelayedChoice<ColumnFont>& each : fonts_) each.set_now(font);
+        damaged_ = true;
+    }
+
+    // Another title for a column, in place of the one it was declared with or last given. A column no one has dragged follows it, wider or narrower,
+    // so its title stays whole. A column that is not there is refused.
+    [[nodiscard]] constexpr std::expected<void, Error> set_column_title(std::size_t column, CheckedText title) {
+        if (column >= column_count) return make_error(ErrorCode::SizeLimit, "the grid has no column at that position");
+        headers_[column].replace(title);
+        monospace_headers_[column].replace(title);
+        damaged_ = true;
+        return {};
+    }
+
+    // Why a column asked for monospace and stayed regular, once for each time that happened, for the program to show. Empty otherwise.
+    [[nodiscard]] constexpr std::optional<Error> take_font_refusal() noexcept { return std::exchange(font_refusal_, std::nullopt); }
+
     // Takes all that is offered and leaves nothing below.
     template <TextShaper Shaper>
     constexpr std::expected<Rect, Error> layout(const TreeKey&, Rect area, const Shaper& text) {
         bounds_ = area;
         inner_ = area.inset(theme::grid_border_across, theme::grid_border_down);
-        row_height_ = std::clamp(text.line_height() + theme::cell_pad_y + theme::cell_pad_y, Height{1}, Height{max_grid_row_height});
-        place_parts();
+        row_height_ = std::clamp(tallest_line_in_use(text) + theme::cell_pad_y + theme::cell_pad_y, Height{1}, Height{max_grid_row_height});
+        // The titles first, because the columns' widths come from them.
         if (auto shaped = shape_headers(text); !shaped) return std::unexpected(std::move(shaped.error()));
+        place_parts();
         if (auto shaped = shape_visible_cells(text); !shaped) return std::unexpected(std::move(shaped.error()));
         return Rect{Point{area.left(), top_after(area.bottom())}, Size{area.width(), Height{}}};
     }
@@ -301,6 +413,15 @@ public:
     template <class U>
     constexpr void notify(const TreeKey&, U&, const CollectDead&) {}
 
+    // A grid not showing is told too, so what a press started ends on time, and what it changed shows when the grid does.
+    template <class U>
+    constexpr void notify(const TreeKey&, U& ui, const TimersDue& timers) {
+        for (std::size_t k = 0; k < column_count; ++k) {
+            if (fonts_[k].step(timers, grid_column_change_delay, ui)) note_column_change();
+            if (aligns_[k].step(timers, grid_column_change_delay, ui)) note_column_change();
+        }
+    }
+
 private:
     enum class Drag : std::uint8_t { None, ThumbDown, ThumbAcross, ColumnBoundary, HeaderPress };
 
@@ -319,6 +440,66 @@ private:
         return span_index_at(std::span<const Width>{shown_}, columns_origin(), at.left());
     }
 
+    // A column's place in the header.
+    [[nodiscard]] constexpr Rect header_cell(std::size_t column) const {
+        const Left start = left_after(columns_origin() + total_width(std::span<const Width>{shown_}.first(column)));
+        return Rect{Point{start, header_.top()}, Size{shown_.at(column), header_.height()}};
+    }
+
+    [[nodiscard]] constexpr detail::ColumnButtons column_buttons(std::size_t column) const { return detail::column_buttons_in(header_cell(column), button_width_); }
+
+    // The whole height of the header counts as a button, and so does the gap between them, so a press that just misses one does not sort.
+    constexpr bool press_button_at(Point at) {
+        const auto column = column_at(at);
+        if (!column) return false;
+        const detail::ColumnButtons buttons = column_buttons(*column);
+        if (at.left() < buttons.font.left() || at.left() >= left_after(buttons.align.right())) return false;
+        if (at.left() < buttons.align.left()) {
+            DelayedChoice<ColumnFont>& font = fonts_[*column];
+            font.choose(font.chosen() == ColumnFont::Monospace ? ColumnFont::Regular : ColumnFont::Monospace);
+        } else {
+            DelayedChoice<ColumnAlign>& align = aligns_[*column];
+            align.choose(next_column_align(align.chosen()));
+        }
+        damaged_ = true;
+        return true;
+    }
+
+    constexpr void note_column_change() noexcept {
+        ++column_changes_;
+        damaged_ = true;
+    }
+
+    // The tallest font any column has in effect, which all rows are sized to. This is where monospace is first asked for, and where a refusal puts the columns back.
+    template <TextShaper Shaper>
+    [[nodiscard]] constexpr Height tallest_line_in_use(const Shaper& text) {
+        if (std::ranges::none_of(fonts_, [](const DelayedChoice<ColumnFont>& font) { return font.applied() == ColumnFont::Monospace; })) return text.line_height();
+        if constexpr (HasMonospaceFace<Shaper>) {
+            auto face = text.monospace_face();
+            if (face) return std::max(text.line_height(), face->get().line_height());
+            refuse_monospace(std::move(face.error()));
+        } else {
+            refuse_monospace(Error{ErrorCode::Font, "this shaper has no monospace face"});
+        }
+        return text.line_height();
+    }
+
+    constexpr void refuse_monospace(Error why) {
+        for (DelayedChoice<ColumnFont>& font : fonts_)
+            if (font.applied() == ColumnFont::Monospace) font.set_now(ColumnFont::Regular);
+        font_refusal_ = std::move(why);
+    }
+
+    // How wide a column shows before any room left over: until it is dragged at least its whole title, and after that what the drag left it, at least the floor.
+    [[nodiscard]] constexpr Width wanted_width(std::size_t column) const noexcept {
+        const Width least = dragged_[column] ? drag_floor_ : whole_titles_[column];
+        return std::min(std::max(widths_[column], least), grid_column_most);
+    }
+
+    [[nodiscard]] constexpr const detail::ShapedCaption& title_shown(std::size_t column) const noexcept {
+        return fonts_[column].applied() == ColumnFont::Monospace ? monospace_headers_[column] : headers_[column];
+    }
+
     [[nodiscard]] constexpr CursorShape cursor_at(Point at) const noexcept {
         return boundary_at(at) ? CursorShape::ResizeColumn : CursorShape::Default;
     }
@@ -333,7 +514,8 @@ private:
     // and this is what keeps both offsets clamped.
     constexpr void place_parts() noexcept {
         const Height header_height = std::min(row_height_, inner_.height());
-        const Size content{total_width(std::span<const Width>{widths_}), repeated_extent(row_height_, rows_.size())};
+        for (std::size_t k = 0; k < column_count; ++k) shown_[k] = wanted_width(k);
+        const Size content{total_width(std::span<const Width>{shown_}), repeated_extent(row_height_, rows_.size())};
         const Size room{inner_.width(), inner_.height() - header_height};
         const ScrollBarsNeeded bars = scroll_bars_needed(content, room, theme::scroll_bar_across, theme::scroll_bar_down);
         const Width body_width = bars.down ? room.width() - theme::scroll_bar_across : room.width();
@@ -346,12 +528,11 @@ private:
         across_.place(track_across, content.width(), body_width);
         // The columns end at the grid. The last one takes a little room left over, and a lot is a plain filler, which is no column: its header says so
         // and takes no click or drag. The last column never shows narrower than it was set, so no text is cut for this.
-        shown_ = widths_;
         filler_ = Rect{};
         filler_header_ = Rect{};
         if (content.width() < body_width) {
             const Width spare = body_width - content.width();
-            if (spare < widths_.back()) {
+            if (spare < shown_.back()) {
                 shown_.back() = shown_.back() + spare;
             } else {
                 const Left filler_left = left_after(body_.left() + content.width());
@@ -380,12 +561,14 @@ private:
         return result;
     }
 
-    constexpr void press_header(Point at) noexcept {
+    constexpr void press_header(Point at) {
         if (const auto boundary = boundary_at(at); boundary) {
             drag_ = Drag::ColumnBoundary;
             dragged_column_ = *boundary;
             pressed_at_ = at.left();
             width_at_press_ = shown_[*boundary];
+        } else if (press_button_at(at)) {
+            return;
         } else if (const auto column = column_at(at); column) {
             drag_ = Drag::HeaderPress;
             dragged_column_ = *column;
@@ -415,9 +598,10 @@ private:
         if (drag_ == Drag::ThumbDown && down_.drag_to(at)) damaged_ = true;
         if (drag_ == Drag::ThumbAcross && across_.drag_to(at)) damaged_ = true;
         if (drag_ != Drag::ColumnBoundary) return;
-        const Width width = dragged_width(pressed_at_, width_at_press_, at.left(), grid_column_least, grid_column_most);
-        if (!dragged_column_ || width == widths_[*dragged_column_]) return;
+        const Width width = dragged_width(pressed_at_, width_at_press_, at.left(), drag_floor_, grid_column_most);
+        if (!dragged_column_ || width == wanted_width(*dragged_column_)) return;
         widths_[*dragged_column_] = width;
+        dragged_[*dragged_column_] = true;
         place_parts();
         damaged_ = true;
     }
@@ -448,11 +632,32 @@ private:
 
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> shape_headers(const Shaper& text) {
-        for (detail::ShapedCaption& header : headers_)
-            if (auto shaped = header.shape_with(text); !shaped) return std::unexpected(std::move(shaped.error()));
+        for (detail::ShapedCaption* letter : {&letter_monospace_, &letter_left_, &letter_center_, &letter_right_})
+            if (auto shaped = letter->shape_with(text); !shaped) return std::unexpected(std::move(shaped.error()));
+        const Width widest = std::max({letter_monospace_.size_with(text).width(), letter_left_.size_with(text).width(), letter_center_.size_with(text).width(), letter_right_.size_with(text).width()});
+        button_width_ = widest + grid_control_letter_pad + grid_control_letter_pad;
+        drag_floor_ = detail::drag_floor_width(letter_monospace_.size_with(text).width(), button_width_);
+        for (std::size_t k = 0; k < column_count; ++k) {
+            if (auto shaped = shape_title(k, text); !shaped) return std::unexpected(std::move(shaped.error()));
+            const auto& run = title_shown(k).run();
+            whole_titles_[k] = detail::whole_title_width(run ? run->size().width() : Width{}, button_width_);
+        }
         if (auto shaped = filler_title_long_.shape_with(text); !shaped) return std::unexpected(std::move(shaped.error()));
         if (auto shaped = filler_title_short_.shape_with(text); !shaped) return std::unexpected(std::move(shaped.error()));
         return {};
+    }
+
+    // In the column's own font. A column stays regular with no monospace face to have, so that one is here whenever it is in effect.
+    template <TextShaper Shaper>
+    [[nodiscard]] constexpr std::expected<void, Error> shape_title(std::size_t column, const Shaper& text) {
+        if constexpr (HasMonospaceFace<Shaper>) {
+            if (fonts_[column].applied() == ColumnFont::Monospace) {
+                auto face = text.monospace_face();
+                if (face) return monospace_headers_[column].shape_with(face->get());
+                return std::unexpected(std::move(face.error()));
+            }
+        }
+        return headers_[column].shape_with(text);
     }
 
     // Only what shows: the rows in view, and of those the columns in view.
@@ -478,6 +683,18 @@ private:
 
     template <std::size_t K, TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> shape_column(const Shaper& text) {
+        if constexpr (HasMonospaceFace<Shaper>) {
+            if (fonts_[K].applied() == ColumnFont::Monospace) {
+                auto face = text.monospace_face();
+                if (face) return shape_column_with<K>(face->get());
+                return std::unexpected(std::move(face.error()));
+            }
+        }
+        return shape_column_with<K>(text);
+    }
+
+    template <std::size_t K, TextShaper Shaper>
+    [[nodiscard]] constexpr std::expected<void, Error> shape_column_with(const Shaper& text) {
         using C = ColumnAt<K>;
         const std::size_t most_bytes = detail::cell_bytes_worth_shaping(shown_[K]);
         for (std::size_t r = 0; r < visible_.count; ++r) {
@@ -509,7 +726,9 @@ private:
                 const Right end = start + shown_[k];
                 if (const auto& run = cells_[r * column_count + k]; run) {
                     const Canvas cell = body.clipped(Rect{Point{start, top}, Size{shown_[k], row_height_}});
-                    cell.draw_text(Point{left_after(start + theme::cell_pad_x), top_after(top + theme::cell_pad_y)}, *run, theme::text);
+                    const Width room = shown_[k] - theme::cell_pad_x - theme::cell_pad_x;
+                    const Left left = detail::aligned_left(left_after(start + theme::cell_pad_x), room, run->size().width(), aligns_[k].applied());
+                    cell.draw_text(Point{left, detail::centred_top(top, row_height_, run->size().height())}, *run, theme::text);
                 }
                 start = left_after(end);
             }
@@ -535,8 +754,20 @@ private:
             const Right end = start + shown_[k];
             const Rect cell_area{Point{start, header_.top()}, Size{shown_[k], header_.height()}};
             const Canvas cell = head.clipped(cell_area);
-            if (const auto& run = headers_[k].run(); run) cell.draw_text(Point{left_after(start + theme::cell_pad_x), top_after(header_.top() + theme::cell_pad_y)}, *run, theme::text);
-            if (sort_ && sort_->column == k) paint_sort_mark(cell, cell_area, sort_->descending);
+            const detail::ColumnButtons buttons = detail::column_buttons_in(cell_area, button_width_);
+            // With its whole title and the sort mark's room, the title sits left of the room. In a column dragged narrower, there is no room for a mark, and the title has all there is up to the buttons, where it is cut.
+            const bool mark_fits = whole_titles_[k] <= shown_[k];
+            const Left mark_left = (buttons.font.left() + Width{}) - grid_sort_mark_room;
+            const Left title_end = mark_fits ? mark_left : buttons.font.left();
+            if (const auto& run = title_shown(k).run(); run) {
+                const Canvas title_area = cell.clipped(Rect{cell_area.origin(), Size{(title_end + Width{}) - start, header_.height()}});
+                const Left from = left_after(start + theme::cell_pad_x);
+                const Width room = ((title_end + Width{}) - from) - theme::cell_pad_x;
+                title_area.draw_text(Point{detail::aligned_left(from, room, run->size().width(), aligns_[k].applied()), detail::centred_top(header_.top(), header_.height(), run->size().height())}, *run, theme::text);
+            }
+            if (mark_fits && sort_ && sort_->column == k) paint_sort_mark(cell, mark_left, sort_->descending);
+            paint_button(cell, buttons.font, fonts_[k].chosen() == ColumnFont::Monospace ? &letter_monospace_ : nullptr);
+            paint_button(cell, buttons.align, &letter_for(aligns_[k].chosen()));
             head.fill_rect(Rect{Point{end - one_across, header_.top()}, Size{one_across, header_.height()}}, theme::bar_edge);
             start = left_after(end);
         }
@@ -550,20 +781,19 @@ private:
         if (filler_header_.empty()) return;
         local.fill_rect(Rect{Point{filler_header_.right() - one_across, filler_header_.top()}, Size{one_across, filler_header_.height()}}, theme::bar_edge);
         const Canvas head = local.clipped(filler_header_);
-        const Point at{left_after(filler_header_.left() + theme::cell_pad_x), top_after(filler_header_.top() + theme::cell_pad_y)};
+        const Left left = left_after(filler_header_.left() + theme::cell_pad_x);
         for (const detail::ShapedCaption* title : {&filler_title_long_, &filler_title_short_}) {
             if (const auto& run = title->run(); run && run->size().width() + theme::cell_pad_x + theme::cell_pad_x <= filler_header_.width()) {
-                head.draw_text(at, *run, theme::text);
+                head.draw_text(Point{left, detail::centred_top(filler_header_.top(), filler_header_.height(), run->size().height())}, *run, theme::text);
                 return;
             }
         }
     }
 
     // A small solid triangle at the far end of the header: its point up for ascending, down for descending.
-    static constexpr void paint_sort_mark(const Canvas& cell, const Rect& area, bool descending) {
+    constexpr void paint_sort_mark(const Canvas& cell, Left mark_left, bool descending) const {
         constexpr std::int32_t rows = 5;
-        const Left mark_left = area.right() - grid_sort_mark_room;
-        const Top mark_top = top_after(area.top() + theme::cell_pad_y);
+        const Top mark_top = top_after(header_.top() + theme::cell_pad_y);
         for (std::int32_t row = 0; row < rows; ++row) {
             const std::int32_t half = descending ? rows - 1 - row : row;
             const Left left = (left_after(mark_left + Width{rows - 1}) + Width{}) - Width{half};
@@ -572,12 +802,46 @@ private:
         }
     }
 
+    [[nodiscard]] constexpr const detail::ShapedCaption& letter_for(ColumnAlign align) const noexcept {
+        switch (align) {
+            case ColumnAlign::AtCenter: return letter_center_;
+            case ColumnAlign::AtRight: return letter_right_;
+            case ColumnAlign::AtLeft:
+            default: return letter_left_;
+        }
+    }
+
+    // A button with its outline, and its letter if it has one and the shaper did not refuse it.
+    static constexpr void paint_button(const Canvas& cell, const Rect& area, const detail::ShapedCaption* letter) {
+        const Canvas button = cell.clipped(area);
+        button.fill_rect(area, theme::button_normal);
+        button.stroke_rect(area, theme::button_edge);
+        if (letter == nullptr || !letter->run()) return;
+        const Size size = letter->run()->size();
+        button.draw_text(Point{detail::aligned_left(area.left(), area.width(), size.width(), ColumnAlign::AtCenter), detail::centred_top(area.top(), area.height(), size.height())}, *letter->run(), theme::text);
+    }
+
     std::vector<Row> rows_{};
     std::vector<std::uint32_t> order_{};
+    // Each column's title in each font. The monospace one is shaped only once that font is in effect for that column.
     std::array<detail::ShapedCaption, column_count> headers_;
-    // The widths set, by the program or by a drag, and the widths as drawn, which differ only in the last column.
+    std::array<detail::ShapedCaption, column_count> monospace_headers_;
+    // The widths set, by the declaration or by a drag, and the widths as drawn, from those and from the rule in wanted_width, with any room left over in the last column.
     std::array<Width, column_count> widths_;
     std::array<Width, column_count> shown_;
+    std::array<Width, column_count> whole_titles_{};
+    std::array<bool, column_count> dragged_{};
+    std::array<DelayedChoice<ColumnFont>, column_count> fonts_{};
+    std::array<DelayedChoice<ColumnAlign>, column_count> aligns_{};
+    // The buttons' letters, always in the regular font, whatever a column's own is.
+    detail::ShapedCaption letter_monospace_{CheckedText{"M"}};
+    detail::ShapedCaption letter_left_{CheckedText{"L"}};
+    detail::ShapedCaption letter_center_{CheckedText{"C"}};
+    detail::ShapedCaption letter_right_{CheckedText{"R"}};
+    Width button_width_{};
+    Width drag_floor_{};
+    std::optional<Error> font_refusal_{};
+    std::size_t column_changes_{};
     // What layout shaped for the rows in view, by row and then column. Bounded by the window's height and the column count.
     std::vector<std::optional<TextRun>> cells_{};
     ItemRange visible_{};

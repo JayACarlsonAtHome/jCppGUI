@@ -63,6 +63,7 @@ struct CoreWithNoMonitorMember {
     std::unique_ptr<detail::FrameLedger> painting;
     std::optional<Error> failure;
     std::uint64_t frames;
+    std::optional<MonotonicTime> wake;
     std::optional<CursorShape> cursor;
     bool have_size;
     bool closed;

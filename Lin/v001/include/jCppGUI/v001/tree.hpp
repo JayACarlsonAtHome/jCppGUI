@@ -342,6 +342,11 @@ public:
     }
 
     template <class U>
+    constexpr void notify(const TreeKey& key, U& ui, const TimersDue& event) {
+        notify_each(key, ui, event);
+    }
+
+    template <class U>
     constexpr void notify(const TreeKey& key, U& ui, const CollectDead& event) {
         notify_each(key, ui, event);
         pool_.collect();
@@ -471,6 +476,10 @@ public:
     constexpr void suggest_cursor(CursorShape shape) noexcept {
         if (!requests_.cursor) requests_.cursor = shape;
     }
+    // For a widget told TimersDue: when it next wants to act. The earliest asked for is when the loop wakes.
+    constexpr void wake_at(MonotonicTime when) noexcept {
+        if (!wake_ || when < *wake_) wake_ = when;
+    }
 
 private:
     template <class B, class Root, class Monitor>
@@ -490,6 +499,13 @@ private:
         const DispatchScope scope{*this};
         const TreeKey key{};
         detail::notify_all(children_, key, *this, event);
+    }
+
+    // Every widget, shown or not, acts on what has come due. The answer is when the earliest of them next wants to.
+    [[nodiscard]] constexpr std::optional<MonotonicTime> run_timers(MonotonicTime now) {
+        wake_.reset();
+        notify(TimersDue{now});
+        return std::exchange(wake_, std::nullopt);
     }
 
     [[nodiscard]] constexpr bool capture_active() {
@@ -559,6 +575,7 @@ private:
     children_type children_;
     std::size_t dispatch_depth_{};
     WindowRequests requests_{};
+    std::optional<MonotonicTime> wake_{};
     Size size_{};
 };
 

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -374,6 +375,64 @@ static_assert(each_file_stands_alone());
     return wrong.shown() == std::nullopt && wrong.status() == "the file has no section named Items";
 }
 static_assert(a_bad_settings_row_is_counted_and_a_missing_section_is_said());
+
+// --- The font button in the menu bar ---
+
+// BlockShaper, with a second face of the same size.
+struct BlockWithMonospace {
+    jgui_test::BlockShaper face{};
+    [[nodiscard]] constexpr std::expected<TextRun, Error> shape(std::string_view text) const { return face.shape(text); }
+    [[nodiscard]] constexpr Height line_height() const noexcept { return face.line_height(); }
+    [[nodiscard]] constexpr std::expected<std::reference_wrapper<const jgui_test::BlockShaper>, Error> monospace_face() const { return std::cref(face); }
+};
+
+[[nodiscard]] constexpr bool the_font_button_sets_the_grid_showing_and_no_other() {
+    ApplicationCore core{HeadlessBackend{Size{Width{300}, Height{90}}}, viewer::make_ui(viewer::load_file(parse_jtext(jgui_test::redraw_file_text(3))))};
+    const BlockWithMonospace shaper{};
+    const auto settle = [&] { require(core.process_pending(shaper).has_value(), "a frame failed"); };
+    settle();
+    auto& ui = core.ui();
+    const auto click = [&](const Rect& area) {
+        const Point middle = jgui_test::inside(area, 2, 2);
+        jgui_test::backend(core).inject(PointerMove{middle});
+        jgui_test::backend(core).inject(PointerButton{middle, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(1)});
+        jgui_test::backend(core).inject(PointerButton{middle, MouseButton::Left, ButtonState::Released, jgui_test::serial(1)});
+        settle();
+    };
+    auto& button = ui.get<viewer::EveryFontButton>();
+    auto& frames = ui.get<viewer::FramesGridTag>();
+    auto& run = ui.get<viewer::RunGridTag>();
+    if (button.caption() != "All monospace" || frames.every_column_monospace()) return false;
+    const std::uint64_t before = core.frames();
+    click(button.bounds());
+    // At once, with no wait, and only this grid. The caption says what the next press does.
+    if (!frames.every_column_monospace() || frames.column_font_applied(3) != ColumnFont::Monospace || run.every_column_monospace() || button.caption() != "All regular" || core.frames() <= before || core.next_wake()) return false;
+    // Another section, with its own answer, and the same one coming back.
+    click(ui.get<viewer::RunButton>().bounds());
+    if (button.caption() != "All monospace" || !frames.every_column_monospace()) return false;
+    click(ui.get<viewer::FramesButton>().bounds());
+    if (button.caption() != "All regular") return false;
+    click(button.bounds());
+    if (frames.every_column_monospace() || frames.column_font(0) != ColumnFont::Regular || button.caption() != "All monospace") return false;
+    // One column of its own button leaves the caption saying all can be made monospace, until all are.
+    click(button.bounds());
+    click(frames.font_button(0));
+    if (button.caption() != "All monospace") return false;
+    // With no grid showing, it does nothing.
+    ui.get<viewer::SectionGrids>().show(std::nullopt);
+    settle();
+    const Rect where = button.bounds();
+    click(where);
+    return button.caption() == "All monospace" && !run.every_column_monospace();
+}
+static_assert(the_font_button_sets_the_grid_showing_and_no_other());
+
+[[nodiscard]] constexpr bool a_refused_monospace_font_is_on_the_status_line() {
+    Rig<> rig{jgui_test::redraw_file_text(rows_in_the_file)};  // this shaper has no monospace face
+    rig.click<viewer::EveryFontButton>();
+    return rig.status() == "Monospace was refused: this shaper has no monospace face" && !rig.get<viewer::FramesGridTag>().every_column_monospace() && rig.get<viewer::EveryFontButton>().caption() == "All monospace" && rig.shown() == viewer::frames_position;
+}
+static_assert(a_refused_monospace_font_is_on_the_status_line());
 
 }  // namespace
 

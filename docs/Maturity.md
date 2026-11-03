@@ -12,7 +12,8 @@
 - The core logic run in `static_assert`, including the demo tree from events to pixels.
 - Compile-fail tests that prove the compiler rejects the mistakes it is meant to catch.
 - The real `WaylandBackend` against a scripted compositor, with no screen, over a real socket.
-- `DataGrid`, a read-only typed table with virtual drawing, scroll bars, wheel and smooth scrolling, selection, sorting and column resizing.
+- `DataGrid`, a read-only typed table with virtual drawing, scroll bars, wheel and smooth scrolling, selection, sorting, column resizing, and each column's font and alignment from buttons in its header. **The buttons, the wait after a press and monospace text have only run against the test compositor and headless, and no one has seen them on a real screen.**
+- A timer in the event loop, on the monotonic clock, that a widget asks through `TimersDue`. **That an idle program uses no CPU is shown by counting the loop's turns against the test compositor, and has not been measured on a real session.**
 - `jcppgui-viewer`, which shows a redraw monitor's file and a settings record in those grids, one section at a time. **It has only run against the test compositor, and no one has seen it on a real screen.**
 - A redraw monitor for development, `jcppgui-demo --redraw-monitor`, which records each frame to a jText file. A file from a live
   `--smoke` run passed jText's own parser and validator, in a throwaway check that is not part of this repository.
@@ -50,6 +51,8 @@ libwayland's. `tests/fuzz/fuzz_backend.cpp` fuzzes the backend's input path thro
 
 `tests/test_grid_helpers.cpp` has each small helper in `static_assert`. `tests/test_datagrid.cpp` runs the grid in `static_assert`, from injected events to state and pixels, with a shaper that needs no font: selection, keys, wheel, thumb drag, trough paging, sorting, stability, column drags,
 cursor shapes, the frame's edges, damage, a leave and a resize during a capture, and windows of 1x1. At run time, with the real font, it has the row limit and the picture. Compile-fail pairs cover a member with no format, a member of another row, a duplicate column and an ignored `set_rows` answer. `tests/test_fake_compositor.cpp` has `grid_*` scenarios through the real backend: hostile axis values and floods, scrolling with no pointer here, a wheel notch and then pixels read back from the buffer file, a resize during a thumb drag, the pointer and the seat going during a capture, and the column cursor on the wire.
+
+**The column controls and time in the loop.** `tests/test_timer.cpp` has what poll is told at every edge, `DelayedChoice`, and the loop with widgets asking to be woken, shown, not shown and in a `Dynamic`, with a stream of other events going past. `tests/test_datagrid.cpp` has, in `static_assert`, each letter and the blank state, the letter changing at once, frames and shaping counted across repeated presses, the wait restarting, each alignment's pixels in a title and a cell, what a press hits at the header's right end, settings through sorting, a drag and new rows, row height with two fonts, a monospace font that will not load, a letter refused, a column that is not there, a long title whole, a drag cutting it and stopping at the floor, a dragged column keeping its width against title and font changes, one not dragged following them, the sort mark hiding and coming back, a title past the limit, and closing with a change waiting. At run time, the real faces. `tests/test_text.cpp` has the real monospace font, which needs one on the system. `tests/test_viewer.cpp` has the font button, its caption across sections, and a refusal on the status line. The `fake_timer_wakes_and_sleeps`, `fake_grid_column_button_waits` and `fake_grid_buttons_under_floods` scenarios run the real loop: it wakes for a deadline with nothing sent, takes no turns once none is pending, a press draws for its letter and again with no event, and floods of presses and motion leave it running and end at the last press. Not shown: any of it on a real screen: how the letters and the buttons look at their real size, how it feels to click them, 300 ms in real use, or a column in a real monospace font beside a regular one. A column whose real monospace font is taller than the regular one has not been seen: on the machine tried, both give the same row height. A real font failing to load has been run only through a shaper in the tests and through a monospace face asked for its own monospace.
 
 **Measured** in a `gcc-release` build by `tests/measure_datagrid.cpp`, by hand and not under CTest, through `FrameMonitor` with the steady clock, headless, at 1280x800 with 6 columns and 32 rows showing, on the machine it was run on. These leave out what the real backend adds to present, which is writing the frame to the buffer file.
 
@@ -136,7 +139,7 @@ Not shown: the viewer on a real screen, with a real pointer, or a file that chan
   written for Fedora only and stops on a system with no `dnf`. Its install path has only been tried as far as that machine needed.
 - A compositor that stays connected and never answers makes `connect` wait for ever. There is no timeout.
 
-- One font, one size, one line. No text editing, input methods or font selection. No bidirectional
+- One size, one line, and two fonts: the default regular and the default monospace, with no choice beyond that. No text editing, input methods or font selection. No bidirectional
   text ordering beyond what HarfBuzz does for one segment.
 - A damaged window repaints in full, and the frame is not throttled to `wl_surface.frame`.
 - **Each frame is copied once more than it must be.** A frame is drawn in ordinary memory and written
@@ -145,7 +148,7 @@ Not shown: the viewer on a real screen, with a real pointer, or a file that chan
 - Layout is a simple flow, not a layout manager. Overlapping widgets are possible but untested.
 - A window's side is at most 8192 pixels, and frames wait if the compositor holds too much.
 - The jText reader takes the full profile only, keeps no comments, and does not check values against their declared types: see `docs/Architecture.md`.
-- `DataGrid` holds at most 1,000,000 rows, has no editing and no multiple selection, and keeps neither selection nor sort when given new rows. Pressing in a scroll trough pages once, with no repeat while held.
+- `DataGrid` holds at most 1,000,000 rows, has no editing and no multiple selection, and keeps neither selection nor sort when given new rows, though it keeps columns' settings. Those are not saved across runs. A letter press draws a whole frame, with its usual shaping of what shows. Pressing in a scroll trough pages once, with no repeat while held.
 - Scale is fixed at 1, so the window is upscaled on HiDPI outputs.
 - The frame has no maximize or minimize control.
 - A compositor without `cursor-shape-v1` gets no resize cursors, only the drawn arrow.

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "backend.hpp"
@@ -31,18 +32,19 @@ public:
 
     template <class Sink>
     std::expected<void, Error> process_pending(Sink& sink) {
-        auto result = pump(false);
+        auto result = pump_at_once();
         events_->drain(sink);
         return result;
     }
 
     template <class Sink>
-    std::expected<void, Error> wait(Sink& sink) {
-        auto result = pump(true);
+    std::expected<void, Error> wait(Sink& sink, std::optional<MonotonicTime> deadline) {
+        auto result = pump_until(deadline);
         events_->drain(sink);
         return result;
     }
 
+    [[nodiscard]] MonotonicTime now() const noexcept { return monotonic_now(); }
     [[nodiscard]] bool can_present(Size size) const;
     std::expected<Frame<WaylandBackend>, Error> acquire_frame(Size size);
     std::expected<PixelBuffer, Error> frame_pixels(const Frame<WaylandBackend>& frame);
@@ -56,7 +58,8 @@ private:
     WaylandBackend(std::unique_ptr<BackendEventQueue> events,
                    std::unique_ptr<detail::WaylandImpl, detail::WaylandImplDeleter> impl) noexcept;
 
-    std::expected<void, Error> pump(bool may_block);
+    std::expected<void, Error> pump_at_once();
+    std::expected<void, Error> pump_until(std::optional<MonotonicTime> deadline);
 
     // On the heap so the C callbacks can hold their address while this object moves. The implementation
     // refers to the queue, so it is declared second and destroyed first.

@@ -1,10 +1,12 @@
 // File: src/text/text.cpp
-// Purpose: The default sans-serif font through fontconfig, shaped with HarfBuzz and rasterized with
+// Purpose: The default sans-serif font, and on request the default monospace one, through fontconfig, shaped with HarfBuzz and rasterized with
 //          FreeType. Font files are untrusted input, so every value from them is checked before use.
 #include "jCppGUI/v001/text.hpp"
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -39,14 +41,16 @@ using HbBuffer = detail::CResource<hb_buffer_t, hb_buffer_destroy>;
 
 constexpr std::size_t max_font_path_bytes = 4096;  // Linux's own limit on a path
 
-// The font file and face index of the default sans-serif font.
+constexpr FcChar8 sans_family[] = {'s', 'a', 'n', 's', '-', 's', 'e', 'r', 'i', 'f', 0};
+constexpr FcChar8 monospace_family[] = {'m', 'o', 'n', 'o', 's', 'p', 'a', 'c', 'e', 0};
+
+// The font file and face index that fontconfig gives for a family.
 struct FontFile {
     std::string path;
     FT_Long face_index{};
 };
 
-std::expected<FontFile, Error> find_default_font(FcConfig* config) {
-    static constexpr FcChar8 family[] = {'s', 'a', 'n', 's', '-', 's', 'e', 'r', 'i', 'f', 0};
+std::expected<FontFile, Error> find_font(FcConfig* config, const FcChar8* family) {
     FontPattern pattern{FcPatternCreate()};
     if (!pattern) return make_error(ErrorCode::Font, "fontconfig could not create a pattern");
     if (FcPatternAddString(pattern.get(), FC_FAMILY, family) == FcFalse ||
@@ -58,7 +62,7 @@ std::expected<FontFile, Error> find_default_font(FcConfig* config) {
 
     FcResult result = FcResultNoMatch;
     const FontPattern match{FcFontMatch(config, pattern.get(), &result)};
-    if (!match || result != FcResultMatch) return make_error(ErrorCode::Font, "no sans-serif font was found");
+    if (!match || result != FcResultMatch) return make_error(ErrorCode::Font, "fontconfig found no font for the family asked for");
 
     FcChar8* file = nullptr;
     if (FcPatternGetString(match.get(), FC_FILE, 0, &file) != FcResultMatch || file == nullptr)
@@ -83,6 +87,8 @@ struct TextEngineImpl {
     HbBuffer buffer{};
     std::int32_t ascent{};
     std::int32_t line_height{};
+    std::optional<TextEngine> monospace{};
+    std::optional<Error> monospace_refusal{};
 };
 
 void TextEngineImplDeleter::operator()(TextEngineImpl* impl) const noexcept {
@@ -121,6 +127,28 @@ std::expected<void, Error> finish_engine(detail::TextEngineImpl& impl, std::stri
     return {};
 }
 
+// Whether a narrow letter and a wide one go the same distance. A monospace font does not have to say so, and a variable one often does not, so this asks its glyphs.
+[[nodiscard]] bool advances_are_equal(FT_Face face) {
+    constexpr FT_ULong narrow = 'i';
+    constexpr FT_ULong wide = 'W';
+    if (FT_Load_Char(face, narrow, glyph_load_flags) != 0) return false;
+    const FT_Pos narrow_advance = face->glyph->advance.x;
+    if (FT_Load_Char(face, wide, glyph_load_flags) != 0) return false;
+    return narrow_advance > 0 && narrow_advance == face->glyph->advance.x;
+}
+
+// Finds a family's font and starts an engine on it.
+std::expected<void, Error> open_found_font(detail::TextEngineImpl& impl, FcConfig* config, const FcChar8* family) {
+    auto file = find_font(config, family);
+    if (!file) return std::unexpected(std::move(file.error()));
+    if (auto started = start_freetype(impl); !started) return std::unexpected(std::move(started.error()));
+    FT_Face face = nullptr;
+    if (FT_New_Face(impl.library.get(), file->path.c_str(), file->face_index, &face) != 0)
+        return make_error(ErrorCode::Font, "FreeType could not open the font " + file->path);
+    impl.face.reset(face);
+    return finish_engine(impl, file->path);
+}
+
 }  // namespace
 
 TextEngine::TextEngine(std::unique_ptr<detail::TextEngineImpl, detail::TextEngineImplDeleter> impl) noexcept
@@ -132,16 +160,29 @@ std::expected<TextEngine, Error> TextEngine::create() {
 
     impl->config.reset(FcInitLoadConfigAndFonts());
     if (!impl->config) return make_error(ErrorCode::Font, "fontconfig could not load its configuration");
-    auto file = find_default_font(impl->config.get());
-    if (!file) return std::unexpected(std::move(file.error()));
-
-    if (auto started = start_freetype(*impl); !started) return std::unexpected(std::move(started.error()));
-    FT_Face face = nullptr;
-    if (FT_New_Face(impl->library.get(), file->path.c_str(), file->face_index, &face) != 0)
-        return make_error(ErrorCode::Font, "FreeType could not open the font " + file->path);
-    impl->face.reset(face);
-    if (auto finished = finish_engine(*impl, file->path); !finished) return std::unexpected(std::move(finished.error()));
+    if (auto opened = open_found_font(*impl, impl->config.get(), sans_family); !opened) return std::unexpected(std::move(opened.error()));
     return TextEngine{std::move(impl)};
+}
+
+std::expected<std::reference_wrapper<const TextEngine>, Error> TextEngine::monospace_face() const {
+    detail::TextEngineImpl& parent = *impl_;
+    if (parent.monospace) return std::cref(*parent.monospace);
+    if (!parent.monospace_refusal) {
+        if (!parent.config) {
+            parent.monospace_refusal = Error{ErrorCode::Font, "this font engine cannot look for a monospace font"};
+        } else {
+            std::unique_ptr<detail::TextEngineImpl, detail::TextEngineImplDeleter> impl{std::make_unique<detail::TextEngineImpl>().release()};
+            if (auto opened = open_found_font(*impl, parent.config.get(), monospace_family); !opened) {
+                parent.monospace_refusal = std::move(opened.error());
+            } else if (!advances_are_equal(impl->face.get())) {
+                parent.monospace_refusal = Error{ErrorCode::Font, "the font fontconfig gave for monospace is not fixed-width"};
+            } else {
+                parent.monospace.emplace(TextEngine{std::move(impl)});
+                return std::cref(*parent.monospace);
+            }
+        }
+    }
+    return std::unexpected(*parent.monospace_refusal);
 }
 
 std::expected<TextEngine, Error> TextEngine::from_font_bytes(std::span<const std::uint8_t> font) {

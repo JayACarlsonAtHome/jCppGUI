@@ -2,6 +2,8 @@
 // Purpose: The backend with no screen. Tests inject events and read the pixels back.
 #pragma once
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -30,13 +32,20 @@ public:
         return {};
     }
 
-    // Nothing else can ever arrive, so a wait with an empty queue is an Error rather than a hang.
+    // Nothing else can ever arrive. So a wait with an empty queue and a deadline runs the clock to it at once, and
+    // with none it is an Error rather than a hang.
     template <class Sink>
-    constexpr std::expected<void, Error> wait(Sink& sink) {
-        if (events_.empty()) return make_error(ErrorCode::WouldBlock, "headless wait with no events queued");
+    constexpr std::expected<void, Error> wait(Sink& sink, std::optional<MonotonicTime> deadline) {
+        if (events_.empty()) {
+            if (!deadline) return make_error(ErrorCode::WouldBlock, "headless wait with no events queued");
+            time_ = std::max(time_, *deadline);
+            return {};
+        }
         events_.drain(sink);
         return {};
     }
+
+    [[nodiscard]] constexpr MonotonicTime now() const noexcept { return time_; }
 
     [[nodiscard]] constexpr bool can_present(Size) const noexcept { return !display_holding_; }
 
@@ -75,6 +84,7 @@ public:
     }
 
     // --- For tests ---
+    constexpr void advance_time(std::chrono::nanoseconds by) noexcept { time_ = time_.after(by); }
     constexpr void set_display_holding(bool holding) noexcept { display_holding_ = holding; }
     [[nodiscard]] constexpr std::uint32_t pixel(Point p) const {
         return pixels_.at(PixelBuffer::tight_index(p, size_));
@@ -89,6 +99,7 @@ public:
 
 private:
     BackendEventQueue events_{};
+    MonotonicTime time_{};
     detail::FrameLedger ledger_{};
     std::vector<std::uint32_t> pixels_{};
     Size size_{};

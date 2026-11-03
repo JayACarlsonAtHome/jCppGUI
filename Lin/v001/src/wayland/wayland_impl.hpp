@@ -298,7 +298,7 @@ struct BasicWaylandImpl {
 
     // --- Used from the event loop ---
     [[nodiscard]] std::expected<void, Error> connect(const WaylandOptions& options);
-    [[nodiscard]] std::expected<void, Error> pump(PumpWait wait);
+    [[nodiscard]] std::expected<void, Error> pump(PumpWait wait, std::optional<MonotonicTime> deadline = std::nullopt);
     [[nodiscard]] std::expected<void, Error> roundtrip();
     [[nodiscard]] std::expected<void, Error> create_cursor();
     void make_cursor_device() noexcept;
@@ -746,7 +746,7 @@ std::expected<void, Error> BasicWaylandImpl<Api>::connect(const WaylandOptions& 
 }
 
 template <class Api>
-std::expected<void, Error> BasicWaylandImpl<Api>::pump(PumpWait wait) {
+std::expected<void, Error> BasicWaylandImpl<Api>::pump(PumpWait wait, std::optional<MonotonicTime> deadline) {
     wl_display* d = display.get();
     bool hung_up = false;
     while (true) {
@@ -764,7 +764,8 @@ std::expected<void, Error> BasicWaylandImpl<Api>::pump(PumpWait wait) {
         }
         pollfd watch{wl_display_get_fd(d), wanted, 0};
         const bool may_sleep = wait == PumpWait::Always || (wait == PumpWait::WhenIdle && events.empty());
-        const int timeout = (may_sleep && !failure) ? -1 : 0;
+        // Worked out afresh each time round, so signals landing here cannot keep putting a deadline off. Only a deadline reads the clock.
+        const int timeout = (may_sleep && !failure) ? poll_timeout_ms(deadline, deadline ? monotonic_now() : MonotonicTime{}) : 0;
         const int ready = ::poll(&watch, 1, timeout);
         if (ready < 0) {
             const int poll_error = errno;

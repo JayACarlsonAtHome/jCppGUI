@@ -1077,7 +1077,7 @@ struct GridLine {
     int number{};
     std::string name{};
 };
-using WireGrid = jgui::DataGrid<GridTag, GridLine, jgui::NoGridMessage, jgui::Column<"Number", &GridLine::number, 100>, jgui::Column<"Name", &GridLine::name, 100>>;
+using WireGrid = jgui::DataGrid<GridTag, GridLine, jgui::NoGridMessage, jgui::Column<"N", &GridLine::number, 100>, jgui::Column<"T", &GridLine::name, 100>>;
 constexpr std::int32_t grid_rows = 1000;
 
 template <class Script>
@@ -1414,6 +1414,125 @@ struct GridCursor {
         if (session.shapes() != wanted) session.violation("the shapes that arrived are not those of the places crossed, once each");
     }
     [[nodiscard]] static bool grid_is_right(const WireGrid& grid) { return grid.column_width(0) == jgui::Width{146}; }
+};
+
+// --- Time in the real loop ---
+
+// Asks once to be woken, a while after its first turn, and counts the turns the loop takes after that.
+struct WakeProbeTag;
+inline constexpr std::chrono::milliseconds wake_probe_wait{200};
+struct WakeProbe {
+    using tag = WakeProbeTag;
+    std::optional<jgui::MonotonicTime> started{};
+    std::optional<jgui::MonotonicTime> fired_at{};
+    int turns_after{};
+    [[nodiscard]] constexpr jgui::Rect bounds() const noexcept { return jgui::Rect{}; }
+    constexpr void paint(const jgui::TreeKey&, jgui::Canvas&) {}
+    template <class Shaper>
+    constexpr std::expected<jgui::Rect, jgui::Error> layout(const jgui::TreeKey&, jgui::Rect area, const Shaper&) {
+        return area;
+    }
+    template <class U, class E>
+    constexpr bool handle(const jgui::TreeKey&, U&, const E&) {
+        return false;
+    }
+    template <class U, class E>
+    constexpr void notify(const jgui::TreeKey&, U&, const E&) {}
+    template <class U>
+    constexpr void notify(const jgui::TreeKey&, U& ui, const jgui::TimersDue& timers) {
+        if (!started) started = timers.now;
+        if (fired_at) {
+            ++turns_after;
+        } else if (timers.now >= started->after(wake_probe_wait)) {
+            fired_at = timers.now;
+        } else {
+            ui.wake_at(started->after(wake_probe_wait));
+        }
+    }
+};
+
+template <class Script>
+[[nodiscard]] int run_wake_probe_client() {
+    auto backend = test_backend();
+    if (!backend) return 1;
+    auto app = jgui::make_application(std::move(*backend), jgui::window(jgui::window_frame(WakeProbe{})));
+    if (!app) return 1;
+    if (!ended_as_expected(Script::end, app->run())) return 1;
+    const WakeProbe& probe = app->ui().get<WakeProbeTag>();
+    if (!probe.bounds().empty()) return 1;
+    if (!probe.fired_at || *probe.fired_at < probe.started->after(wake_probe_wait)) {
+        std::cerr << "the deadline did not wake the loop\n";
+        return 1;
+    }
+    // Over half a second of silence went by after that, and all that came was the close, which ends the loop. A wake-up on a timer would be many turns here.
+    if (probe.turns_after > 2) {
+        std::cerr << "the loop did not sleep once nothing was pending: " << probe.turns_after << " turns\n";
+        return 1;
+    }
+    return 0;
+}
+
+// Nothing is sent after the first frame's buffer comes back, so only the deadline can wake the client, and after it nothing can.
+struct TimerWakesAndSleeps {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool wake_probe = true;
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() != 0 && ++idles == 3) session.close_window();
+    }
+};
+
+// The header's buttons, with the grid's first column ending at 108: a press on the alignment button draws its letter, and with nothing more sent, the column changes by itself.
+constexpr std::int32_t on_align_button_x = 96;
+constexpr std::int32_t on_font_button_x = 78;
+constexpr std::int32_t on_grid_header_y = 36;
+struct GridColumnButtonWaits {
+    static constexpr ClientEnd end = ends_clean;
+    std::size_t idles{};
+    std::size_t before{};
+    bool pressed{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.pointer()) return;
+        if (!pressed) {
+            pressed = true;
+            pointer_enter(session, on_align_button_x, on_grid_header_y);
+            before = session.commits_with_buffer();
+            pointer_button(session, wire::button_left, wire::button_pressed);
+            pointer_button(session, wire::button_left, wire::button_released);
+            return;
+        }
+        ++idles;
+        if (session.commits_with_buffer() >= before + 2 || idles > 8) {
+            if (session.commits_with_buffer() != before + 2) session.violation("a press should draw once for its letter and once when its wait ends, with no event: " + std::to_string(session.commits_with_buffer() - before));
+            session.close_window();
+        }
+    }
+    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) { return grid.column_align(0) == jgui::ColumnAlign::AtCenter && grid.column_align_applied(0) == jgui::ColumnAlign::AtCenter && grid.scroll_down() == jgui::Height{} && !grid.selected() && !grid.sort(); }
+};
+
+// A flood of presses on the button, then a flood of motion while it waits. Nothing hangs, the last press decides, and the wait ends once they stop.
+struct GridButtonsUnderFloods {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr std::int32_t presses = 2001;
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.pointer()) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, on_font_button_x, on_grid_header_y);
+            for (std::int32_t i = 0; i < presses; ++i) {
+                pointer_button(session, wire::button_left, wire::button_pressed);
+                pointer_button(session, wire::button_left, wire::button_released);
+            }
+            flood_with_motion(session, EventFlood::count);
+        } else if (idles == 3) {
+            session.close_window();
+        }
+    }
+    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) { return grid.column_font(0) == jgui::ColumnFont::Monospace && grid.column_font_applied(0) == jgui::ColumnFont::Monospace && !grid.sort(); }
 };
 
 // --- The redraw monitor, through the real backend ---
@@ -1936,7 +2055,7 @@ template <class Grid>
     return jgui::Point{jgui::left_after(label.left() + jgui::theme::label_pad_x), jgui::top_after(label.top() + jgui::theme::label_pad_y)};
 }
 
-constexpr std::int32_t viewer_width = 900;
+constexpr std::int32_t viewer_width = 1100;
 constexpr std::int32_t viewer_height = 500;
 
 // What each script keeps: where the file is, as the program was told it, and the buffer that came last.
@@ -2434,6 +2553,8 @@ template <class Script>
         return run_viewer_scenario<Script>();
     } else if constexpr (requires { Script::place; }) {
         return run_scenario(Script{}, GlobalSet{}, [] { return run_the_real_demo<Script::place>(); });
+    } else if constexpr (requires { requires Script::wake_probe; }) {
+        return run_scenario(Script{}, GlobalSet{}, [] { return run_wake_probe_client<Script>(); });
     } else if constexpr (requires { &Script::grid_is_right; }) {
         return run_scenario(Script{}, GlobalSet{}, [] { return run_grid_client<Script>(); });
     } else if constexpr (requires { requires Script::monitored; }) {
@@ -2524,6 +2645,9 @@ constexpr auto scenarios = std::tuple{
     Named<GridPointerGoneDuringCapture>{"grid_pointer_gone_during_capture"},
     Named<GridSeatGoneDuringCapture>{"grid_seat_gone_during_capture"},
     Named<GridCursor>{"grid_cursor"},
+    Named<TimerWakesAndSleeps>{"timer_wakes_and_sleeps"},
+    Named<GridColumnButtonWaits>{"grid_column_button_waits"},
+    Named<GridButtonsUnderFloods>{"grid_buttons_under_floods"},
     Named<ViewerFirstFrame>{"viewer_first_frame"},
     Named<ViewerSectionSwitch>{"viewer_section_switch"},
     Named<ViewerWheelScroll>{"viewer_wheel_scroll"},

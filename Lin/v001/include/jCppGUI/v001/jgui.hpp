@@ -26,5 +26,6 @@
 #include "selection_step.hpp"
 #include "spans.hpp"
 #include "text.hpp"
+#include "timer.hpp"
 #include "tree.hpp"
 #include "widget.hpp"

@@ -1,5 +1,5 @@
 // File: include/jCppGUI/v001/text.hpp
-// Purpose: One font, one size, one line. TextEngine shapes validated UTF-8 into a TextRun, a coverage
+// Purpose: One size, one line, and a regular font with a monospace one on request. TextEngine shapes validated UTF-8 into a TextRun, a coverage
 //          bitmap that Canvas blends. The FreeType, HarfBuzz and fontconfig objects stay in src/text.
 #pragma once
 
@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -223,6 +224,14 @@ concept TextShaper = requires(const S& shaper, std::string_view text) {
     { shaper.line_height() } -> std::same_as<Height>;
 };
 
+// A shaper that can also give a monospace face, itself a shaper of its own known type. A simple shaper need not have one. The first call may do real work,
+// and may be refused: the answer says why, and the program goes on without it.
+template <class S>
+concept HasMonospaceFace = TextShaper<S> && requires(const S& shaper) {
+    requires TextShaper<typename decltype(shaper.monospace_face())::value_type::type>;
+    { shaper.monospace_face() } -> std::same_as<std::expected<std::reference_wrapper<const typename decltype(shaper.monospace_face())::value_type::type>, Error>>;
+};
+
 namespace detail {
 
 // A widget's text, and what shaping it gave: a run, or a refusal of this text. A refusal is kept for the widget to
@@ -293,12 +302,17 @@ public:
 
     [[nodiscard]] Height line_height() const noexcept;
 
+    // The default monospace font, found the first time this is asked and put through every check create does. A program that never asks pays nothing.
+    // A font fontconfig gives whose letters are not all one width, as it gives when there is no monospace font, is refused. A refusal is kept and given again, with no second search, and an engine
+    // made from bytes, or one that is itself a monospace face, has no way to look and always refuses.
+    [[nodiscard]] std::expected<std::reference_wrapper<const TextEngine>, Error> monospace_face() const;
+
 private:
     explicit TextEngine(std::unique_ptr<detail::TextEngineImpl, detail::TextEngineImplDeleter> impl) noexcept;
 
     std::unique_ptr<detail::TextEngineImpl, detail::TextEngineImplDeleter> impl_;
 };
 
-static_assert(TextShaper<TextEngine>);
+static_assert(HasMonospaceFace<TextEngine>);
 
 }  // namespace jgui::inline v001

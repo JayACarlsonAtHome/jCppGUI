@@ -3,7 +3,7 @@
 //          the tree by value, sends events into the tree, carries out what widgets ask of the window
 //          system, and redraws only when damaged. It is constexpr, so it can be run whole in a static_assert. Application
 //          adds only what needs the system: the real font engine and the UI-thread check. A monitor, chosen by type,
-//          is told what happens at named points: the core itself never reads a clock or a file.
+//          is told what happens at named points: the core itself reads no file, and time comes only through the backend.
 #pragma once
 
 #include <cstdint>
@@ -43,7 +43,7 @@ public:
     [[nodiscard]] constexpr std::expected<void, Error> process_pending(const Shaper& text) {
         const Entry entry{*this};
         if (auto result = backend_.process_pending(*this); !result) return std::unexpected(std::move(result.error()));
-        return settle(text);
+        return take_a_turn(text);
     }
 
     // Waits for the first configure, presents one frame, and waits for the display to confirm it.
@@ -69,6 +69,8 @@ public:
     [[nodiscard]] constexpr bool closed() const noexcept { return closed_; }
     [[nodiscard]] constexpr std::uint64_t frames() const noexcept { return frames_; }
     [[nodiscard]] constexpr Size size() const noexcept { return root_.size(); }
+    // When the widgets next want to act, as of the last turn. A program with its own process_pending loop calls again by then.
+    [[nodiscard]] constexpr std::optional<MonotonicTime> next_wake() const noexcept { return wake_; }
 
 private:
     friend struct detail::TestAccess;
@@ -94,9 +96,9 @@ private:
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> run_until_closed(const Shaper& text) {
         while (!closed_) {
-            if (auto result = settle(text); !result) return std::unexpected(std::move(result.error()));
+            if (auto result = take_a_turn(text); !result) return std::unexpected(std::move(result.error()));
             if (closed_) break;
-            if (auto result = backend_.wait(*this); !result) return std::unexpected(std::move(result.error()));
+            if (auto result = backend_.wait(*this, wake_); !result) return std::unexpected(std::move(result.error()));
         }
         return {};
     }
@@ -107,14 +109,18 @@ private:
             if (auto result = settle(text); !result) return std::unexpected(std::move(result.error()));
             if (frames_ != 0) break;
             if (closed_) return make_error(ErrorCode::Protocol, "the window closed before its first frame");
-            if (auto result = backend_.wait(*this); !result) return std::unexpected(std::move(result.error()));
+            if (auto result = backend_.wait(*this, std::nullopt); !result) return std::unexpected(std::move(result.error()));
         }
         return backend_.sync();
     }
 
     // --- The event sink, which only a backend's event queue calls: on the UI thread, outside any C callback ---
 
-    constexpr void on(const CloseEvent&) { closed_ = true; }
+    // What the widgets were waiting for goes with the window.
+    constexpr void on(const CloseEvent&) {
+        closed_ = true;
+        wake_.reset();
+    }
 
     constexpr void on(const ResizeEvent& event) {
         // A size from outside is validated before anything uses it. A refused one leaves the window
@@ -174,6 +180,26 @@ private:
         if (cursor_ == shape) return;
         cursor_ = shape;
         backend_.set_cursor(shape);
+    }
+
+    // Asks every widget what has come due, on every turn, whatever woke the loop.
+    constexpr void run_timers() {
+        if (closed_) return;
+        wake_ = root_.run_timers(backend_.now());
+        carry_out_requests();
+    }
+
+    // One turn of the loop, after what was queued has been delivered. A frame's layout is when a widget can learn something only a shaper can tell it, with
+    // no event to say so. So after a frame the timers run once more, and what they damaged is drawn. It stops there, so this always ends.
+    template <TextShaper Shaper>
+    [[nodiscard]] constexpr std::expected<void, Error> take_a_turn(const Shaper& text) {
+        run_timers();
+        const std::uint64_t frames_before = frames_;
+        if (auto result = settle(text); !result) return result;
+        if (frames_ == frames_before) return {};
+        run_timers();
+        if (closed_ || (!damaged_ && !root_.damaged())) return {};
+        return settle(text);
     }
 
     // Reports a failure recorded during delivery, then draws if anything is damaged. Whatever came of it, nothing
@@ -249,6 +275,7 @@ private:
     std::unique_ptr<detail::FrameLedger> painting_;
     std::optional<Error> failure_{};
     std::uint64_t frames_{};
+    std::optional<MonotonicTime> wake_{};
     std::optional<CursorShape> cursor_{};
     bool have_size_{};
     bool closed_{};
@@ -309,6 +336,10 @@ public:
     [[nodiscard]] Size size() const {
         check_thread();
         return core_.size();
+    }
+    [[nodiscard]] std::optional<MonotonicTime> next_wake() const {
+        check_thread();
+        return core_.next_wake();
     }
 
 private:

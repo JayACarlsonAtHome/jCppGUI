@@ -51,6 +51,7 @@ Non-`constexpr` code is limited to what needs the OS or a C library:
 | `FileSink` in `src/monitor/file_sink.cpp`, `SteadyClock` | `openat`, `fstat`, `fstatat`, `unlinkat`, `renameat`, the clocks. `FrameMonitor` and `SettingsRecorder` are `constexpr` over a clock and a sink given as template parameters |
 | `TextEngine` in `src/text/text.cpp` | fontconfig, HarfBuzz, FreeType. Validation, rounding and glyph copying are `constexpr` |
 | `Application` | `std::this_thread::get_id`, and it owns a `TextEngine` |
+| `monotonic_now`, `WaylandBackend::now` | The real clock. `HeadlessBackend::now` is `constexpr`, and a test moves it by hand |
 
 ## Layers
 
@@ -61,7 +62,7 @@ demo, or your program
   Window, WindowFrame, MenuBar,  the typed tree, messages and pools
   Button, Label, DataGrid,
   OneShown, Dynamic, Pool
-  ScrollBar, and small helpers  scroll_bar, spans, selection_step, index_sort, cell_text, panels
+  ScrollBar, and small helpers  scroll_bar, spans, selection_step, index_sort, cell_text, panels, timer
   Canvas, PixelBuffer, Geometry
 ---------------- Backend concept: nothing above this line includes a display header ----------------
   HeadlessBackend              tests inject events and read pixels back
@@ -183,7 +184,7 @@ see `SECURITY.md`.
 
 ## What a callback can reach
 
-A callback receives the `Window`, and can use only `get<Tag>()`, `send<Message>()`, `size()` and the requests: move, resize, cursor, a cursor suggestion and close.
+A callback receives the `Window`, and can use only `get<Tag>()`, `send<Message>()`, `size()` and the requests: move, resize, cursor, a cursor suggestion and close. `wake_at` is there too, and means something only during `TimersDue`: see below.
 
 - **The tree's machinery is private.** `dispatch`, `notify`, `clear_damage`, `layout`, `paint`, `damaged`, `capture_active`,
   `set_size` and `take_requests` are private, with `ApplicationCore` as a friend, so an attempt does not compile. Neither
@@ -203,7 +204,7 @@ friends declared by name, so **a program could define one of those names itself 
 way to stop that. Only the rule script stops it in this repository.
 
 **What remains reachable from a callback.** The public interface of each widget it gets by tag, which is what the widget
-offers: `Dynamic::create`, `destroy`, `find`, `show`, `hide`, `captured` and `focused`, `Label::set_text`, `DataGrid::set_rows`, the state getters, and
+offers: `Dynamic::create`, `destroy`, `find`, `show`, `hide`, `captured` and `focused`, `Label::set_text`, `Button::set_caption`, `DataGrid::set_rows`, `set_column_font`, `set_column_align`, `set_every_column_font`, `set_column_title`, `take_font_refusal`, the state getters, and
 `children()` on a `MenuBar` or `WindowFrame`, which gives only the same widgets. A pointer from `Dynamic::find` can be kept past
 the item's life, as any C++ pointer can. A callback can loop for ever, recurse through `send` until the stack runs out, or
 call `std::exit`. Through a pointer to its `Application`: `ui()`, `closed()`, `frames()` and `size()`, which are harmless.
@@ -215,7 +216,7 @@ A development tool, chosen by type: `ApplicationCore<B, Root, Monitor = NoMonito
 size it would be with no such member, as `tests/test_redraw_monitor.cpp` shows against a struct of the same members. `FrameMonitor` is in
 `redraw_monitor.hpp`, which `jgui.hpp` does not include, and a program using its default file links `jgui_monitor`.
 
-**The core never reads a clock or a file.** It tells the monitor what happens at named points, listed with the `RedrawMonitor` concept. It
+**The core reads no clock of its own, and no file.** For the monitor it tells the monitor what happens at named points, listed with the `RedrawMonitor` concept. It
 asks the tree nothing extra for this except, with a monitor that watches, the damage walk below. `FrameMonitor<Clock, Sink>` owns the time and
 the output, so the same logic and the same file text run in `static_assert` with a test clock and a sink in memory.
 
@@ -239,7 +240,7 @@ the output, so the same logic and the same file text run in `static_assert` with
 
 **The writer's limits.** The format has no escapes. A line uses `▮▌`, and falls back as the spec says on a character the data holds. A value with a control character, invalid UTF-8 or space around it cannot read back as itself, so its row is left out and counted, and a run label like that is dropped and counted. No value can break the file's structure.
 
-**The limits of "a crash loses about a second".** That holds while frames keep coming. The loop sleeps with no timer, so rows recorded just before a quiet time wait for the next event, and a crash in the quiet time loses them. The file is not flushed to the disk with `fsync`, so a crash of the whole system can lose more.
+**The limits of "a crash loses about a second".** That holds while frames keep coming. The monitor asks for no wake-up, so rows recorded just before a quiet time wait for the next event, and a crash in the quiet time loses them. The file is not flushed to the disk with `fsync`, so a crash of the whole system can lose more.
 
 The file's place is the application's base directory (see below), or a directory given to `FileSink`. With no base directory to be found, the monitor refuses: the program carries on, nothing is written, and the reason is readable at exit. See `docs/SECURITY.md`.
 
@@ -276,7 +277,7 @@ The file's place is the application's base directory (see below), or a directory
 
 **The last one is a promise the toolkit really makes:** every one of its widgets lays out inside the rectangle it was offered, by `Rect::intersect` or by taking it whole, and every parent offers rectangles inside its own. A rectangle with nothing in it is excused, because it has no pixels to be outside with, and a parent out of room can leave one just past its own edge: `inset` moves the corner even when the size has reached zero. A program's own widget can break this, and then this says so. The tests run the demo and the viewer's window at 1x1, 3x3, 20x5 and 200x120, and no check fails. Because every far edge is computed from the near one and the length, the first two checks can fail on a real widget only when an edge saturates at the limit of `int32_t`. They are there to catch a change in that. Two more rows are possible: `This row could not be written`, for a row that cannot stand in a line, which no compile-time name does; and a row with an `Item_ID` of 0 saying how many items were over the limit.
 
-**Writing.** Only when something recorded has changed since the last write, so a frame that changes nothing writes nothing. The first write is straight after the first frame, then at most once per interval, default one second, and once at the end of `run` or `present_first_frame`, whether or not anything changed. A program with its own `process_pending` loop calls `finish_monitor`. The file, its refusals and what happens on a failure are the redraw monitor's: `FileSink`, a whole new file renamed over the old, writing stopping at the first failure, the program going on, and `monitor_error()` giving the reason at exit. `BothMonitors` gives both reasons when both failed. The loop sleeps with no timer, so a change just before a quiet time waits for the next event, or the end.
+**Writing.** Only when something recorded has changed since the last write, so a frame that changes nothing writes nothing. The first write is straight after the first frame, then at most once per interval, default one second, and once at the end of `run` or `present_first_frame`, whether or not anything changed. A program with its own `process_pending` loop calls `finish_monitor`. The file, its refusals and what happens on a failure are the redraw monitor's: `FileSink`, a whole new file renamed over the old, writing stopping at the first failure, the program going on, and `monitor_error()` giving the reason at exit. `BothMonitors` gives both reasons when both failed. The recorder asks for no wake-up, so a change just before a quiet time waits for the next event, or the end.
 
 **Limits.** All of the compile-time tree is always written, which the compiler already bounds. As well as that, at most 65536 items of `Dynamic`s and what is inside them, by default `SettingsRecorderOptions::item_limit`, and `Problems` at most that many, with one more row saying how many were not listed. An item over the limit is counted, and what is inside it is not.
 
@@ -300,6 +301,18 @@ one concrete type with a stateless deleter. They exist so that no libwayland, xk
 or fontconfig type appears above the backend line, and so that a program using the toolkit is not recompiled
 when those details change. Nothing is erased: each has exactly one implementation, known at link time. The
 owner approved keeping them. `WaylandImpl` gets revisited with our own Wayland client.
+
+## Time in the loop
+
+The loop sleeps until something arrives, or until the earliest time any widget asked for, and with no such time it sleeps with no wake-ups at all, so an idle program uses no CPU. `timer.hpp` is small and knows nothing of grids.
+
+- **The backend owns the clock.** `Backend::now()` gives a `MonotonicTime`, and `wait(sink, deadline)` sleeps to the deadline if it has one. `WaylandBackend` reads `steady_clock`. `HeadlessBackend` holds a time a test moves with `advance_time`, and a wait with no events and a deadline runs that time to it at once, so a whole `run()` to a deadline works in `static_assert`. With no deadline and no events it is an `Error`, as before.
+- **`TimersDue` is a notice,** so every widget gets it, also one that `OneShown` is not showing, and an item of a `Dynamic`. `ApplicationCore` sends it on every turn, however the loop woke, with the time. A widget acts on what has come due and says with `ui.wake_at(when)` when next it wants to act. The earliest answer is the wait. Each turn starts from nothing, so no widget has to cancel anything, and one that dies takes its deadline with it. `next_wake()` gives the answer to a program with its own `process_pending` loop.
+- **A turn** is `TimersDue`, drawing if anything is damaged, and if that drew a frame, `TimersDue` again and drawing again if that damaged anything. Layout is when a widget can learn something only a shaper knows, with no event to say so, and this is how it gets to act on that. It stops at two, so a widget cannot make it spin.
+- **`poll_timeout_ms`** turns a deadline into poll's `int`: -1 with no deadline, 0 once it has come, and otherwise whole milliseconds, rounded up, because rounding down would spin through the last one. A longer wait than an `int` holds stops at the longest one, and the loop asks again. The difference is taken as unsigned, so any two times work. It is worked out afresh on each try at `poll`, so signals landing there cannot put a deadline off.
+- **Floods.** Because the notice goes on every turn, other events going past do not hold a deadline back. Presses on one button do put off that button's own change, because each new press restarts its wait, as asked. Nothing else waits on it: the letter shows the choice, the loop goes on, and the change happens 300 ms after they stop. There is no ceiling on that. A compositor sending presses for ever is already able to do worse.
+- `DelayedChoice<T>` is what a widget with a wait holds: what is chosen, which shows at once, and what is applied, which follows after the wait since the last choice. A press has no time to hand, so the wait starts at the `TimersDue` after that delivery.
+- A deadline waiting when the window closes is dropped with everything else, and `present_first_frame` asks no deadline of the backend.
 
 ## Scrolling
 
@@ -328,6 +341,11 @@ using Grid = jgui::DataGrid<GridTag, Row, Picked, jgui::Column<"Left", &Row::lef
 - **Sorting** is by `stable_sort_indices`, a merge sort of an index vector, because `std::stable_sort` is not `constexpr` in C++23. The rows do not move. Each sort starts from the rows' own order, so rows that compare equal keep that order in both directions. It runs in the delivery of the release, so a sort of many rows holds up that one delivery.
 - **Selection** is held as a position on the screen and given out as a `GridRow`, an index into the rows as given. It follows its row across a sort. The optional `Notify` message goes out only when the selection really changes, last, so a receiver finds the grid settled, and may give it new rows from there. `set_rows` during that delivery is safe for this reason.
 - **Damage.** Motion draws nothing. A scroll that clamps to the same offset draws nothing. Focus is compared with what was last painted, because the frame clears the focus before a press in the grid gives it back.
+- **A column's font and alignment.** Each header has two buttons at its right end, side by side and almost its full height: the font button, blank for regular with its outline, `M` for monospace, and the alignment button, `L`, `C` or `R`, in that cycle, for both the title and the cells. A press acts at once on the letter, and the column follows `grid_column_change_delay`, 300 ms, after the last press on that button, so going through several draws the column once, and coming back to where it was draws nothing more. Settings last as long as the grid, through sorting, resizing, new rows and sections going away. They are not saved. `set_column_font`, `set_column_align` and `set_every_column_font` do the same with no wait, and a column that is not there is refused with an `Error`. The default is regular and left. The letters are shaped with the regular font, once, whatever a column's own font is. A letter the shaper refuses leaves its button blank, and a font failing goes the way it does for any caption.
+- **In a header press, what is hit comes in this order:** the boundary's reach, then the buttons, then an ordinary press. The buttons stop short of the reach, so a drag always starts. Every height of the header counts as a button, and so does the pixel between them, so just missing one does not sort. Pressing one never holds the pointer, sorts or selects. The filler has none.
+- **Monospace** comes through `HasMonospaceFace`, a concept with a `monospace_face()` that gives the face as its own type, so nothing is erased and a simple shaper with none is still a `TextShaper`. `TextEngine` finds the font the first time it is asked, through the same checks as the regular one, so a program that never asks pays nothing. Its letters `i` and `W` must have the same advance: asking the font's own flag would refuse the variable Noto Sans Mono, which does not set it, and fontconfig answers with some font even when no monospace one is installed. If it cannot be had, the column goes back to regular, the program goes on, and `take_font_refusal` gives why. A simple shaper is refused the same way. Each column has its title shaped in each font it has used.
+- **Column widths.** Until it is dragged, a column shows at least its whole title: padding, the title in the column's font, padding, the sort mark's room, both buttons and the boundary's reach, or its declared width if that is more. So it follows `set_column_title` and font changes both ways. Once it is dragged, its width is the user's, and those changes do not move it. A drag stops at the floor: padding, the width of the shaped `M`, both buttons and the reach. A column's width is at most `grid_column_most`, 4096, also when the whole of its title is more, so a title past that is cut. A window too narrow for the columns gets the bar across. A cut title stops cleanly at the buttons. The sort mark needs the whole title's width to draw: in a column dragged narrower than that it does not, the sort still stands, and the mark comes back when the column is wide enough. Cell text is cut at its column, as before.
+- **Rows** are all one height, from the tallest font in effect in that grid, and the header goes with them. Text shorter than its row sits in the middle.
 - **Sizes.** A row's height comes from the font, at most `max_grid_row_height`, 2048, and a million of those still fit a length, as a `static_assert` shows. So the offsets are ordinary `Height` and `Width` values.
 
 ## The jText reader
@@ -355,9 +373,11 @@ using Grid = jgui::DataGrid<GridTag, Row, Picked, jgui::Column<"Left", &Row::lef
 
 ## The viewer
 
-`demo/viewer.cpp` is `jcppgui-viewer`. It shows `redraw_monitor.jtext` and `settings.jtext` from the application's base directory, or the paths given as its two optional arguments, in that order, and reads each once, at the start. `demo/viewer_ui.hpp` is its window, which the tests include: a menu bar with a button per section of both files, a line saying what shows, and the chosen section's grid in all the room left. It opens on `Frames`.
+`demo/viewer.cpp` is `jcppgui-viewer`. It shows `redraw_monitor.jtext` and `settings.jtext` from the application's base directory, or the paths given as its two optional arguments, in that order, and reads each once, at the start. `demo/viewer_ui.hpp` is its window, which the tests include: a menu bar with a button per section of both files and a font button, a line saying what shows, and the chosen section's grid in all the room left. It opens on `Frames`.
 
-A path, a file or a section that cannot be read never ends the program. The window opens, the line says why, and no grid is shown. Either file's trouble shows only at that file's buttons. A section the file lacks, or that lacks a column, is that section's trouble alone. Rows left out are counted on the line. Each section's grid keeps its rows, its scroll and its sort while another shows.
+A path, a file or a section that cannot be read never ends the program. The window opens, the line says why, and no grid is shown. Either file's trouble shows only at that file's buttons. A section the file lacks, or that lacks a column, is that section's trouble alone. Rows left out are counted on the line. Each section's grid keeps its rows, its scroll, its sort and its columns' settings while another shows.
+
+The font button sets every column of the grid showing, and no other, at once and with no wait. Its caption is what a press will do, `All monospace` or `All regular`, the second only when every column there is monospace. `ViewerWatch`, a widget with no size in the tree, keeps that caption true on each turn of the loop, and puts a refused monospace font on the status line.
 
 `OneShown<Tag, Children...>` is the small widget this needed. It holds several widgets and only the one shown gets the layout, the paint and the events, so the others cost nothing. A callback holds no key, so the one going away is told the pointer and the focus have gone as soon as that delivery ends.
 

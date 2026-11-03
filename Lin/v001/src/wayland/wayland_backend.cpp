@@ -43,9 +43,9 @@ std::expected<WaylandBackend, Error> WaylandBackend::create(const WaylandOptions
     return WaylandBackend{std::move(events), std::move(impl)};
 }
 
-std::expected<void, Error> WaylandBackend::pump(bool may_block) {
-    return impl_->core.pump(may_block ? detail::PumpWait::WhenIdle : detail::PumpWait::Never);
-}
+std::expected<void, Error> WaylandBackend::pump_at_once() { return impl_->core.pump(detail::PumpWait::Never); }
+
+std::expected<void, Error> WaylandBackend::pump_until(std::optional<MonotonicTime> deadline) { return impl_->core.pump(detail::PumpWait::WhenIdle, deadline); }
 
 bool WaylandBackend::can_present(Size size) const {
     // A size that is refused goes on to acquire_frame, which reports it.

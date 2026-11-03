@@ -103,6 +103,17 @@ int main() {
     check(!refused_font.has_value() && refused_font.error().code == ErrorCode::Font, "bytes that are no font are refused");
     check(!TextEngine::from_font_bytes({}).has_value(), "and so is nothing at all");
     if (engine) {
+        const auto mono = engine->monospace_face();
+        check(mono.has_value(), "a monospace font was found on this system");
+        if (mono) {
+            const auto wide = mono->get().shape("iiii");
+            const auto also = mono->get().shape("WWWW");
+            check(wide && also && wide->size() == also->size(), "and its letters are all as wide as each other");
+            const auto again = engine->monospace_face();
+            check(again.has_value() && &again->get() == &mono->get(), "asked twice, it is the same one");
+            const auto of_mono = mono->get().monospace_face();
+            check(!of_mono.has_value() && of_mono.error().code == ErrorCode::Font, "a monospace face looks for no other");
+        }
         test_help_text(check, *engine);
         test_refusals(check, *engine);
     }

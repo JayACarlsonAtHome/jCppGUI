@@ -231,6 +231,7 @@ jgui_test(test_messages)
 jgui_test(test_thread)
 jgui_test(test_callback_access)
 jgui_test(test_grid_helpers)
+jgui_test(test_timer)
 # The jText reader. Whole files are parsed, cut and written back in static_assert, which needs a higher step budget on both compilers.
 jgui_test(test_jtext)
 target_include_directories(test_jtext PRIVATE src)
@@ -287,7 +288,7 @@ set(JGUI_FAKE_SCENARIOS
   monitor_real_frames monitor_never_release monitor_versus_none monitor_cannot_write
   demo_as_built demo_copy_under_a_base demo_copy_with_no_base
   cursor_all_edges cursor_no_protocol cursor_seat_removed cursor_pointer_flap cursor_manager_removed cursor_manager_late cursor_during_drag
-  grid_axis_hostile grid_axis_no_enter grid_wheel_then_pixels grid_resize_during_thumb_drag grid_pointer_gone_during_capture grid_seat_gone_during_capture grid_cursor
+  grid_axis_hostile grid_axis_no_enter grid_wheel_then_pixels grid_resize_during_thumb_drag grid_pointer_gone_during_capture grid_seat_gone_during_capture grid_cursor timer_wakes_and_sleeps grid_column_button_waits grid_buttons_under_floods
   viewer_first_frame viewer_section_switch viewer_wheel_scroll viewer_resize viewer_missing_file viewer_malformed_file viewer_refused_symlink viewer_path_not_text viewer_copy_with_no_base viewer_file_in_its_base viewer_65536_rows
   settings_demo_records settings_demo_both_flags settings_demo_no_base
   settings_viewer_items settings_viewer_bad_row settings_viewer_missing_file settings_viewer_only_settings settings_viewer_malformed_file settings_viewer_files_in_its_base)

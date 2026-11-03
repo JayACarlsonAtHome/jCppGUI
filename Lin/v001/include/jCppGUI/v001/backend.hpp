@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <expected>
 #include <limits>
+#include <optional>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -17,6 +18,7 @@
 #include "canvas.hpp"
 #include "error.hpp"
 #include "events.hpp"
+#include "timer.hpp"
 
 namespace jgui::inline v001 {
 
@@ -172,17 +174,18 @@ struct ProbeSink {
 };
 }  // namespace detail
 
-// process_pending delivers what is available without sleeping. wait sleeps until something arrives
-// and delivers it. A frame is acquire_frame, frame_pixels and drawing, then present. frame_pixels and
+// process_pending delivers what is available without sleeping. wait sleeps until something arrives, or until the
+// deadline if it is given one, and delivers what came. now is the backend's monotonic clock. A frame is acquire_frame, frame_pixels and drawing, then present. frame_pixels and
 // present refuse a frame that is not the current one. can_present is false while the display holds too much
 // for a frame of that size, which is the signal to wait and not an error, and sync waits until the display has
 // processed all requests so far. set_cursor says what the pointer should look like over the window, and a
 // backend that cannot show that shape leaves it as it is. Only a change is ever asked for.
 template <class B>
-concept Backend = requires(B& backend, const B& constant, detail::ProbeSink& sink, Size size, Rect damage,
+concept Backend = requires(B& backend, const B& constant, detail::ProbeSink& sink, std::optional<MonotonicTime> deadline, Size size, Rect damage,
                            Serial serial, ResizeEdge edge, CursorShape shape, const Frame<B>& frame, Frame<B>&& taken) {
     { backend.process_pending(sink) } -> std::same_as<std::expected<void, Error>>;
-    { backend.wait(sink) } -> std::same_as<std::expected<void, Error>>;
+    { backend.wait(sink, deadline) } -> std::same_as<std::expected<void, Error>>;
+    { constant.now() } -> std::same_as<MonotonicTime>;
     { constant.can_present(size) } -> std::same_as<bool>;
     { backend.acquire_frame(size) } -> std::same_as<std::expected<Frame<B>, Error>>;
     { backend.frame_pixels(frame) } -> std::same_as<std::expected<PixelBuffer, Error>>;
