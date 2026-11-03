@@ -5,8 +5,6 @@
 
 #include <expected>
 #include <optional>
-#include <string>
-#include <string_view>
 #include <utility>
 
 #include "widget.hpp"
@@ -18,7 +16,7 @@ class Button {
 public:
     using tag = Tag;
 
-    constexpr Button(std::string_view caption, OnClick on_click) : caption_{caption}, on_click_{std::move(on_click)} {}
+    constexpr Button(CheckedText caption, OnClick on_click) : caption_{caption}, on_click_{std::move(on_click)} {}
     Button(const Button&) = delete;
     Button& operator=(const Button&) = delete;
     constexpr Button(Button&&) = default;
@@ -29,16 +27,15 @@ public:
     [[nodiscard]] constexpr bool hovered() const noexcept { return hovered_; }
     [[nodiscard]] constexpr bool pressed() const noexcept { return pressed_; }
     [[nodiscard]] constexpr bool focused() const noexcept { return focused_; }
+    // Why the caption cannot be drawn, when a shaper refused it. Empty otherwise.
+    [[nodiscard]] constexpr const std::optional<Error>& text_error() const noexcept { return caption_.refusal(); }
 
     template <TextShaper Shaper>
     constexpr std::expected<Rect, Error> layout(const TreeKey&, Rect area, const Shaper& text) {
-        if (!run_) {
-            auto shaped = text.shape(caption_);
-            if (!shaped) return std::unexpected(std::move(shaped.error()));
-            run_ = std::move(*shaped);
-        }
-        const Width wanted_width = run_->size().width() + theme::button_pad_x + theme::button_pad_x;
-        const Height wanted_height = run_->size().height() + theme::button_pad_y + theme::button_pad_y;
+        if (auto shaped = caption_.shape_with(text); !shaped) return std::unexpected(std::move(shaped.error()));
+        const Size wanted = caption_.size_with(text);
+        const Width wanted_width = wanted.width() + theme::button_pad_x + theme::button_pad_x;
+        const Height wanted_height = wanted.height() + theme::button_pad_y + theme::button_pad_y;
         bounds_ = area.intersect(Rect{area.origin(), Size{wanted_width, wanted_height}});
         return Rect{Point{left_after(bounds_.right()), area.top()}, Size{area.width() - bounds_.width(), area.height()}};
     }
@@ -53,9 +50,9 @@ public:
         }
         local.fill_rect(bounds_, fill);
         local.stroke_rect(bounds_, focused_ ? theme::focus_edge : theme::button_edge);
-        if (run_) {
+        if (caption_.run()) {
             const Point at{left_after(bounds_.left() + theme::button_pad_x), top_after(bounds_.top() + theme::button_pad_y)};
-            local.draw_text(at, *run_, theme::text);
+            local.draw_text(at, *caption_.run(), theme::text);
         }
     }
 
@@ -131,9 +128,8 @@ public:
     constexpr void notify(const TreeKey&, U&, const CollectDead&) {}
 
 private:
-    std::string caption_;
+    detail::ShapedCaption caption_;
     OnClick on_click_;
-    std::optional<TextRun> run_{};
     Rect bounds_{};
     bool hovered_{};
     bool pressed_{};
@@ -143,7 +139,7 @@ private:
 
 // The tag is given; the callback's type is deduced and becomes part of the button's type.
 template <class Tag, class OnClick>
-[[nodiscard]] constexpr Button<Tag, OnClick> button(std::string_view caption, OnClick on_click) {
+[[nodiscard]] constexpr Button<Tag, OnClick> button(CheckedText caption, OnClick on_click) {
     return Button<Tag, OnClick>{caption, std::move(on_click)};
 }
 

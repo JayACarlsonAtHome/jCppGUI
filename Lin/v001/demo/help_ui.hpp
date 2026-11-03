@@ -29,7 +29,7 @@ public:
         if (line_.shown()) {
             line_.hide();
         } else {
-            line_.show(help_text);
+            line_.show(jgui::CheckedText{help_text});
         }
         return line_.shown();
     }

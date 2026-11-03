@@ -160,8 +160,7 @@ std::expected<TextEngine, Error> TextEngine::from_font_bytes(std::span<const std
 Height TextEngine::line_height() const noexcept { return Height{impl_->line_height}; }
 
 std::expected<TextRun, Error> TextEngine::shape(std::string_view text) const {
-    if (text.size() > max_caption_bytes) return make_error(ErrorCode::TextTooLong, "caption is over 4096 bytes");
-    if (!valid_utf8(text)) return make_error(ErrorCode::InvalidUtf8, "caption is not valid UTF-8");
+    if (auto checked = detail::check_caption(text); !checked) return std::unexpected(std::move(checked.error()));
 
     hb_buffer_t* buffer = impl_->buffer.get();
     hb_buffer_reset(buffer);

@@ -71,7 +71,7 @@ void test_self_destruction(Checker& check) {
     auto app = jgui::make_application(jgui::HeadlessBackend{window_size}, jgui::window(jgui::window_frame(jgui::Dynamic<Item, KillButton>{})));
     check(app.has_value(), "application starts");
     auto& node = app->ui().get<Item>();
-    const jgui::Handle<KillButton> handle = node.create("Kill", kill).value();
+    const jgui::Handle<KillButton> handle = node.create(jgui::CheckedText{"Kill"}, kill).value();
     check(app->process_pending().has_value(), "first frame");
     const jgui::Point on = centre(node.find(handle)->bounds());
     click(*app, on);
@@ -82,7 +82,7 @@ void test_self_destruction(Checker& check) {
     seen = 0;
     click(*app, on);
     check(seen == 0, "a late event for a destroyed item does nothing");
-    const jgui::Handle<KillButton> next = node.create("Kill", kill).value();
+    const jgui::Handle<KillButton> next = node.create(jgui::CheckedText{"Kill"}, kill).value();
     check(node.find(handle) == nullptr && node.find(next) != nullptr, "the old handle stays dead after reuse");
 }
 
@@ -94,7 +94,7 @@ void test_capture_and_focus(Checker& check) {
     auto app = jgui::make_application(jgui::HeadlessBackend{window_size}, jgui::window(jgui::window_frame(jgui::Dynamic<Item, FireButton>{})));
     check(app.has_value(), "application starts");
     auto& node = app->ui().get<Item>();
-    const jgui::Handle<FireButton> first = node.create("One", fire).value();
+    const jgui::Handle<FireButton> first = node.create(jgui::CheckedText{"One"}, fire).value();
     check(app->process_pending().has_value(), "first frame");
     const jgui::Point on = centre(node.find(first)->bounds());
 
@@ -110,7 +110,7 @@ void test_capture_and_focus(Checker& check) {
     check(app->process_pending().has_value(), "events after the death are handled");
     check(fired == 0, "neither release nor key reached the dead item");
 
-    const jgui::Handle<FireButton> second = node.create("Two", fire).value();
+    const jgui::Handle<FireButton> second = node.create(jgui::CheckedText{"Two"}, fire).value();
     check(app->process_pending().has_value(), "the new item is laid out");
     check(node.captured() == nullptr && node.focused() == nullptr, "a new item does not inherit either");
     check(node.find(second) != nullptr, "the new item exists");

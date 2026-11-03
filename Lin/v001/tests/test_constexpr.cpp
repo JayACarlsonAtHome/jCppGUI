@@ -709,7 +709,7 @@ consteval bool self_destruction_is_deferred() {
     using KillButton = Button<ItemTag, decltype(kill)>;
     auto ui = window(Dynamic<ItemTag, KillButton, std::vector>{});
     auto& node = ui.get<ItemTag>();
-    const Handle<KillButton> handle = node.create("x", kill).value();
+    const Handle<KillButton> handle = node.create(CheckedText{"x"}, kill).value();
     static_cast<void>(jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{20}}}, BlockShaper{}));
     const Point on{Left{1}, Top{1}};
     jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left, jgui_test::serial(1)});
@@ -718,7 +718,7 @@ consteval bool self_destruction_is_deferred() {
     // A late event finds nothing, and a new item in the old slot is not reached by the old handle.
     jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left, jgui_test::serial(1)});
     jgui_test::dispatch(ui, PointerRelease{on, MouseButton::Left});
-    const Handle<KillButton> next = node.create("y", kill).value();
+    const Handle<KillButton> next = node.create(CheckedText{"y"}, kill).value();
     return node.find(handle) == nullptr && node.find(next) != nullptr;
 }
 static_assert(self_destruction_is_deferred());
@@ -729,7 +729,7 @@ consteval bool capture_and_focus_go_inert() {
     using FireButton = Button<ItemTag, decltype(fire)>;
     auto ui = window(Dynamic<ItemTag, FireButton, std::vector>{});
     auto& node = ui.get<ItemTag>();
-    const Handle<FireButton> handle = node.create("x", fire).value();
+    const Handle<FireButton> handle = node.create(CheckedText{"x"}, fire).value();
     static_cast<void>(jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{50}, Height{20}}}, BlockShaper{}));
     const Point on{Left{1}, Top{1}};
     jgui_test::dispatch(ui, PointerPress{on, MouseButton::Left, jgui_test::serial(1)});
@@ -825,23 +825,103 @@ consteval bool dynamic_routes_to_the_holder_only() {
 }
 static_assert(dynamic_routes_to_the_holder_only());
 
-consteval bool shaper_errors_reach_layout() {
-    auto ui = window(label<ClickTag>("\xFF"));
-    const auto result = jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{10}, Height{10}}}, BlockShaper{});
-    return !result.has_value() && result.error().code == ErrorCode::InvalidUtf8;
+constexpr Size small_size_for_text{Width{60}, Height{24}};
+// --- Text that cannot be drawn does not end the program ---
+// Checked text: what a program can make at run time, and where the limits fall.
+static_assert(CheckedText::check("good").has_value() && CheckedText::check("").has_value());
+static_assert(CheckedText::check("\xFF").error().code == ErrorCode::InvalidUtf8);
+static_assert(CheckedText::check("\xC0\x80").error().code == ErrorCode::InvalidUtf8);
+static_assert(CheckedText{"known"}.view() == "known" && CheckedText{std::string_view{"view"}}.view() == "view");
+static_assert(detail::refuses_the_text(ErrorCode::InvalidUtf8) && detail::refuses_the_text(ErrorCode::TextTooLong) && detail::refuses_the_text(ErrorCode::GlyphTooLarge));
+static_assert(!detail::refuses_the_text(ErrorCode::Font) && !detail::refuses_the_text(ErrorCode::System) && !detail::refuses_the_text(ErrorCode::SizeLimit));
+consteval bool checked_text_limit_is_exact() {
+    const std::string at_limit(max_caption_bytes, 'x');
+    const std::string over_limit(max_caption_bytes + 1, 'x');
+    return CheckedText::check(at_limit).has_value() && CheckedText::check(over_limit).error().code == ErrorCode::TextTooLong;
 }
-static_assert(shaper_errors_reach_layout());
+static_assert(checked_text_limit_is_exact());
 
-consteval bool label_new_text_is_checked_by_layout() {
+// A shaper with a font that cannot do one text, and an engine that breaks on another.
+struct PickyShaper {
+    [[nodiscard]] constexpr std::expected<TextRun, Error> shape(std::string_view text) const {
+        if (text == "expands") return make_error(ErrorCode::GlyphTooLarge, "the shaped line has too many glyphs");
+        if (text == "breaks") return make_error(ErrorCode::Font, "the font engine failed");
+        return BlockShaper{}.shape(text);
+    }
+    [[nodiscard]] constexpr Height line_height() const noexcept { return Height{4}; }
+};
+
+constexpr Rect text_area{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}};
+
+consteval bool label_refuses_bad_text_when_it_is_set() {
     auto ui = window(label<ClickTag>("good"));
-    if (!jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}}, BlockShaper{}).has_value() || jgui_test::damaged(ui)) return false;
-    ui.get<ClickTag>().set_text("\xC0\x80");
-    if (!jgui_test::damaged(ui)) return false;
-    if (jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}}, BlockShaper{}).has_value()) return false;
-    ui.get<ClickTag>().set_text("fine");
-    return jgui_test::layout(ui, Rect{Point{Left{0}, Top{0}}, Size{Width{40}, Height{40}}}, BlockShaper{}).has_value() && ui.get<ClickTag>().text() == "fine";
+    if (!jgui_test::layout(ui, text_area, BlockShaper{}).has_value() || jgui_test::damaged(ui)) return false;
+    auto& line = ui.get<ClickTag>();
+    const auto invalid = line.set_text("\xC0\x80");
+    if (invalid.has_value() || invalid.error().code != ErrorCode::InvalidUtf8) return false;
+    const auto over = line.set_text(std::string(max_caption_bytes + 1, 'x'));
+    if (over.has_value() || over.error().code != ErrorCode::TextTooLong) return false;
+    if (line.text() != "good" || jgui_test::damaged(ui)) return false;
+    if (!line.set_text("fine").has_value() || !jgui_test::damaged(ui)) return false;
+    return jgui_test::layout(ui, text_area, BlockShaper{}).has_value() && line.text() == "fine";
 }
-static_assert(label_new_text_is_checked_by_layout());
+static_assert(label_refuses_bad_text_when_it_is_set());
+
+consteval bool shaping_refusal_stays_with_the_widget() {
+    auto ui = window(label<ClickTag>("expands"), label<OtherTag>("after"));
+    const auto left = jgui_test::layout(ui, text_area, PickyShaper{});
+    auto& refused = ui.get<ClickTag>();
+    if (!left.has_value() || !refused.text_error() || refused.text_error()->code != ErrorCode::GlyphTooLarge) return false;
+    // It keeps its row, and the next widget goes below it as it would have.
+    if (refused.bounds().height() != Height{16} || ui.get<OtherTag>().bounds().top() != Top{16} || ui.get<OtherTag>().text_error()) return false;
+    // New text clears the refusal.
+    if (!refused.set_text("good").has_value() || refused.text_error()) return false;
+    return jgui_test::layout(ui, text_area, PickyShaper{}).has_value() && !refused.text_error();
+}
+static_assert(shaping_refusal_stays_with_the_widget());
+
+consteval bool button_shaping_refusal_stays_with_it() {
+    auto ui = window(button<ClickTag>("expands", [](auto&) -> void {}));
+    if (!jgui_test::layout(ui, text_area, PickyShaper{}).has_value()) return false;
+    const auto& refused = ui.get<ClickTag>();
+    return refused.text_error() && refused.text_error()->code == ErrorCode::GlyphTooLarge &&
+           refused.bounds().width() == theme::button_pad_x + theme::button_pad_x;
+}
+static_assert(button_shaping_refusal_stays_with_it());
+
+consteval bool failure_of_the_engine_still_ends_the_layout() {
+    auto ui = window(label<ClickTag>("breaks"));
+    const auto left = jgui_test::layout(ui, text_area, PickyShaper{});
+    return !left.has_value() && left.error().code == ErrorCode::Font && !ui.get<ClickTag>().text_error();
+}
+static_assert(failure_of_the_engine_still_ends_the_layout());
+
+// The whole way through the application: a frame is drawn without that text, and the other text is in it.
+consteval bool refused_text_draws_nothing_and_the_rest_draws() {
+    constexpr Size size{Width{60}, Height{24}};
+    ApplicationCore core{HeadlessBackend{size}, window(label<ClickTag>("expands"), label<OtherTag>("after"))};
+    const PickyShaper shaper;
+    if (!core.process_pending(shaper).has_value() || core.frames() != 1) return false;
+    const auto ink_in = [&](const Rect& area) {
+        int count = 0;
+        for (std::int32_t y = jgui_test::number(area.top()); y < jgui_test::number(area.bottom()); ++y)
+            for (std::int32_t x = jgui_test::number(area.left()); x < jgui_test::number(area.right()); ++x)
+                if (jgui_test::backend(core).pixel(Point{Left{x}, Top{y}}) != theme::background.argb) ++count;
+        return count;
+    };
+    if (ink_in(core.ui().get<ClickTag>().bounds()) != 0 || ink_in(core.ui().get<OtherTag>().bounds()) == 0) return false;
+    if (!core.ui().get<ClickTag>().set_text("good").has_value()) return false;
+    if (!core.process_pending(shaper).has_value() || core.frames() != 2) return false;
+    return ink_in(core.ui().get<ClickTag>().bounds()) != 0;
+}
+static_assert(refused_text_draws_nothing_and_the_rest_draws());
+
+consteval bool failure_of_the_engine_still_ends_the_run() {
+    ApplicationCore core{HeadlessBackend{small_size_for_text}, window(label<ClickTag>("breaks"))};
+    const auto result = core.process_pending(PickyShaper{});
+    return !result.has_value() && result.error().code == ErrorCode::Font && core.frames() == 0;
+}
+static_assert(failure_of_the_engine_still_ends_the_run());
 
 // --- The real demo tree and application logic, from injected events to pixels, during compilation ---
 constexpr Size small_window{Width{120}, Height{60}};

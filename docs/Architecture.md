@@ -112,6 +112,15 @@ deduced return type would force it too early. For the same reason, do not constr
 `std::invocable` on the tree type. The `Widget` concept is checked against an empty probe type, and
 declared return types keep that from instantiating any handler body.
 
+## Text a widget holds
+
+A widget takes its text as `CheckedText`. A string literal or other text known at compile time converts by itself and is
+checked by a `consteval` constructor, so a bad one does not compile. Text known only at run time goes through
+`CheckedText::check`, which answers with a `std::expected`, so a constructor has nothing left to refuse. `Dynamic::create` and
+`show` forward their arguments, which ends compile-time knowledge, so a literal is written `CheckedText{"text"}` there.
+`Label::set_text` checks when it is called and keeps the old text on refusal. If a shaper later refuses one widget's text, the
+widget keeps the reason in `text_error()`, draws no text and keeps its row. Only failures not about that text end `run()`.
+
 ## Typed handles and deferred destruction
 
 Items that come and go live in `Pool<T>`, one pool per concrete type, inside a `Dynamic<Tag, T>` tree

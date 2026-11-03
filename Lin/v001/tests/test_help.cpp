@@ -46,7 +46,7 @@ void test_direct_form(Checker& check) {
     auto ui = jgui::window(jgui::window_frame(
         jgui::menu_bar(jgui::button<DirectButton>("Help", [](auto& u) -> void {
             auto& line = u.template get<DirectLine>();
-            if (line.shown()) line.hide(); else line.show("Some help");
+            if (line.shown()) line.hide(); else line.show(jgui::CheckedText{"Some help"});
         })),
         jgui::dynamic<DirectLine, jgui::Label<DirectLine>>()));
     auto app = jgui::make_application(jgui::HeadlessBackend{window_size}, std::move(ui));

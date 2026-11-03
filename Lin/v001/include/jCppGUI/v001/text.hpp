@@ -9,7 +9,9 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -89,6 +91,63 @@ struct GlyphBitmap {
     return true;
 }
 
+namespace detail {
+// What every caption must pass, at compile time or when it is set, and again before it is shaped.
+[[nodiscard]] constexpr std::expected<void, Error> check_caption(std::string_view text) {
+    if (text.size() > max_caption_bytes) return make_error(ErrorCode::TextTooLong, "caption is over 4096 bytes");
+    if (!valid_utf8(text)) return make_error(ErrorCode::InvalidUtf8, "caption is not valid UTF-8");
+    return {};
+}
+
+// True when a shaper's refusal is about the text it was given, so the widget holding that text carries it and
+// the program goes on. Anything else, such as the font engine failing, is not one widget's trouble.
+[[nodiscard]] constexpr bool refuses_the_text(ErrorCode code) noexcept {
+    switch (code) {
+        case ErrorCode::InvalidUtf8:
+        case ErrorCode::TextTooLong:
+        case ErrorCode::GlyphTooLarge:
+            return true;
+        case ErrorCode::Connect:
+        case ErrorCode::MissingGlobal:
+        case ErrorCode::Protocol:
+        case ErrorCode::System:
+        case ErrorCode::SizeLimit:
+        case ErrorCode::Font:
+        case ErrorCode::Keymap:
+        case ErrorCode::PoolExhausted:
+        case ErrorCode::WouldBlock:
+        case ErrorCode::StaleFrame:
+        default:
+            return false;
+    }
+}
+}  // namespace detail
+
+// Text that has passed the caption checks, as a view: it must outlive this, and whatever takes it copies it. Text
+// known at compile time converts by itself, and a bad one does not compile. Text known only at run time goes
+// through check, so a widget's constructor has nothing left to refuse. Dynamic::create and show forward their
+// arguments, which ends compile-time knowledge, so write CheckedText{"text"} there.
+class CheckedText {
+public:
+    consteval CheckedText(const char* text) : CheckedText{std::string_view{text}} {}
+    consteval CheckedText(std::string_view text) : text_{text} {
+        require(detail::check_caption(text).has_value(), "a caption known at compile time is not valid text");
+    }
+
+    [[nodiscard]] static constexpr std::expected<CheckedText, Error> check(std::string_view text) {
+        if (auto checked = detail::check_caption(text); !checked) return std::unexpected(std::move(checked.error()));
+        return CheckedText{Checked{}, text};
+    }
+
+    [[nodiscard]] constexpr std::string_view view() const noexcept { return text_; }
+
+private:
+    struct Checked {};
+    constexpr CheckedText(Checked, std::string_view text) noexcept : text_{text} {}
+
+    std::string_view text_;
+};
+
 // One shaped line of text, rasterized to 8-bit coverage, row by row.
 class TextRun {
 public:
@@ -146,6 +205,48 @@ concept TextShaper = requires(const S& shaper, std::string_view text) {
 };
 
 namespace detail {
+
+// A widget's text, and what shaping it gave: a run, or a refusal of this text. A refusal is kept for the widget to
+// show, and the widget draws no text. It is not tried again until the text changes.
+class ShapedCaption {
+public:
+    constexpr explicit ShapedCaption(CheckedText text) : text_{text.view()} {}
+
+    [[nodiscard]] constexpr std::string_view text() const noexcept { return text_; }
+    [[nodiscard]] constexpr const std::optional<TextRun>& run() const noexcept { return run_; }
+    [[nodiscard]] constexpr const std::optional<Error>& refusal() const noexcept { return refusal_; }
+
+    constexpr void replace(CheckedText text) {
+        text_ = text.view();
+        run_.reset();
+        refusal_.reset();
+    }
+
+    // An Error here is one that is not about this text, and it ends the run as any other failure does.
+    template <TextShaper Shaper>
+    [[nodiscard]] constexpr std::expected<void, Error> shape_with(const Shaper& shaper) {
+        if (run_ || refusal_) return {};
+        auto shaped = shaper.shape(text_);
+        if (shaped) {
+            run_ = std::move(*shaped);
+            return {};
+        }
+        if (!refuses_the_text(shaped.error().code)) return std::unexpected(std::move(shaped.error()));
+        refusal_ = std::move(shaped.error());
+        return {};
+    }
+
+    // What the text takes up. With no run, no width, and the line's own height, so the rows around it stay put.
+    template <TextShaper Shaper>
+    [[nodiscard]] constexpr Size size_with(const Shaper& shaper) const {
+        return run_ ? run_->size() : Size{Width{}, shaper.line_height()};
+    }
+
+private:
+    std::string text_;
+    std::optional<TextRun> run_{};
+    std::optional<Error> refusal_{};
+};
 
 // Rounds 26.6 fixed point up to whole pixels, and clamps it to int32_t.
 [[nodiscard]] constexpr std::int32_t ceil_pixels(std::int64_t fixed) noexcept {

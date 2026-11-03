@@ -38,7 +38,7 @@ struct HelpLine;
 auto ui = jgui::window(jgui::window_frame(
     jgui::menu_bar(jgui::button<HelpButton>("Help", [](auto& u) -> void {
         auto& line = u.template get<HelpLine>();
-        if (line.shown()) line.hide(); else line.show("Some help");
+        if (line.shown()) line.hide(); else line.show(jgui::CheckedText{"Some help"});
     })),
     jgui::dynamic<HelpLine, jgui::Label<HelpLine>>()));
 ```

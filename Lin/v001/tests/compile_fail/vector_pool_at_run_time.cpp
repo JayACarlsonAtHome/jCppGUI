@@ -11,6 +11,6 @@ int main() {
 #else
     jgui::Dynamic<First, jgui::Label<First>> node;
 #endif
-    const auto created = node.create("text");
+    const auto created = node.create(jgui::CheckedText{"text"});
     return created.has_value() ? 0 : 1;
 }
