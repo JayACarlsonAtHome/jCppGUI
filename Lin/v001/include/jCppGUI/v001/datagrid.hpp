@@ -45,7 +45,8 @@ inline constexpr Width grid_column_most{4096};
 inline constexpr Width grid_boundary_reach{4};
 inline constexpr std::int32_t grid_wheel_rows = 3;
 inline constexpr Width grid_sideways_step{48};
-inline constexpr Width grid_sort_mark_room{14};
+inline constexpr std::size_t grid_most_sort_keys = 9;
+inline constexpr Width grid_sort_mark_gap{3};  // between the sort mark and the font button
 inline constexpr std::size_t grid_cell_most_bytes = 1024;
 inline constexpr Width grid_control_letter_pad{2};  // each side of the widest letter in a header button: its outline and one pixel
 inline constexpr Width grid_controls_gap{1};
@@ -61,11 +62,11 @@ struct GridRow {
     friend constexpr bool operator==(const GridRow&, const GridRow&) = default;
 };
 
-// Which column the rows are sorted by.
-struct GridSort {
+// One column the rows are sorted by, and which way.
+struct GridSortKey {
     std::size_t column{};
     bool descending{};
-    friend constexpr bool operator==(const GridSort&, const GridSort&) = default;
+    friend constexpr bool operator==(const GridSortKey&, const GridSortKey&) = default;
 };
 
 // What font a column's title and cells are drawn in. A shaper with no monospace face refuses that one, and the column stays regular.
@@ -159,9 +160,38 @@ inline constexpr Width grid_boundary_reach_inside = grid_boundary_reach - Width{
 // Both of a header's buttons, side by side.
 [[nodiscard]] constexpr Width controls_width(Width button) noexcept { return button + grid_controls_gap + button; }
 
+// The sort mark is a triangle almost the header's height, a pixel off each end, and it widens by a pixel each side every second row.
+[[nodiscard]] constexpr std::int32_t sort_mark_rows(Height header) noexcept {
+    return saturate_to<std::int32_t>(whole_units_in(header - Height{2}, Height{1}));
+}
+[[nodiscard]] constexpr std::int32_t sort_mark_half_at(std::int32_t row) noexcept { return row / 2; }
+[[nodiscard]] constexpr Width sort_mark_width(Height header) noexcept {
+    const std::int32_t rows = sort_mark_rows(header);
+    return rows == 0 ? Width{} : Width{2 * sort_mark_half_at(rows - 1) + 1};
+}
+// What the header's right end keeps free for the mark, sorted or not.
+[[nodiscard]] constexpr Width sort_mark_room(Height header) noexcept { return sort_mark_width(header) + grid_sort_mark_gap; }
+
+// The priority inside the mark, 5 across and 7 down, drawn here rather than shaped: a glyph's height and width are the font's to say, and this always fits the shape, with no
+// blur to fight the mark's colour. Only a mark of this many rows has room for it, in rows wide enough at its fat end.
+inline constexpr std::int32_t sort_digit_rows = 7;
+inline constexpr std::int32_t sort_digit_columns = 5;
+inline constexpr std::int32_t sort_mark_rows_for_a_digit = 14;
+inline constexpr std::array<std::array<std::uint8_t, sort_digit_rows>, grid_most_sort_keys> sort_digits{{
+    {0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110},
+    {0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111},
+    {0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110},
+    {0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010},
+    {0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110},
+    {0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110},
+    {0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000},
+    {0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110},
+    {0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100},
+}};
+
 // A column that shows its whole title: padding, the title, padding, the sort mark's room, both buttons and the boundary's reach.
-[[nodiscard]] constexpr Width whole_title_width(Width title, Width button) noexcept {
-    return theme::cell_pad_x + title + theme::cell_pad_x + grid_sort_mark_room + controls_width(button) + grid_boundary_reach_inside;
+[[nodiscard]] constexpr Width whole_title_width(Width title, Width button, Height header) noexcept {
+    return theme::cell_pad_x + title + theme::cell_pad_x + sort_mark_room(header) + controls_width(button) + grid_boundary_reach_inside;
 }
 
 // The narrowest a drag can make a column: padding, one character, both buttons and the boundary's reach.
@@ -208,13 +238,13 @@ public:
     constexpr ~DataGrid() = default;
 
     // Takes the rows, in the order they first show. The selection and the sort do not carry over to new rows, and
-    // no message says so, because the caller knows. More than the limit is refused, and the old rows stay.
+    // no message says so, because the caller knows. The current column and each column's settings stay. More than the limit is refused, and the old rows stay.
     [[nodiscard]] constexpr std::expected<void, Error> set_rows(std::vector<Row> rows) {
         if (rows.size() > max_grid_rows) return make_error(ErrorCode::SizeLimit, "a grid holds at most 1000000 rows");
         rows_ = std::move(rows);
         order_ = identity_order(static_cast<std::uint32_t>(rows_.size()));
         selected_position_.reset();
-        sort_.reset();
+        sort_count_ = 0;
         place_parts();
         damaged_ = true;
         return {};
@@ -227,7 +257,24 @@ public:
         if (!selected_position_) return std::nullopt;
         return GridRow{order_[*selected_position_]};
     }
-    [[nodiscard]] constexpr std::optional<GridSort> sort() const noexcept { return sort_; }
+    // What the rows are sorted by, most important first. A key's place here is the number in its mark, less one.
+    [[nodiscard]] constexpr std::span<const GridSortKey> sort_keys() const noexcept { return std::span<const GridSortKey>{sort_keys_}.first(sort_count_); }
+    // The column the keys act on, from a click on its header.
+    [[nodiscard]] constexpr std::optional<std::size_t> current_column() const noexcept { return current_column_; }
+
+    // Sorts by these, most important first, or by the rows' own order with none. More than the limit, a column that is not there and a column twice are refused, and the sort stays as it was.
+    [[nodiscard]] constexpr std::expected<void, Error> set_sort_keys(std::span<const GridSortKey> keys) {
+        if (keys.size() > grid_most_sort_keys) return make_error(ErrorCode::SizeLimit, "a grid sorts by at most 9 columns");
+        for (std::size_t i = 0; i < keys.size(); ++i) {
+            if (keys[i].column >= column_count) return make_error(ErrorCode::SizeLimit, "the grid has no column at that position");
+            for (std::size_t k = 0; k < i; ++k)
+                if (keys[k].column == keys[i].column) return make_error(ErrorCode::SizeLimit, "a column can be only one of a sort's keys");
+        }
+        std::ranges::copy(keys, sort_keys_.begin());
+        sort_count_ = keys.size();
+        apply_sort();
+        return {};
+    }
     [[nodiscard]] constexpr Height scroll_down() const noexcept { return down_.offset(); }
     [[nodiscard]] constexpr Width scroll_across() const noexcept { return across_.offset(); }
     [[nodiscard]] constexpr Width column_width(std::size_t column) const { return shown_.at(column); }
@@ -331,7 +378,7 @@ public:
         const Drag ended = std::exchange(drag_, Drag::None);
         down_.release();
         across_.release();
-        if (ended == Drag::HeaderPress && header_.contains(event.position) && !boundary_at(event.position) && column_at(event.position) == dragged_column_) sort_by_header(dragged_column_);
+        if (ended == Drag::HeaderPress && header_.contains(event.position) && !boundary_at(event.position) && column_at(event.position) == dragged_column_) make_current(dragged_column_);
         // No motion will say what the pointer looks like where this ended. Outside this widget, that is not for it to say.
         if (bounds_.contains(event.position)) show_cursor(ui, cursor_at(event.position));
         return true;
@@ -368,6 +415,17 @@ public:
     template <class U>
     constexpr bool handle(const TreeKey&, U& ui, const KeyEvent& event) {
         if (!focused_ || !event.pressed) return false;
+        // These arrows with Ctrl are the current column's sort, and never what they do without it, even when they end up doing nothing.
+        if (event.modifiers.holds(Modifier::Ctrl)) {
+            if (event.keysym == Key::Up || event.keysym == Key::Down) {
+                sort_current_column(event.keysym == Key::Down);
+                return true;
+            }
+            if (event.keysym == Key::Left || event.keysym == Key::Right) {
+                clear_current_column_sort();
+                return true;
+            }
+        }
         if (event.keysym == Key::Left || event.keysym == Key::Right) {
             const ScrollAcross one_step = ScrollAcross::of_steps(event.keysym == Key::Left ? -1 : 1);
             if (across_.scroll_by(one_step, grid_sideways_step)) damaged_ = true;
@@ -606,28 +664,76 @@ private:
         damaged_ = true;
     }
 
-    constexpr void sort_by_header(std::optional<std::size_t> column) {
-        if (!column) return;
-        const bool descending = sort_ && sort_->column == *column && !sort_->descending;
+    constexpr void make_current(std::optional<std::size_t> column) noexcept {
+        if (current_column_ == column) return;
+        current_column_ = column;
+        damaged_ = true;
+    }
+
+    // Where a column stands among the keys. The count, when it is not one.
+    [[nodiscard]] constexpr std::size_t sort_key_place(std::size_t column) const noexcept {
+        const auto keys = sort_keys();
+        return static_cast<std::size_t>(std::ranges::find(keys, column, &GridSortKey::column) - keys.begin());
+    }
+
+    // A column not in the sort comes in last, while there is room. One going the other way turns and keeps its number. One already going this way is left alone, and nothing is drawn.
+    constexpr void sort_current_column(bool descending) {
+        if (!current_column_) return;
+        const std::size_t place = sort_key_place(*current_column_);
+        if (place < sort_count_) {
+            if (sort_keys_[place].descending == descending) return;
+            sort_keys_[place].descending = descending;
+        } else {
+            if (sort_count_ == grid_most_sort_keys) return;
+            sort_keys_[sort_count_] = GridSortKey{*current_column_, descending};
+            ++sort_count_;
+        }
+        apply_sort();
+    }
+
+    // Takes the current column out of the sort, and the later numbers close up. With nothing left, the rows are in their own order.
+    constexpr void clear_current_column_sort() {
+        if (!current_column_) return;
+        const std::size_t place = sort_key_place(*current_column_);
+        if (place == sort_count_) return;
+        for (std::size_t k = place; k + 1 < sort_count_; ++k) sort_keys_[k] = sort_keys_[k + 1];
+        --sort_count_;
+        apply_sort();
+    }
+
+    // Always from the rows' own order, so rows equal on every key stay in that order, whichever way each key goes. The selection stays on its row.
+    constexpr void apply_sort() {
         const std::optional<std::uint32_t> kept = selected_position_ ? std::optional<std::uint32_t>{order_[*selected_position_]} : std::nullopt;
-        [&]<std::size_t... I>(std::index_sequence<I...>) {
-            ((I == *column ? sort_rows<ColumnAt<I>>(descending) : void()), ...);
-        }(std::index_sequence_for<Columns...>{});
-        sort_ = GridSort{*column, descending};
+        order_ = identity_order(static_cast<std::uint32_t>(rows_.size()));
+        if (sort_count_ != 0) {
+            const std::span<const Row> rows{rows_};
+            stable_sort_indices(order_, [rows, keys = sort_keys()](std::uint32_t a, std::uint32_t b) {
+                for (const GridSortKey& key : keys) {
+                    const int compared = compare_in_column(key.column, rows[a], rows[b]);
+                    if (compared != 0) return key.descending ? compared > 0 : compared < 0;
+                }
+                return false;
+            });
+        }
         if (kept) selected_position_ = position_of_index(order_, *kept);
         damaged_ = true;
     }
 
-    // Always from the rows' own order, so rows that compare equal stay in that order in both directions.
-    template <class C>
-    constexpr void sort_rows(bool descending) {
-        order_ = identity_order(static_cast<std::uint32_t>(rows_.size()));
-        const std::span<const Row> rows{rows_};
-        stable_sort_indices(order_, [rows, descending](std::uint32_t a, std::uint32_t b) {
-            const auto& first = C::value_of(rows[a]);
-            const auto& second = C::value_of(rows[b]);
-            return descending ? second < first : first < second;
-        });
+    // Negative when a comes first going up, positive when b does, and zero when they tie. Each column reads its own typed member.
+    [[nodiscard]] static constexpr int compare_in_column(std::size_t column, const Row& a, const Row& b) {
+        int answer = 0;
+        [&]<std::size_t... I>(std::index_sequence<I...>) {
+            const auto try_column = [&]<std::size_t K>(std::integral_constant<std::size_t, K>) {
+                if (K != column) return false;
+                const auto& first = ColumnAt<K>::value_of(a);
+                const auto& second = ColumnAt<K>::value_of(b);
+                if (first < second) answer = -1;
+                if (second < first) answer = 1;
+                return true;
+            };
+            static_cast<void>((try_column(std::integral_constant<std::size_t, I>{}) || ...));
+        }(std::index_sequence_for<Columns...>{});
+        return answer;
     }
 
     template <TextShaper Shaper>
@@ -640,7 +746,7 @@ private:
         for (std::size_t k = 0; k < column_count; ++k) {
             if (auto shaped = shape_title(k, text); !shaped) return std::unexpected(std::move(shaped.error()));
             const auto& run = title_shown(k).run();
-            whole_titles_[k] = detail::whole_title_width(run ? run->size().width() : Width{}, button_width_);
+            whole_titles_[k] = detail::whole_title_width(run ? run->size().width() : Width{}, button_width_, row_height_);
         }
         if (auto shaped = filler_title_long_.shape_with(text); !shaped) return std::unexpected(std::move(shaped.error()));
         if (auto shaped = filler_title_short_.shape_with(text); !shaped) return std::unexpected(std::move(shaped.error()));
@@ -754,10 +860,11 @@ private:
             const Right end = start + shown_[k];
             const Rect cell_area{Point{start, header_.top()}, Size{shown_[k], header_.height()}};
             const Canvas cell = head.clipped(cell_area);
+            if (current_column_ == k) cell.fill_rect(cell_area, theme::grid_current_column);
             const detail::ColumnButtons buttons = detail::column_buttons_in(cell_area, button_width_);
             // With its whole title and the sort mark's room, the title sits left of the room. In a column dragged narrower, there is no room for a mark, and the title has all there is up to the buttons, where it is cut.
             const bool mark_fits = whole_titles_[k] <= shown_[k];
-            const Left mark_left = (buttons.font.left() + Width{}) - grid_sort_mark_room;
+            const Left mark_left = (buttons.font.left() + Width{}) - detail::sort_mark_room(header_.height());
             const Left title_end = mark_fits ? mark_left : buttons.font.left();
             if (const auto& run = title_shown(k).run(); run) {
                 const Canvas title_area = cell.clipped(Rect{cell_area.origin(), Size{(title_end + Width{}) - start, header_.height()}});
@@ -765,7 +872,7 @@ private:
                 const Width room = ((title_end + Width{}) - from) - theme::cell_pad_x;
                 title_area.draw_text(Point{detail::aligned_left(from, room, run->size().width(), aligns_[k].applied()), detail::centred_top(header_.top(), header_.height(), run->size().height())}, *run, theme::text);
             }
-            if (mark_fits && sort_ && sort_->column == k) paint_sort_mark(cell, mark_left, sort_->descending);
+            if (const std::size_t place = sort_key_place(k); mark_fits && place < sort_count_) paint_sort_mark(cell, mark_left, sort_keys_[place].descending, place);
             paint_button(cell, buttons.font, fonts_[k].chosen() == ColumnFont::Monospace ? &letter_monospace_ : nullptr);
             paint_button(cell, buttons.align, &letter_for(aligns_[k].chosen()));
             head.fill_rect(Rect{Point{end - one_across, header_.top()}, Size{one_across, header_.height()}}, theme::bar_edge);
@@ -790,15 +897,27 @@ private:
         }
     }
 
-    // A small solid triangle at the far end of the header: its point up for ascending, down for descending.
-    constexpr void paint_sort_mark(const Canvas& cell, Left mark_left, bool descending) const {
-        constexpr std::int32_t rows = 5;
-        const Top mark_top = top_after(header_.top() + theme::cell_pad_y);
+    // A solid triangle almost the header's height, its point up for ascending and down for descending, with its priority at its fat end when there is room for that.
+    constexpr void paint_sort_mark(const Canvas& cell, Left mark_left, bool descending, std::size_t place) const {
+        const std::int32_t rows = detail::sort_mark_rows(header_.height());
+        if (rows == 0) return;
+        const std::int32_t widest = detail::sort_mark_half_at(rows - 1);
+        const Top mark_top = top_after(header_.top() + Height{1});
+        const Left middle = left_after(mark_left + Width{widest});
         for (std::int32_t row = 0; row < rows; ++row) {
-            const std::int32_t half = descending ? rows - 1 - row : row;
-            const Left left = (left_after(mark_left + Width{rows - 1}) + Width{}) - Width{half};
-            const Top top = top_after(mark_top + Height{row});
-            cell.fill_rect(Rect{Point{left, top}, Size{Width{2 * half + 1}, Height{1}}}, theme::text);
+            const std::int32_t half = detail::sort_mark_half_at(descending ? rows - 1 - row : row);
+            const Left left = (middle + Width{}) - Width{half};
+            cell.fill_rect(Rect{Point{left, top_after(mark_top + Height{row})}, Size{Width{2 * half + 1}, Height{1}}}, theme::sort_mark);
+        }
+        if (rows < detail::sort_mark_rows_for_a_digit) return;
+        const Top digit_top = top_after(mark_top + Height{descending ? 1 : rows - detail::sort_digit_rows - 1});
+        const Left digit_left = (middle + Width{}) - Width{detail::sort_digit_columns / 2};
+        const auto& digit = detail::sort_digits.at(place);
+        for (std::int32_t row = 0; row < detail::sort_digit_rows; ++row) {
+            for (std::int32_t column = 0; column < detail::sort_digit_columns; ++column) {
+                const bool on = ((digit.at(static_cast<std::size_t>(row)) >> (detail::sort_digit_columns - 1 - column)) & 1) != 0;
+                if (on) cell.fill_rect(Rect{Point{left_after(digit_left + Width{column}), top_after(digit_top + Height{row})}, Size{Width{1}, Height{1}}}, theme::sort_digit);
+            }
         }
     }
 
@@ -858,7 +977,9 @@ private:
     Rect body_{};
     Height row_height_{};
     std::optional<std::size_t> selected_position_{};
-    std::optional<GridSort> sort_{};
+    std::array<GridSortKey, grid_most_sort_keys> sort_keys_{};
+    std::size_t sort_count_{};
+    std::optional<std::size_t> current_column_{};
     Drag drag_{Drag::None};
     std::optional<std::size_t> dragged_column_{};
     Left pressed_at_{};

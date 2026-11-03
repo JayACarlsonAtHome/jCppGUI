@@ -104,15 +104,31 @@ void measure_rows(std::int32_t count, bool long_text) {
         return PointerButton{Point{Left{640}, Top{100 + (i % 20) * 16}}, MouseButton::Left, i % 2 == 0 ? ButtonState::Pressed : ButtonState::Released, jgui_test::serial(1)};
     });
     if (long_text) return;
-    const auto timed_sort = [&](std::int32_t x, const char* name) {
+    // A click makes a column current, and Ctrl with an arrow sorts it. Each time is from the rows' own order, whatever the keys, so each is a whole sort.
+    const auto choose = [&](std::int32_t x) {
+        jgui_test::backend(*app).inject(PointerButton{Point{Left{x}, Top{34}}, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(1)});
+        jgui_test::backend(*app).inject(PointerButton{Point{Left{x}, Top{34}}, MouseButton::Left, ButtonState::Released, jgui_test::serial(1)});
+    };
+    const auto timed = [&](Keysym key, const char* name) {
         const auto before = std::chrono::steady_clock::now();
-        jgui_test::backend(*app).inject(PointerButton{Point{Left{x}, Top{30}}, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(1)});
-        jgui_test::backend(*app).inject(PointerButton{Point{Left{x}, Top{30}}, MouseButton::Left, ButtonState::Released, jgui_test::serial(1)});
+        jgui_test::backend(*app).inject(KeyEvent{key, Modifier::Ctrl, true});
         if (!app->process_pending()) std::cout << "a sort failed\n";
         std::cout << name << ": " << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - before).count() << " ms, with its frame\n";
     };
-    timed_sort(60, "sort by a number");
-    timed_sort(200, "sort by a string");
+    // The columns start at 8, 128, 368 and 688.
+    choose(20);
+    timed(Key::Up, "one key, a number");
+    timed(Key::Right, "no key, back to the rows' own order");
+    choose(140);
+    timed(Key::Up, "one key, a string");
+    timed(Key::Right, "no key again");
+    // A key with half the rows tied, so the rest are reached often, then a string, then a number.
+    choose(700);
+    timed(Key::Up, "one key, a bool, half tied");
+    choose(380);
+    timed(Key::Down, "two keys, a bool and a string");
+    choose(20);
+    timed(Key::Up, "three keys, with a number last");
 }
 
 }  // namespace

@@ -7,6 +7,10 @@ xkb_keymap {
     <RTRN> = 36;
     <LFSH> = 50;
     <LCTL> = 37;
+    <UP> = 111;
+    <DOWN> = 116;
+    <LEFT> = 113;
+    <RGHT> = 114;
     indicator 1 = "Caps Lock";
     alias <A> = <AC01>;
   };
@@ -53,6 +57,10 @@ xkb_keymap {
     key <RTRN> { [ Return ] };
     key <LFSH> { [ Shift_L ] };
     key <LCTL> { [ Control_L ] };
+    key <UP> { [ Up ] };
+    key <DOWN> { [ Down ] };
+    key <LEFT> { [ Left ] };
+    key <RGHT> { [ Right ] };
     modifier_map Shift { <LFSH> };
     modifier_map Control { <LCTL> };
   };

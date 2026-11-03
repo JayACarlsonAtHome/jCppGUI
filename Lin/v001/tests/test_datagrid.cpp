@@ -1,12 +1,14 @@
 // File: tests/test_datagrid.cpp
 // Purpose: DataGrid. In static_assert, the whole grid from injected events to the state and the pixels, with a shaper that
 //          needs no font. At run time, with the real font: the limit on rows and what the picture looks like.
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <initializer_list>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -115,6 +117,8 @@ struct Rig {
         release(x, y);
     }
     constexpr void key(Keysym which) { deliver(KeyEvent{which, ModifierMask{}, true}); }
+    constexpr void ctrl(Keysym which) { deliver(KeyEvent{which, Modifier::Ctrl, true}); }
+    [[nodiscard]] constexpr bool sorted_by(std::initializer_list<GridSortKey> wanted) { return std::ranges::equal(grid().sort_keys(), wanted); }
     constexpr void wheel(std::int32_t steps) { deliver(PointerScroll{at(10, 20), ScrollDown::of_steps(steps), ScrollAcross{}}); }
     [[nodiscard]] static constexpr Point at(std::int32_t x, std::int32_t y) { return Point{Left{x}, Top{y}}; }
     [[nodiscard]] constexpr std::uint32_t pixel(std::int32_t x, std::int32_t y) { return backend().pixel(at(x, y)); }
@@ -314,51 +318,270 @@ static_assert(offsets_clamp_when_rows_or_size_change());
 static_assert(the_smallest_windows_hold());
 
 // --- Columns ---
-[[nodiscard]] constexpr bool a_header_sorts_and_a_second_click_reverses() {
+// A click makes a column current and sorts nothing, and only the keys sort.
+[[nodiscard]] constexpr bool the_keys_sort_the_current_column() {
     Rig<> rig{0};
     // Ties on purpose: two Bs, with their rows' own order to keep.
     if (!rig.grid().set_rows(std::vector<SmallRow>{SmallRow{Left{0}, "B", true}, SmallRow{Left{1}, "A", true}, SmallRow{Left{2}, "B", false}, SmallRow{Left{3}, "C", false}})) return false;
     rig.settle();
     rig.click(10, row_y(0));  // row 0, a "B"
-    rig.click(70, 4);         // the second column's header
+    rig.ctrl(Key::Up);
+    if (!rig.grid().sort_keys().empty() || rig.grid().selected() != GridRow{0}) return false;  // no current column: nothing, and the selection does not move either
+    rig.click(70, 4);  // the second column's header
+    if (rig.grid().current_column() != 1 || !rig.grid().focused() || !rig.grid().sort_keys().empty()) return false;
     const auto order = [&](std::array<std::uint32_t, 4> wanted) {
         const auto shown = rig.grid().display_order();
         for (std::size_t i = 0; i < wanted.size(); ++i)
             if (shown[i] != wanted[i]) return false;
         return true;
     };
-    if (rig.grid().sort() != GridSort{1, false} || !order({1, 0, 2, 3})) return false;
+    if (!order({0, 1, 2, 3})) return false;
+    rig.ctrl(Key::Up);
+    if (!rig.sorted_by({GridSortKey{1, false}}) || !order({1, 0, 2, 3})) return false;
     if (rig.grid().selected() != GridRow{0} || rig.echo().told != 1) return false;  // the same row, and nothing to tell
     if (rig.grid().rows()[0].name != "B") return false;  // the rows themselves have not moved
     rig.key(Key::Down);
-    if (rig.grid().selected() != GridRow{2}) return false;  // the next one as shown
-    rig.click(70, 4);
-    if (rig.grid().sort() != GridSort{1, true} || !order({3, 0, 2, 1})) return false;  // ties in their own order both ways
+    if (rig.grid().selected() != GridRow{2} || !rig.sorted_by({GridSortKey{1, false}})) return false;  // the next one as shown, and a plain key is no sort
+    rig.ctrl(Key::Down);
+    if (!rig.sorted_by({GridSortKey{1, true}}) || !order({3, 0, 2, 1})) return false;  // ties in their own order both ways
     if (rig.grid().selected() != GridRow{2}) return false;
-    rig.click(70, 4);
-    if (rig.grid().sort() != GridSort{1, false}) return false;
-    rig.click(10, 4);  // another column starts ascending
-    if (rig.grid().sort() != GridSort{0, false} || !order({0, 1, 2, 3})) return false;
-    rig.click(120, 4);  // a bool: false first
-    return order({2, 3, 0, 1});
+    // A column's header makes it current, and clears nothing.
+    rig.click(10, 4);
+    if (rig.grid().current_column() != 0 || !rig.sorted_by({GridSortKey{1, true}})) return false;
+    rig.click(10, 4);
+    return rig.grid().current_column() == 0 && order({3, 0, 2, 1});
 }
-static_assert(a_header_sorts_and_a_second_click_reverses());
+static_assert(the_keys_sort_the_current_column());
 
-[[nodiscard]] constexpr bool a_header_press_ended_elsewhere_does_not_sort() {
+// Rows with a tie at every level: each key breaks the last's ties, each in its own direction, and then their own order does.
+[[nodiscard]] constexpr std::vector<SmallRow> rows_with_ties() {
+    return std::vector<SmallRow>{SmallRow{Left{1}, "B", true}, SmallRow{Left{2}, "A", true}, SmallRow{Left{1}, "A", true}, SmallRow{Left{2}, "B", false}, SmallRow{Left{1}, "A", false}, SmallRow{Left{1}, "A", true}};
+}
+
+[[nodiscard]] constexpr bool keys_break_each_others_ties() {
+    Rig<> rig{0};
+    if (!rig.grid().set_rows(rows_with_ties())) return false;
+    rig.settle();
+    const auto order = [&](std::array<std::uint32_t, 6> wanted) {
+        const auto shown = rig.grid().display_order();
+        for (std::size_t i = 0; i < wanted.size(); ++i)
+            if (shown[i] != wanted[i]) return false;
+        return true;
+    };
+    rig.click(10, 4);   // Left
+    rig.ctrl(Key::Up);
+    if (!order({0, 2, 4, 5, 1, 3})) return false;
+    rig.click(70, 4);   // Name, going down
+    rig.ctrl(Key::Down);
+    if (!rig.sorted_by({GridSortKey{0, false}, GridSortKey{1, true}}) || !order({0, 2, 4, 5, 3, 1})) return false;
+    rig.click(120, 4);  // On, going up: false first
+    rig.ctrl(Key::Up);
+    if (!rig.sorted_by({GridSortKey{0, false}, GridSortKey{1, true}, GridSortKey{2, false}}) || !order({0, 4, 2, 5, 3, 1})) return false;
+    // The first key turned: it keeps its number, the rest of the sort stands, and the rows' own order still settles the last tie.
+    rig.click(10, 4);
+    rig.ctrl(Key::Down);
+    return rig.sorted_by({GridSortKey{0, true}, GridSortKey{1, true}, GridSortKey{2, false}}) && order({3, 1, 0, 4, 2, 5});
+}
+static_assert(keys_break_each_others_ties());
+
+[[nodiscard]] constexpr bool asking_again_for_what_is_so_draws_nothing() {
+    Rig<> rig{4};
+    rig.click(10, 4);
+    rig.ctrl(Key::Up);
+    const std::uint64_t frames = rig.frames();
+    rig.ctrl(Key::Up);
+    if (rig.frames() != frames || !rig.sorted_by({GridSortKey{0, false}})) return false;
+    rig.ctrl(Key::Down);
+    const std::uint64_t turned = rig.frames();
+    if (turned != frames + 1) return false;
+    rig.ctrl(Key::Down);
+    return rig.frames() == turned && rig.sorted_by({GridSortKey{0, true}});
+}
+static_assert(asking_again_for_what_is_so_draws_nothing());
+
+[[nodiscard]] constexpr bool ctrl_left_and_right_clear_the_level() {
+    Rig<> rig{0};
+    if (!rig.grid().set_rows(rows_with_ties())) return false;
+    rig.settle();
+    rig.click(10, row_y(2));
+    const auto add = [&](std::int32_t x, Keysym way) {
+        rig.click(x, 4);
+        rig.ctrl(way);
+    };
+    // Nothing to clear: no frame, and no scrolling, in a window narrow enough to scroll.
+    rig.deliver(ResizeEvent{Size{Width{100}, Height{60}}});
+    rig.click(10, 4);
+    const std::uint64_t frames = rig.frames();
+    rig.ctrl(Key::Left);
+    rig.ctrl(Key::Right);
+    if (rig.frames() != frames || rig.grid().scroll_across() != Width{}) return false;
+    rig.deliver(ResizeEvent{small_window});
+    add(10, Key::Up);
+    add(70, Key::Down);
+    add(120, Key::Up);
+    if (!rig.sorted_by({GridSortKey{0, false}, GridSortKey{1, true}, GridSortKey{2, false}})) return false;
+    // The middle one goes, and the last moves up to its number.
+    rig.click(70, 4);
+    rig.ctrl(Key::Left);
+    if (!rig.sorted_by({GridSortKey{0, false}, GridSortKey{2, false}})) return false;
+    const std::uint64_t cleared = rig.frames();
+    rig.ctrl(Key::Right);  // no longer in the sort
+    if (rig.frames() != cleared) return false;
+    rig.click(10, 4);
+    rig.ctrl(Key::Right);
+    rig.click(120, 4);
+    rig.ctrl(Key::Left);
+    if (!rig.grid().sort_keys().empty()) return false;
+    // Emptied, it is the rows' own order, with the selection on its row.
+    const auto shown = rig.grid().display_order();
+    for (std::size_t i = 0; i < shown.size(); ++i)
+        if (shown[i] != i) return false;
+    return rig.grid().selected() == GridRow{2};
+}
+static_assert(ctrl_left_and_right_clear_the_level());
+
+// Ten columns, and a tenth key does nothing.
+struct TenRow {
+    int a{}, b{}, c{}, d{}, e{}, f{}, g{}, h{}, i{}, j{};
+};
+struct TenTag;
+using TenGrid = DataGrid<TenTag, TenRow, NoGridMessage, Column<"a", &TenRow::a, 60>, Column<"b", &TenRow::b, 60>, Column<"c", &TenRow::c, 60>, Column<"d", &TenRow::d, 60>, Column<"e", &TenRow::e, 60>, Column<"f", &TenRow::f, 60>, Column<"g", &TenRow::g, 60>, Column<"h", &TenRow::h, 60>, Column<"i", &TenRow::i, 60>,
+                     Column<"j", &TenRow::j, 60>>;
+
+[[nodiscard]] constexpr bool a_tenth_key_does_nothing() {
+    ApplicationCore core{HeadlessBackend{Size{Width{620}, Height{40}}}, window(TenGrid{})};
+    if (!core.process_pending(SolidShaper{})) return false;
+    TenGrid& grid = core.ui().get<TenTag>();
+    HeadlessBackend& backend = jgui_test::backend(core);
+    const auto choose_and_sort = [&](std::int32_t column) {
+        const Point on_header{Left{side + 60 * column + 10}, Top{top_edge}};
+        backend.inject(PointerButton{on_header, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(1)});
+        backend.inject(PointerButton{on_header, MouseButton::Left, ButtonState::Released, jgui_test::serial(1)});
+        backend.inject(KeyEvent{Key::Up, Modifier::Ctrl, true});
+        jgui::require(core.process_pending(SolidShaper{}).has_value(), "a frame failed");
+    };
+    for (std::int32_t column = 0; column < 9; ++column) choose_and_sort(column);
+    if (grid.sort_keys().size() != 9) return false;
+    choose_and_sort(9);
+    if (grid.sort_keys().size() != 9 || grid.sort_keys().back().column != 8 || grid.current_column() != 9) return false;
+    // A key already in can still turn.
+    backend.inject(PointerButton{Point{Left{side + 10}, Top{top_edge}}, MouseButton::Left, ButtonState::Pressed, jgui_test::serial(1)});
+    backend.inject(PointerButton{Point{Left{side + 10}, Top{top_edge}}, MouseButton::Left, ButtonState::Released, jgui_test::serial(1)});
+    backend.inject(KeyEvent{Key::Down, Modifier::Ctrl, true});
+    return core.process_pending(SolidShaper{}).has_value() && grid.sort_keys().front() == GridSortKey{0, true} && grid.sort_keys().size() == 9;
+}
+static_assert(a_tenth_key_does_nothing());
+
+[[nodiscard]] constexpr bool the_program_can_set_the_sort() {
+    Rig<> rig{0};
+    if (!rig.grid().set_rows(rows_with_ties())) return false;
+    rig.settle();
+    rig.click(10, row_y(3));
+    const std::array keys{GridSortKey{1, true}, GridSortKey{0, false}};
+    if (!rig.grid().set_sort_keys(keys)) return false;
+    if (!rig.sorted_by({GridSortKey{1, true}, GridSortKey{0, false}}) || rig.grid().selected() != GridRow{3} || rig.grid().display_order()[0] != 0) return false;
+    const auto refused = [](const std::expected<void, Error>& answer) { return !answer && answer.error().code == ErrorCode::SizeLimit; };
+    const std::array bad_column{GridSortKey{3, false}};
+    const std::array twice{GridSortKey{1, false}, GridSortKey{1, true}};
+    const std::array<GridSortKey, 10> too_many{};
+    if (!refused(rig.grid().set_sort_keys(bad_column)) || !refused(rig.grid().set_sort_keys(twice)) || !refused(rig.grid().set_sort_keys(too_many))) return false;
+    if (!rig.sorted_by({GridSortKey{1, true}, GridSortKey{0, false}})) return false;
+    if (!rig.grid().set_sort_keys({}) || !rig.grid().sort_keys().empty() || rig.grid().display_order()[0] != 0 || rig.grid().display_order()[1] != 1) return false;
+    // New rows clear the sort, and keep the current column.
+    rig.click(70, 4);
+    rig.ctrl(Key::Up);
+    if (!rig.grid().set_rows(small_rows(3))) return false;
+    rig.settle();
+    return rig.grid().sort_keys().empty() && rig.grid().current_column() == 1;
+}
+static_assert(the_program_can_set_the_sort());
+
+// Other keys with Ctrl go as they always did, and Ctrl on a release or in a grid with no focus does nothing.
+[[nodiscard]] constexpr bool only_these_keys_are_the_sorts() {
+    Rig<> rig{20};
+    rig.click(10, 4);
+    rig.click(10, row_y(0));
+    rig.deliver(KeyEvent{Key::End, Modifier::Ctrl, true});
+    if (rig.grid().selected() != GridRow{19}) return false;
+    rig.deliver(KeyEvent{Key::Up, Modifier::Ctrl, false});
+    if (!rig.grid().sort_keys().empty()) return false;
+    jgui_test::notify(rig.core.ui(), ClearFocus{});
+    rig.ctrl(Key::Up);
+    return rig.grid().sort_keys().empty();
+}
+static_assert(only_these_keys_are_the_sorts());
+
+// A shaper tall enough that the mark has room for its digit: a header of 16, so a mark of 14 rows.
+struct TallShaper {
+    [[nodiscard]] constexpr std::expected<TextRun, Error> shape(std::string_view text) const {
+        return TextRun{Size{Width{saturate_to<std::int32_t>(text.size() * 2)}, Height{12}}, std::vector<std::uint8_t>(text.size() * 2 * 12, 255)};
+    }
+    [[nodiscard]] constexpr Height line_height() const noexcept { return Height{12}; }
+};
+static_assert(detail::sort_mark_rows(Height{16}) == 14 && detail::sort_mark_width(Height{16}) == Width{13} && detail::sort_mark_room(Height{16}) == Width{16});
+static_assert(detail::sort_mark_rows(Height{8}) == 6 && detail::sort_mark_width(Height{8}) == Width{5});
+static_assert(detail::sort_mark_rows(Height{2}) == 0 && detail::sort_mark_width(Height{2}) == Width{} && detail::sort_mark_rows(Height{}) == 0);
+static_assert(detail::sort_mark_rows(Height{3}) == 1 && detail::sort_mark_width(Height{3}) == Width{1});
+
+[[nodiscard]] constexpr bool a_mark_holds_its_number_and_points_its_way() {
+    Rig<TallShaper> rig{2, Size{Width{300}, Height{60}}};
+    // Column 0: from 4 to 54, the buttons from 38, and the mark's 13 across start 16 left of those, so at 22, and go down from the header's top + 1.
+    constexpr std::int32_t mark_left = 22;
+    constexpr std::int32_t mark_top = top_edge + 1;
+    constexpr std::int32_t second_left = 72;
+    const auto digit_matches = [&](std::int32_t left_of_mark, std::int32_t digit, bool descending) {
+        constexpr std::int32_t rows = 14;
+        const std::int32_t top = mark_top + (descending ? 1 : rows - detail::sort_digit_rows - 1);
+        const std::int32_t left = left_of_mark + 6 - 2;
+        const auto& wanted = detail::sort_digits.at(static_cast<std::size_t>(digit - 1));
+        for (std::int32_t row = 0; row < detail::sort_digit_rows; ++row)
+            for (std::int32_t column = 0; column < detail::sort_digit_columns; ++column) {
+                const bool on = ((wanted.at(static_cast<std::size_t>(row)) >> (4 - column)) & 1) != 0;
+                if ((rig.pixel(left + column, top + row) == theme::sort_digit.argb) != on) return false;
+                if (!on && rig.pixel(left + column, top + row) != theme::sort_mark.argb) return false;
+            }
+        return true;
+    };
+    rig.click(10, 4);
+    // The tint, and only on that column.
+    if (rig.pixel(30, top_edge + 1) != theme::grid_current_column.argb || rig.pixel(60, top_edge + 1) != theme::bar.argb) return false;
+    if (rig.pixel(mark_left + 6, mark_top) == theme::sort_mark.argb) return false;  // no sort yet, no mark
+    rig.ctrl(Key::Up);
+    // Going up: one pixel at the top, the whole width at the bottom, and a 1 at that fat end.
+    if (rig.pixel(mark_left + 6, mark_top) != theme::sort_mark.argb || rig.pixel(mark_left + 5, mark_top) == theme::sort_mark.argb) return false;
+    if (rig.pixel(mark_left, mark_top + 13) != theme::sort_mark.argb || rig.pixel(mark_left + 12, mark_top + 13) != theme::sort_mark.argb) return false;
+    if (!digit_matches(mark_left, 1, false)) return false;
+    // A second column is 2.
+    rig.click(60, 4);
+    rig.ctrl(Key::Up);
+    if (!digit_matches(second_left, 2, false)) return false;
+    if (!digit_matches(mark_left, 1, false)) return false;
+    // Turned, it points down and keeps its number, at the other end.
+    rig.ctrl(Key::Down);
+    if (rig.pixel(second_left, mark_top) != theme::sort_mark.argb || rig.pixel(second_left + 12, mark_top) != theme::sort_mark.argb || rig.pixel(second_left + 6, mark_top + 13) != theme::sort_mark.argb || rig.pixel(second_left + 5, mark_top + 13) == theme::sort_mark.argb) return false;
+    if (!digit_matches(second_left, 2, true)) return false;
+    // The first going leaves the second to be 1.
+    rig.click(10, 4);
+    rig.ctrl(Key::Left);
+    return digit_matches(second_left, 1, true) && !(rig.pixel(mark_left + 6, mark_top) == theme::sort_mark.argb);
+}
+static_assert(a_mark_holds_its_number_and_points_its_way());
+
+[[nodiscard]] constexpr bool a_header_press_ended_elsewhere_makes_nothing_current() {
     Rig<> rig{4};
     rig.press(10, 4);
     if (!jgui_test::capture_active(rig.core.ui())) return false;
     rig.release(70, 4);
-    if (rig.grid().sort()) return false;
+    if (rig.grid().current_column()) return false;
     rig.press(10, 4);
     rig.release(10, 30);
-    if (rig.grid().sort()) return false;
+    if (rig.grid().current_column()) return false;
     // Above a scroll bar is no column.
     Rig<> barred{20};
     barred.click(200, 4);
-    return !barred.grid().sort();
+    return !barred.grid().current_column();
 }
-static_assert(a_header_press_ended_elsewhere_does_not_sort());
+static_assert(a_header_press_ended_elsewhere_makes_nothing_current());
 
 [[nodiscard]] constexpr bool a_boundary_drags_to_resize_within_limits() {
     Rig<> rig{4};
@@ -377,7 +600,7 @@ static_assert(a_header_press_ended_elsewhere_does_not_sort());
     if (rig.grid().thumb_across().empty()) return false;  // a very wide column brings a bar
     rig.move(44, 4);
     rig.release(44, 4);
-    if (rig.grid().column_width(0) != Width{40} || rig.grid().sort()) return false;  // a drag does not also sort
+    if (rig.grid().column_width(0) != Width{40} || rig.grid().current_column()) return false;  // a drag does not also choose the column
     return !jgui_test::capture_active(rig.core.ui());
 }
 static_assert(a_boundary_drags_to_resize_within_limits());
@@ -399,9 +622,9 @@ static_assert(a_boundary_drags_to_resize_within_limits());
     if (rig.pixel(filler_x + 30, top_edge + 2) != theme::bar.argb) return false;
     // It is no column: its header does not sort, and it shows no boundary and no buttons.
     rig.click(filler_x + 14, top_edge + 2);
-    if (rig.grid().sort()) return false;
+    if (rig.grid().current_column()) return false;
     rig.click(filler_x + 44, top_edge + 2);
-    if (rig.grid().sort() || rig.grid().column_changes() != 0) return false;
+    if (rig.grid().current_column() || rig.grid().column_changes() != 0) return false;
     rig.move(filler_x + 14, top_edge + 2);
     if (rig.backend().cursor() != CursorShape::Default) return false;
     // A scroll bar takes some of the room, and what is left is a little: 40 goes to the last column.
@@ -530,7 +753,7 @@ static_assert(motion_with_nothing_changing_draws_nothing());
     rig.press(10, 4);
     rig.deliver(PointerLeave{});
     rig.release(10, 4);
-    return !rig.grid().sort();
+    return !rig.grid().current_column();
 }
 static_assert(a_leave_ends_every_capture());
 
@@ -568,12 +791,13 @@ static_assert(a_size_change_under_a_held_thumb_holds());
     const Rect thumb = rig.grid().thumb_down();
     if (rig.pixel(number(thumb.left()) + 3, number(thumb.top()) + 1) != theme::button_edge.argb) return false;
     if (rig.pixel(number(thumb.left()) + 3, 55) != theme::bar.argb) return false;
-    // A sort mark, and it turns over: the top row of the triangle is one pixel going up, and five going down.
+    // A sort mark, and it turns over: its top row is one pixel going up, and five going down, in a mark too small for a digit.
     rig.click(10, 4);
-    const std::int32_t mark_left = side + 50 - 3 - 13 - 14;  // left of the buttons, the boundary's reach beyond them
-    if (rig.pixel(mark_left + 4, top_edge + 2) != theme::text.argb || rig.pixel(mark_left + 2, top_edge + 2) == theme::text.argb) return false;
-    rig.click(10, 4);
-    return rig.pixel(mark_left + 2, top_edge + 2) == theme::text.argb && rig.pixel(mark_left + 6, top_edge + 2) == theme::text.argb;
+    rig.ctrl(Key::Up);
+    const std::int32_t mark_left = side + 50 - 3 - 13 - 8;
+    if (rig.pixel(mark_left + 2, top_edge + 1) != theme::sort_mark.argb || rig.pixel(mark_left, top_edge + 1) == theme::sort_mark.argb) return false;
+    rig.ctrl(Key::Down);
+    return rig.pixel(mark_left, top_edge + 1) == theme::sort_mark.argb && rig.pixel(mark_left + 4, top_edge + 1) == theme::sort_mark.argb;
 }
 static_assert(the_picture_is_right());
 
@@ -776,24 +1000,24 @@ static_assert(going_round_to_where_it_was_changes_nothing());
 [[nodiscard]] constexpr bool each_alignment_has_its_pixels() {
     Rig<> rig{1};
     SmallGrid& grid = rig.grid();
-    // Column 0 goes from 4 to 54. Its title, 2 across, has from 8 up to 20, before its padding and the sort mark's room. Its cell, "0", 2 across, has 8 to 50.
+    // Column 0 goes from 4 to 54. Its title, 2 across, has from 8 up to 26, before its padding and the sort mark's room. Its cell, "0", 2 across, has 8 to 50.
     const auto title_at = [&](std::int32_t x) { return rig.pixel(x, top_edge + 3) == theme::text.argb && rig.pixel(x + 1, top_edge + 3) == theme::text.argb; };
     const auto cell_at = [&](std::int32_t x) { return rig.pixel(x, row_y(0) + 3) == theme::text.argb && rig.pixel(x + 1, row_y(0) + 3) == theme::text.argb; };
-    if (!title_at(8) || !cell_at(8) || title_at(13) || cell_at(28)) return false;
+    if (!title_at(8) || !cell_at(8) || title_at(16) || cell_at(28)) return false;
     rig.press_on(grid.align_button(0));
     if (!title_at(8) || !cell_at(8)) return false;  // not yet
     rig.wait_ms(300);
-    if (title_at(8) || cell_at(8) || !title_at(13) || !cell_at(28)) return false;
+    if (title_at(8) || cell_at(8) || !title_at(16) || !cell_at(28)) return false;
     rig.press_on(grid.align_button(0));
     rig.wait_ms(300);
-    if (title_at(13) || cell_at(28) || !title_at(18) || !cell_at(48)) return false;
+    if (title_at(16) || cell_at(28) || !title_at(24) || !cell_at(48)) return false;
     // The call has no wait, and takes the wait away.
     rig.press_on(grid.align_button(0));
     if (!grid.set_column_align(0, ColumnAlign::AtCenter)) return false;
     rig.settle();
-    if (!title_at(13) || !cell_at(28) || rig.core.next_wake()) return false;
+    if (!title_at(16) || !cell_at(28) || rig.core.next_wake()) return false;
     rig.wait_ms(300);
-    return title_at(13) && grid.column_align(0) == ColumnAlign::AtCenter;
+    return title_at(16) && grid.column_align(0) == ColumnAlign::AtCenter;
 }
 static_assert(each_alignment_has_its_pixels());
 
@@ -813,7 +1037,7 @@ static_assert(each_alignment_has_its_pixels());
         rig.press(x, y);
         const bool held = jgui_test::capture_active(rig.core.ui());
         rig.release(x, y);
-        return !held && !grid.sort() && !grid.selected() && grid.column_width(0) == Width{50};
+        return !held && !grid.current_column() && !grid.selected() && grid.column_width(0) == Width{50};
     };
     if (!pressed_only(50, 4) || grid.column_align(0) != ColumnAlign::AtCenter) return false;
     if (!pressed_only(45, 11) || grid.column_align(0) != ColumnAlign::AtRight) return false;
@@ -822,7 +1046,7 @@ static_assert(each_alignment_has_its_pixels());
     rig.move(45, 4);
     if (rig.backend().cursor() != CursorShape::Default) return false;
     rig.click(37, 4);
-    return grid.sort() == GridSort{0, false};
+    return grid.current_column() == 0;
 }
 static_assert(a_press_goes_to_what_is_under_it());
 
@@ -835,7 +1059,8 @@ static_assert(a_press_goes_to_what_is_under_it());
     const auto kept = [&] { return grid.column_font(1) == ColumnFont::Monospace && grid.column_font_applied(1) == ColumnFont::Monospace && grid.column_align(1) == ColumnAlign::AtCenter && grid.column_align_applied(1) == ColumnAlign::AtCenter; };
     if (!kept()) return false;
     rig.click(10, 4);
-    if (!kept() || !grid.sort()) return false;
+    rig.ctrl(Key::Up);
+    if (!kept() || grid.sort_keys().empty()) return false;
     rig.press(number(grid.column_width(0)) + side, 4);
     rig.move(150, 4);
     rig.release(150, 4);
@@ -927,7 +1152,7 @@ struct TitledTag;
 using TitledGrid = DataGrid<TitledTag, SmallRow, NoGridMessage, Column<"A long title here", &SmallRow::left, 30>, Column<"B", &SmallRow::name, 100>>;
 
 // 17 bytes at 2 across, with padding, the sort mark's room, the buttons and the boundary's reach.
-constexpr Width whole_long_title{4 + 34 + 4 + 14 + 13 + 3};
+constexpr Width whole_long_title{4 + 34 + 4 + 8 + 13 + 3};
 
 template <class Shaper = SolidShaper>
 struct TitledRig {
@@ -984,7 +1209,8 @@ static_assert(a_drag_can_cut_the_title_and_stops_at_the_floor());
     TitledRig<TwoFaces> rig;
     TitledGrid& grid = rig.grid();
     if (grid.column_width(0) != whole_long_title) return false;
-    const auto whole_of = [](std::int32_t title) { return Width{4 + title + 4 + 14 + 13 + 3}; };
+    std::int32_t mark_room = 8;
+    const auto whole_of = [&mark_room](std::int32_t title) { return Width{4 + title + 4 + mark_room + 13 + 3}; };
     if (!grid.set_column_title(0, CheckedText{"A title that is longer than it was"})) return false;
     rig.settle();
     if (grid.column_width(0) != whole_of(68) || grid.column_title(0) != "A title that is longer than it was") return false;
@@ -998,7 +1224,8 @@ static_assert(a_drag_can_cut_the_title_and_stops_at_the_floor());
     if (!grid.set_column_title(0, CheckedText{"A long title here"})) return false;
     if (!grid.set_column_font(0, ColumnFont::Monospace)) return false;
     rig.settle();
-    // The other face is 3 across a byte.
+    // The other face is 3 across a byte, and a row of 10 makes the mark's room 10 too.
+    mark_room = 10;
     if (grid.column_width(0) != whole_of(51)) return false;
     for (std::int32_t x = side + 4; x < side + 4 + 51; ++x)
         if (rig.pixel(x, top_edge + 3) != theme::text.argb) return false;
@@ -1031,26 +1258,25 @@ static_assert(a_dragged_column_keeps_the_width_it_was_given());
     Rig<> rig{4};
     SmallGrid& grid = rig.grid();
     rig.click(10, 4);
-    rig.click(10, 4);  // descending, whose top row is the mark's full width
-    if (grid.sort() != GridSort{0, true}) return false;
-    constexpr std::int32_t mark_at_50 = side + 50 - 3 - 13 - 14;
-    if (rig.pixel(mark_at_50, top_edge + 2) != theme::text.argb) return false;
-    // Dragged to 30, whole is 40, and there is no room for it: it does not draw, though the sort stands.
+    rig.ctrl(Key::Down);  // descending, whose top row is the mark's full width
+    constexpr std::int32_t mark_at_50 = side + 50 - 3 - 13 - 8;
+    if (rig.pixel(mark_at_50, top_edge + 1) != theme::sort_mark.argb) return false;
+    // Dragged to 30, whole is 34, and there is no room for it: it does not draw, though the sort stands.
     rig.press(54, 4);
     rig.move(34, 4);
     rig.release(34, 4);
-    if (grid.column_width(0) != Width{30} || grid.sort() != GridSort{0, true}) return false;
-    constexpr std::int32_t mark_at_30 = side + 30 - 3 - 13 - 14;
-    for (std::int32_t x = mark_at_30; x < mark_at_30 + 9; ++x)
-        if (x != 8 && x != 9 && rig.pixel(x, top_edge + 2) == theme::text.argb) return false;
-    // A click still reverses it, with no mark to show that.
-    rig.click(10, 4);
-    if (grid.sort() != GridSort{0, false}) return false;
-    rig.click(10, 4);
+    if (grid.column_width(0) != Width{30} || !rig.sorted_by({GridSortKey{0, true}})) return false;
+    for (std::int32_t x = side; x < side + 30; ++x)
+        for (std::int32_t y = top_edge; y < top_edge + 7; ++y)
+            if (rig.pixel(x, y) == theme::sort_mark.argb) return false;
+    // The keys still work, with no mark to show it.
+    rig.ctrl(Key::Up);
+    if (!rig.sorted_by({GridSortKey{0, false}})) return false;
+    rig.ctrl(Key::Down);
     rig.press(34, 4);
     rig.move(54, 4);
     rig.release(54, 4);
-    return grid.column_width(0) == Width{50} && rig.pixel(mark_at_50, top_edge + 2) == theme::text.argb;
+    return grid.column_width(0) == Width{50} && rig.pixel(mark_at_50, top_edge + 1) == theme::sort_mark.argb;
 }
 static_assert(the_sort_mark_hides_and_comes_back());
 

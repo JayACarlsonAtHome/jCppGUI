@@ -1509,7 +1509,7 @@ struct GridColumnButtonWaits {
             session.close_window();
         }
     }
-    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) { return grid.column_align(0) == jgui::ColumnAlign::AtCenter && grid.column_align_applied(0) == jgui::ColumnAlign::AtCenter && grid.scroll_down() == jgui::Height{} && !grid.selected() && !grid.sort(); }
+    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) { return grid.column_align(0) == jgui::ColumnAlign::AtCenter && grid.column_align_applied(0) == jgui::ColumnAlign::AtCenter && grid.scroll_down() == jgui::Height{} && !grid.selected() && grid.sort_keys().empty() && !grid.current_column(); }
 };
 
 // A flood of presses on the button, then a flood of motion while it waits. Nothing hangs, the last press decides, and the wait ends once they stop.
@@ -1532,7 +1532,58 @@ struct GridButtonsUnderFloods {
             session.close_window();
         }
     }
-    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) { return grid.column_font(0) == jgui::ColumnFont::Monospace && grid.column_font_applied(0) == jgui::ColumnFont::Monospace && !grid.sort(); }
+    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) { return grid.column_font(0) == jgui::ColumnFont::Monospace && grid.column_font_applied(0) == jgui::ColumnFont::Monospace && grid.sort_keys().empty() && !grid.current_column(); }
+};
+
+// A click on a header, then Ctrl and a key off the wire: the sort. Then Ctrl let go, and that same key moves the selection and leaves the sort alone. The evdev codes are 8 under xkb's, and Control is bit 2 of the masks.
+constexpr std::uint32_t key_up = 103;
+constexpr std::uint32_t key_down = 108;
+constexpr std::uint32_t key_right = 106;
+constexpr std::uint32_t control_bit = 1U << 2U;
+constexpr std::int32_t on_second_header_x = 130;
+struct GridCtrlKeysSort {
+    static constexpr ClientEnd end = ends_clean;
+    std::size_t idles{};
+    void on(Session& session, const KeyboardCreated&) { send_valid_keymap(session); }
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    static void tap(Session& session, std::uint32_t key) {
+        session.queue(event::keyboard_key(*session.keyboard(), session.next_serial(), 0, key, 1));
+        session.queue(event::keyboard_key(*session.keyboard(), session.next_serial(), 0, key, 0));
+    }
+    static void hold_ctrl(Session& session, bool held) { session.queue(event::keyboard_modifiers(*session.keyboard(), session.next_serial(), held ? control_bit : 0, 0, 0, 0)); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.pointer() || !session.keyboard()) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, in_the_body_x, in_the_body_y);
+            pointer_button(session, wire::button_left, wire::button_pressed);
+            pointer_button(session, wire::button_left, wire::button_released);
+            pointer_motion(session, on_second_header_x, on_grid_header_y);
+            pointer_button(session, wire::button_left, wire::button_pressed);
+            pointer_button(session, wire::button_left, wire::button_released);
+            session.queue(event::keyboard_enter(*session.keyboard(), session.next_serial(), *session.window_surface()));
+            hold_ctrl(session, true);
+            tap(session, key_down);
+            // The first column now current, and in the sort for a moment, then cleared.
+            pointer_motion(session, 30, on_grid_header_y);
+            pointer_button(session, wire::button_left, wire::button_pressed);
+            pointer_button(session, wire::button_left, wire::button_released);
+            tap(session, key_up);
+            tap(session, key_right);
+            // Its header again: the second column, for what follows.
+            pointer_motion(session, on_second_header_x, on_grid_header_y);
+            pointer_button(session, wire::button_left, wire::button_pressed);
+            pointer_button(session, wire::button_left, wire::button_released);
+            hold_ctrl(session, false);
+            tap(session, key_up);
+        } else if (idles >= 3) {
+            session.close_window();
+        }
+    }
+    // Sorted going down by the names as text, so "row 60" sits just above "row 6", the row that was clicked: the click at y 200 lands on row 6, under a header of one row.
+    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) {
+        return grid.sort_keys().size() == 1 && grid.sort_keys().front() == jgui::GridSortKey{1, true} && grid.current_column() == 1 && grid.selected() == jgui::GridRow{60};
+    }
 };
 
 // --- The redraw monitor, through the real backend ---
@@ -2648,6 +2699,7 @@ constexpr auto scenarios = std::tuple{
     Named<TimerWakesAndSleeps>{"timer_wakes_and_sleeps"},
     Named<GridColumnButtonWaits>{"grid_column_button_waits"},
     Named<GridButtonsUnderFloods>{"grid_buttons_under_floods"},
+    Named<GridCtrlKeysSort>{"grid_ctrl_keys_sort"},
     Named<ViewerFirstFrame>{"viewer_first_frame"},
     Named<ViewerSectionSwitch>{"viewer_section_switch"},
     Named<ViewerWheelScroll>{"viewer_wheel_scroll"},
