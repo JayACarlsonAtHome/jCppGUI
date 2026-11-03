@@ -20,8 +20,17 @@
 
 namespace jgui::inline v001 {
 
+// An event that can take in the next one of its own type, so that a run of them holds one slot. absorb changes
+// nothing and answers false when taking the newer one in would lose something.
+template <class T>
+concept Coalescing = requires(T& older, const T& newer) {
+    { older.absorb(newer) } noexcept -> std::same_as<bool>;
+};
+
 // Keeps events of several types in arrival order, each in a queue of its own type, with nothing
 // erased. Drained in order, it calls the overload of sink.on for each event's own type.
+// A Coalescing event pushed straight after another of its type that is still held may merge with it, and
+// that is the only way two events become one. Order against every other type stays as it arrived.
 // A display event arrives inside a C callback; it is held here and delivered after that callback has
 // returned, so toolkit code and user callbacks never run under libwayland. This is input buffering at
 // the system boundary. Messages between widgets are immediate and never pass through here.
@@ -30,12 +39,16 @@ class EventQueue {
 public:
     static constexpr std::size_t limit = 65536;
 
-    // False when the queue is full and the event was not kept.
+    // False when the queue is full and the event was not kept. An event that merges needs no room of its own.
     template <class T>
     [[nodiscard]] constexpr bool push(const T& event) {
         static_assert((std::same_as<T, E> || ...), "this event type is not one this queue holds");
+        Queue<T>& queue = std::get<Queue<T>>(queues_);
+        if constexpr (Coalescing<T>) {
+            if (queue.has_next() && queue.items.back().sequence + 1 == next_sequence_ && queue.items.back().event.absorb(event)) return true;
+        }
         if (count_ >= limit) return false;
-        std::get<Queue<T>>(queues_).items.push_back(Stamped<T>{next_sequence_++, event});
+        queue.items.push_back(Stamped<T>{next_sequence_++, event});
         ++count_;
         return true;
     }

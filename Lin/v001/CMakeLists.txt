@@ -205,7 +205,13 @@ endif()
 jgui_test(test_geometry)
 jgui_test(test_canvas)
 jgui_test(test_pool)
+# Fills a whole queue in static_assert, which needs a higher step budget on both compilers.
 jgui_test(test_event_queue)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(test_event_queue PRIVATE -fconstexpr-steps=50000000)
+else()
+  target_compile_options(test_event_queue PRIVATE -fconstexpr-ops-limit=400000000)
+endif()
 jgui_test(test_widgets)
 jgui_test(test_frame)
 jgui_test(test_help)
@@ -239,7 +245,7 @@ set(JGUI_FAKE_SCENARIOS
   release_before_attach release_three_times never_release release_late pool_attack
   capabilities_flap seat_removed_while_held no_seat no_compositor no_shm no_wm_base old_compositor old_seat
   keymap_pipe keymap_directory keymap_short keymap_1mib_no_terminator keymap_size_0xffffffff keymap_format_7 keymap_none
-  keys_extreme pointer_extremes events_of_later_versions event_flood
+  keys_extreme pointer_extremes events_of_later_versions event_flood event_flood_in_sync event_flood_mixed
   disconnect_at_once disconnect_after_frame
   bad_length_too_small bad_length_too_large bad_length_not_aligned unknown_opcode unknown_object
   truncated_then_gone truncated_during_connect truncated_during_first_frame

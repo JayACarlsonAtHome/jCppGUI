@@ -99,6 +99,31 @@ void pointer_motion(Session& session, std::int32_t x, std::int32_t y) {
 void pointer_button(Session& session, std::uint32_t button, std::uint32_t state) {
     if (session.pointer()) session.queue(event::pointer_button(*session.pointer(), session.next_serial(), 0, button, state));
 }
+
+// Steps that must each be delivered alone, because motion in one delivery merges and only the newest is seen. A ping
+// follows each step. The client answers while it dispatches, and that answer leaves at its next flush, which comes after
+// it has delivered what it read. So the next step, sent on the answer, cannot merge with this one, however slow the client.
+class PacedSteps {
+public:
+    // Runs steps up to this index, the next one now and the rest as each answer comes.
+    template <class Step>
+    void run_until(Session& session, std::size_t end, const Step& step) {
+        end_ = end;
+        on_answer(session, step);
+    }
+    template <class Step>
+    void on_answer(Session& session, const Step& step) {
+        if (next_ >= end_ || !session.wm_base()) return;
+        step(next_++);
+        session.queue(event::ping(*session.wm_base(), session.next_serial()));
+    }
+    [[nodiscard]] constexpr bool done() const noexcept { return next_ >= end_; }
+
+private:
+    std::size_t next_{};
+    std::size_t end_{};
+};
+
 void left_click(Session& session, std::int32_t x, std::int32_t y) {
     pointer_motion(session, x, y);
     pointer_button(session, wire::button_left, wire::button_pressed);
@@ -607,7 +632,11 @@ struct EventsOfLaterVersions {
     }
 };
 
-// More events at once than the toolkit's queue holds, if libwayland ever lets them all through in one read.
+// More motion at once than the toolkit's queue holds. It merges, so this always ends cleanly.
+void flood_with_motion(Session& session, std::int32_t count) {
+    for (std::int32_t i = 0; i < count; ++i) session.queue(event::pointer_motion(*session.pointer(), 0, Fixed::from_int(nowhere_x), Fixed::from_int(nowhere_y)));
+}
+
 struct EventFlood {
     static constexpr ClientEnd end = ends_clean;
     static constexpr std::int32_t count = 70000;
@@ -616,8 +645,40 @@ struct EventFlood {
         session.release(commit.buffer);
         if (flooded || !session.pointer()) return;
         flooded = true;
-        for (std::int32_t i = 0; i < count; ++i) session.queue(event::pointer_motion(*session.pointer(), 0, Fixed::from_int(nowhere_x), Fixed::from_int(nowhere_y)));
+        flood_with_motion(session, count);
         session.close_window();
+    }
+};
+
+// A flood that arrives during the sync after the first frame. Nothing drains the queue there, and the answer to the
+// sync comes after every event sent here, because the client commits and then syncs. So no event is ever delivered
+// until the sync ends, and the outcome does not depend on timing: without merging, this always reaches the limit.
+struct EventFloodInSync {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool first_frame_only = true;
+    bool flooded{};
+    void on(Session& session, const BufferCommitted& commit) {
+        session.release(commit.buffer);
+        if (flooded || !session.pointer()) return;
+        flooded = true;
+        flood_with_motion(session, EventFlood::count);
+    }
+};
+
+// Motion with a press between each, so nothing can merge, during that same sync. More events than the limit come before
+// the answer, so the limit is always reached, and the one right ending is its Error.
+struct EventFloodMixed {
+    static constexpr ClientEnd end = ends_with(ErrorCode::SizeLimit, "queue limit");
+    static constexpr bool first_frame_only = true;
+    bool flooded{};
+    void on(Session& session, const BufferCommitted& commit) {
+        session.release(commit.buffer);
+        if (flooded || !session.pointer()) return;
+        flooded = true;
+        for (std::int32_t i = 0; i < EventFlood::count; ++i) {
+            session.queue(event::pointer_motion(*session.pointer(), 0, Fixed::from_int(nowhere_x), Fixed::from_int(nowhere_y)));
+            pointer_button(session, wire::button_left, wire::button_pressed);
+        }
     }
 };
 
@@ -809,16 +870,19 @@ struct CursorAllEdges {
         {on_title_x, on_title_y + 5, static_cast<std::int32_t>(wire::shape_default)},
     }};
     std::size_t idles{};
+    PacedSteps paced{};
+    // Each stop twice, in deliveries of their own, so the second shows that only a change is sent.
+    [[nodiscard]] static auto step(Session& session) {
+        return [&session](std::size_t i) { pointer_motion(session, stops[i / 2][0], stops[i / 2][1]); };
+    }
     void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Pong&) { paced.on_answer(session, step(session)); }
     void on(Session& session, const Idle&) {
-        if (session.commits_with_buffer() == 0) return;
+        if (session.commits_with_buffer() == 0 || !paced.done()) return;
         ++idles;
         if (idles == 1) {
             pointer_enter(session, nowhere_x, nowhere_y);
-            for (const auto& stop : stops) {
-                pointer_motion(session, stop[0], stop[1]);
-                pointer_motion(session, stop[0], stop[1]);
-            }
+            paced.run_until(session, stops.size() * 2, step(session));
         } else if (idles == 2) {
             session.pointer_leave();
             pointer_enter(session, nowhere_x, nowhere_y);
@@ -1298,26 +1362,42 @@ struct GridSeatGoneDuringCapture {
 // The column boundary's shape over a boundary, and nowhere else, with the frame's edges as they were.
 struct GridCursor {
     static constexpr ClientEnd end = ends_clean;
+    static constexpr std::size_t steps_before_the_release_is_checked = 7;
+    static constexpr std::size_t all_steps = 9;
     std::size_t idles{};
+    PacedSteps paced{};
+    [[nodiscard]] static auto step(Session& session) {
+        return [&session](std::size_t i) {
+            switch (i) {
+                case 0:
+                case 1: pointer_motion(session, 104, 26); break;
+                case 2: pointer_motion(session, 104, in_the_body_y); break;
+                case 3: pointer_motion(session, on_left_edge_x, on_left_edge_y); break;
+                case 4:
+                    pointer_motion(session, 104, 26);
+                    pointer_button(session, wire::button_left, wire::button_pressed);
+                    break;
+                case 5: pointer_motion(session, 150, 300); break;
+                case 6:
+                    pointer_motion(session, 150, 26);
+                    pointer_button(session, wire::button_left, wire::button_released);
+                    break;
+                // Still on the boundary, which came along with the drag: the release must have kept its shape, so this sends nothing.
+                case 7: pointer_motion(session, 150, 26); break;
+                default: pointer_motion(session, in_the_body_x, in_the_body_y); break;
+            }
+        };
+    }
     void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Pong&) { paced.on_answer(session, step(session)); }
     void on(Session& session, const Idle&) {
-        if (session.commits_with_buffer() == 0) return;
+        if (session.commits_with_buffer() == 0 || !paced.done()) return;
         ++idles;
         if (idles == 1) {
             pointer_enter(session, in_the_body_x, in_the_body_y);
-            pointer_motion(session, 104, 26);
-            pointer_motion(session, 104, 26);
-            pointer_motion(session, 104, in_the_body_y);
-            pointer_motion(session, on_left_edge_x, on_left_edge_y);
-            pointer_motion(session, 104, 26);
-            pointer_button(session, wire::button_left, wire::button_pressed);
-            pointer_motion(session, 150, 300);
-            pointer_motion(session, 150, 26);
-            pointer_button(session, wire::button_left, wire::button_released);
+            paced.run_until(session, steps_before_the_release_is_checked, step(session));
         } else if (idles == 2) {
-            // Still on the boundary, which came along with the drag: the release must have kept its shape, so this sends nothing.
-            pointer_motion(session, 150, 26);
-            pointer_motion(session, in_the_body_x, in_the_body_y);
+            paced.run_until(session, all_steps, step(session));
         } else {
             session.close_window();
         }
@@ -1676,6 +1756,8 @@ constexpr auto scenarios = std::tuple{
     Named<PointerExtremes>{"pointer_extremes"},
     Named<EventsOfLaterVersions>{"events_of_later_versions"},
     Named<EventFlood>{"event_flood"},
+    Named<EventFloodInSync>{"event_flood_in_sync"},
+    Named<EventFloodMixed>{"event_flood_mixed"},
     Named<DisconnectAtOnce>{"disconnect_at_once"},
     Named<DisconnectAfterFrame>{"disconnect_after_frame"},
     Named<RawHeader<4>>{"bad_length_too_small"},

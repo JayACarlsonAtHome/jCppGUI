@@ -165,6 +165,10 @@ only record the event in `EventQueue`, a tuple of per-type queues with arrival s
 delivered to `sink.on(...)` in order after dispatch returns. This is input buffering at the system
 boundary and has nothing to do with messages, which never pass through it.
 
+A `PointerMove` pushed straight after another one that is still held, with the same flags, replaces its
+position, so a flood of motion takes one slot and only the newest position is delivered. Order against
+every other event is unchanged. Any other flood can reach the limit of 65536 events, which ends the run with an `Error`.
+
 **The owner accepted `EventQueue` as input buffering at the system boundary only. It is not a message
 queue, and it should go away if our own Wayland client delivers events directly.**
 

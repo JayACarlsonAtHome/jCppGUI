@@ -87,6 +87,13 @@ struct PointerMove {
     Point position;
     bool captured{};  // set by the toolkit: another widget, or this one, holds the pointer
     bool entered{};   // set by a backend: the pointer just came into the window, so what it looks like is not yet known
+
+    // Only the newest position of a run of motion matters, as long as what else each one says is the same.
+    [[nodiscard]] constexpr bool absorb(const PointerMove& newer) noexcept {
+        if (captured != newer.captured || entered != newer.entered) return false;
+        position = newer.position;
+        return true;
+    }
 };
 
 enum class ButtonState : std::uint8_t { Pressed, Released };

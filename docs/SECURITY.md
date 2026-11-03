@@ -190,6 +190,7 @@ only about 35,000 inputs. The `backend` harness passes no descriptor other than 
   under ASan: see `docs/Maturity.md`. It has its own wire code, which is new and has only been used by these tests.
 - The keymap text is compiled by xkbcommon, which is also exposed to it. Our checks limit only size
   and format.
-- The event queue limit (65536 events) ends the run with an `Error`. It has been tested only on the queue itself. A real
-  flood of 70,000 events does not reach it, because libwayland reads a little at a time and the queue drains
-  between reads, so as far as that test shows it cannot be reached through libwayland.
+- The event queue limit (65536 events) ends the run with an `Error`, and a compositor can reach it. Nothing drains the
+  queue while a `sync` waits, so events sent ahead of the answer all stay in it, and in `run`'s own loop a flood of 70,000
+  motions reached it on a loaded machine. Motion in a row now merges into one slot, so motion alone no longer reaches
+  it. Motion mixed with other events still can: `event_flood_mixed` ends in that `Error` every time.

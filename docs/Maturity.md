@@ -35,7 +35,7 @@ ack before a commit, no write to a held buffer, no attach of a held buffer, ids,
 - **The pointer.** `wl_fixed` extremes, bogus buttons and states, a leave with no enter, a burst of motion, and events of later versions. Scrolling: `INT32_MIN`, `INT32_MAX` and zero as pixels and as steps, an unknown axis and source, a flood in one frame and a flood of frames.
 - **The pointer's look.** `cursor-shape-v1` over all 8 edges and the middle, with each request's serial, device and shape value held to the protocol, only changes
   sent, and re-entering on a corner. A compositor without it, the global going away, the seat or the pointer going with a shape set, and a drag across the edges.
-- **The connection.** 70,000 events at once, a sudden disconnect at each stage, part of a message and then a hang-up, a size that
+- **The connection.** 70,000 motions at once, in the event loop and during a `sync`, which merge into one slot; 140,000 mixed events during a `sync`, which end in the queue limit's `Error`; a sudden disconnect at each stage, part of a message and then a hang-up, a size that
   is too small, too large or not aligned, an unknown opcode or object, arguments too short, a string with no terminator, a
   keymap with no descriptor, a protocol error on an object (`EPROTO`, which had never run) and on `wl_display`.
 - **Signals.** A real `EINTR` in `poll`, with a timer interrupting the client's sleep.
