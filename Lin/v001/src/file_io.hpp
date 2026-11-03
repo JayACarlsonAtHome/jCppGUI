@@ -1,7 +1,8 @@
-// File: src/wayland/file_io.hpp
+// File: src/file_io.hpp
 // Purpose: The only place typed memory meets the OS's untyped byte interface. Typed spans go in, a
 //          pointer converts implicitly at the call, and nothing here casts back. Short transfers and
-//          interrupted calls are handled inside, so a caller sees all of it done or an Error.
+//          interrupted calls are handled inside, so a caller sees all of it done or an Error. Also the owner of a
+//          descriptor. It needs no display library, so the backend and the redraw monitor's file both use it.
 #pragma once
 
 #include <sys/types.h>
@@ -21,6 +22,34 @@
 #include "jCppGUI/v001/geometry.hpp"
 
 namespace jgui::inline v001::detail {
+
+// A file descriptor closed by RAII.
+class UniqueFd {
+public:
+    UniqueFd() noexcept = default;
+    explicit UniqueFd(int fd) noexcept : fd_{fd} {}
+    UniqueFd(UniqueFd&& other) noexcept : fd_{std::exchange(other.fd_, -1)} {}
+    UniqueFd& operator=(UniqueFd&& other) noexcept {
+        if (this != &other) {
+            reset();
+            fd_ = std::exchange(other.fd_, -1);
+        }
+        return *this;
+    }
+    UniqueFd(const UniqueFd&) = delete;
+    UniqueFd& operator=(const UniqueFd&) = delete;
+    ~UniqueFd() { reset(); }
+
+    [[nodiscard]] int get() const noexcept { return fd_; }
+
+private:
+    void reset() noexcept {
+        // A failed close leaves nothing to do: the descriptor must not be closed again, and no write depends on it.
+        if (fd_ >= 0) static_cast<void>(::close(fd_));
+        fd_ = -1;
+    }
+    int fd_{-1};
+};
 
 template <class T>
 concept FileElement = std::is_trivially_copyable_v<T> && !std::is_const_v<T> && !std::is_volatile_v<T>;

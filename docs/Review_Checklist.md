@@ -16,7 +16,7 @@ Check each of these:
 
 1. **OS byte interface:** typed pointers convert to untyped bytes in named helpers only, behind typed signatures
    such as `write_at(fd, std::span<const T>, offset)`. Nothing calls `pread` or `pwrite` outside
-   `src/wayland/file_io.hpp`, and nothing there casts back. In tests only, `tests/fake_compositor/socket_io.hpp` does
+   `src/file_io.hpp`, and nothing there casts back. In tests only, `tests/fake_compositor/socket_io.hpp` does
    the same for `sendmsg` and `recvmsg`. **The owner approved that helper on 2026-11-02, for test code only.** Production
    code, including our later Wayland client, needs its own approval. Confirm nothing outside `tests/` includes it.
 2. **Temporary exception:** `src/wayland/trampoline.hpp` is the one file that names `void*`, for libwayland's

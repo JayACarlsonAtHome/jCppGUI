@@ -16,6 +16,7 @@
 
 #include "message.hpp"
 #include "pool.hpp"
+#include "redraw_points.hpp"
 #include "widget.hpp"
 
 namespace jgui::inline v001 {
@@ -81,6 +82,26 @@ constexpr auto& find_in_node(Node& node) {
         return node;
     } else {
         return find_in_tuple<Tag>(node.children());
+    }
+}
+
+// One node of the walk for a monitor, and everything below it. A node's position counts every node before it in
+// depth-first order, damaged or not, so it stays the same from frame to frame. A composite that can say so answers for
+// itself alone. For one that cannot, a child's damage hides its own, so it is named only when no child is damaged.
+template <class Node, class U, class Monitor>
+constexpr void report_node_damage(Node& node, const TreeKey& key, U& ui, std::size_t& position, Monitor& monitor) {
+    const std::size_t here = ++position;
+    bool damaged = false;
+    if constexpr (requires { { node.own_damage() } -> std::same_as<bool>; }) {
+        damaged = node.own_damage();
+    } else if constexpr (Composite<Node>) {
+        damaged = node.handle(key, ui, QueryDamage{}) && !broadcast(node.children(), key, ui, QueryDamage{});
+    } else {
+        damaged = node.handle(key, ui, QueryDamage{});
+    }
+    if (damaged) monitor.widget_damaged(DamagedWidget{class_name_of<Node>(), type_name_of<typename Node::tag>(), here});
+    if constexpr (Composite<Node>) {
+        std::apply([&](auto&... child) { (report_node_damage(child, key, ui, position, monitor), ...); }, node.children());
     }
 }
 
@@ -293,7 +314,7 @@ template <class Tag, class T>
     return Dynamic<Tag, T>{};
 }
 
-template <class B, class Root>
+template <class B, class Root, class Monitor>
 class ApplicationCore;
 
 // What widgets asked of the window system during a dispatch. ApplicationCore carries it out through
@@ -359,7 +380,7 @@ public:
     constexpr void request_close() noexcept { requests_.close = true; }
 
 private:
-    template <class B, class Root>
+    template <class B, class Root, class Monitor>
     friend class ApplicationCore;
     friend struct detail::TestAccess;
 
@@ -389,6 +410,14 @@ private:
     constexpr void clear_damage() {
         const TreeKey key{};
         detail::notify_all(children_, key, *this, ClearDamage{});
+    }
+
+    // Tells a monitor which widgets need a redraw, depth first. Only an application with a monitor instantiates this.
+    template <class Monitor>
+    constexpr void report_damage(Monitor& monitor) {
+        const TreeKey key{};
+        std::size_t position = 0;
+        std::apply([&](auto&... child) { (detail::report_node_damage(child, key, *this, position, monitor), ...); }, children_);
     }
 
     template <TextShaper Shaper>

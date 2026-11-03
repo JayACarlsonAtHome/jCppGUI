@@ -125,7 +125,7 @@ target_link_libraries(jgui_text
   PRIVATE jgui_warnings PkgConfig::FREETYPE PkgConfig::HARFBUZZ PkgConfig::FONTCONFIG)
 
 add_library(jgui_wayland STATIC src/wayland/wayland_backend.cpp src/wayland/untrusted.cpp)
-target_include_directories(jgui_wayland PUBLIC include)
+target_include_directories(jgui_wayland PUBLIC include PRIVATE src)
 target_link_libraries(jgui_wayland
   PUBLIC jgui_hardening PkgConfig::XKBCOMMON jgui_xdg_glue
   PRIVATE jgui_warnings)
@@ -133,6 +133,11 @@ target_link_libraries(jgui_wayland
 add_library(jgui_program STATIC src/program_arguments.cpp)
 target_include_directories(jgui_program PUBLIC include)
 target_link_libraries(jgui_program PUBLIC jgui_hardening PRIVATE jgui_warnings)
+
+# The redraw monitor's file: only a program that uses FileSink links it.
+add_library(jgui_monitor STATIC src/monitor/file_sink.cpp)
+target_include_directories(jgui_monitor PUBLIC include PRIVATE src)
+target_link_libraries(jgui_monitor PUBLIC jgui_hardening PRIVATE jgui_warnings)
 
 find_program(JGUI_BASH bash REQUIRED)
 
@@ -153,7 +158,7 @@ endif()
 
 # --- Demo ---
 add_executable(jcppgui-demo demo/demo.cpp)
-target_link_libraries(jcppgui-demo PRIVATE jgui_wayland jgui_text jgui_program jgui_warnings)
+target_link_libraries(jcppgui-demo PRIVATE jgui_wayland jgui_text jgui_program jgui_monitor jgui_warnings)
 
 # --- Tests ---
 enable_testing()
@@ -191,13 +196,13 @@ jgui_test(test_thread)
 jgui_test(test_callback_access)
 
 jgui_test(test_untrusted)
-target_include_directories(test_untrusted PRIVATE src/wayland)
+target_include_directories(test_untrusted PRIVATE src src/wayland)
 target_link_libraries(test_untrusted PRIVATE jgui_wayland jgui_program)
 
 # The real WaylandBackend against a scripted compositor, with no screen. Each scenario is one test.
 jgui_test_program(test_fake_compositor)
 target_include_directories(test_fake_compositor PRIVATE src src/wayland)
-target_link_libraries(test_fake_compositor PRIVATE jgui_wayland jgui_program)
+target_link_libraries(test_fake_compositor PRIVATE jgui_wayland jgui_program jgui_monitor)
 set(JGUI_FAKE_SCENARIOS
   happy_path keyboard_path
   configure_1x1 configure_0x0 configure_negative configure_int32_max configure_8192x1 configure_1x8192 configure_119x119 configure_flood
@@ -209,7 +214,8 @@ set(JGUI_FAKE_SCENARIOS
   bad_length_too_small bad_length_too_large bad_length_not_aligned unknown_opcode unknown_object
   truncated_then_gone truncated_during_connect truncated_during_first_frame
   arguments_too_short string_not_terminated keymap_with_no_descriptor
-  protocol_error_on_surface protocol_error_on_display protocol_error_on_nothing signal_storm)
+  protocol_error_on_surface protocol_error_on_display protocol_error_on_nothing signal_storm
+  monitor_real_frames monitor_never_release monitor_versus_none monitor_cannot_write)
 foreach(scenario ${JGUI_FAKE_SCENARIOS})
   add_test(NAME fake_${scenario} COMMAND test_fake_compositor ${scenario})
   set_tests_properties(fake_${scenario} PROPERTIES TIMEOUT 300
@@ -222,6 +228,14 @@ target_link_libraries(test_injection PRIVATE jgui_wayland)
 set_tests_properties(test_injection PROPERTIES TIMEOUT 300
   ENVIRONMENT "JGUI_TEST_KEYMAP=${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/seeds/keymap/minimal.xkb")
 
+# The redraw monitor. It runs the application and the demo's tree in static_assert, as test_constexpr does.
+jgui_test(test_redraw_monitor)
+target_include_directories(test_redraw_monitor PRIVATE src)
+target_link_libraries(test_redraw_monitor PRIVATE jgui_monitor)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(test_redraw_monitor PRIVATE -fconstexpr-steps=50000000)
+endif()
+
 jgui_test(test_fake_compositor_rules)
 target_include_directories(test_fake_compositor_rules PRIVATE src src/wayland)
 target_link_libraries(test_fake_compositor_rules PRIVATE jgui_wayland)
@@ -230,6 +244,8 @@ add_test(NAME fake_compositor_lists_match COMMAND test_fake_compositor --expect-
 
 add_test(NAME demo_smoke COMMAND jcppgui-demo --smoke)
 set_tests_properties(demo_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+add_test(NAME demo_smoke_redraw_monitor COMMAND jcppgui-demo --smoke --redraw-monitor WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(demo_smoke_redraw_monitor PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
 
 # --- Compile-fail tests: each case must fail with its diagnostic, and the same source must compile
 #     when the one mistake is left out, so a failure for an unrelated reason is caught. ---
@@ -286,6 +302,9 @@ jgui_compile_fail(caption_invalid_at_compile_time "consteval|immediate|constant 
 jgui_compile_fail(caption_too_long_at_compile_time "consteval|immediate|constant expression|not a constant")
 jgui_compile_fail(caption_unchecked_at_run_time "consteval|immediate|constant expression|not a constant|not usable")
 jgui_compile_fail(set_text_result_ignored "unused-result|nodiscard|warn_unused_result|unused return value")
+jgui_compile_fail(callback_reaches_monitor "no member|has no member")
+jgui_compile_fail(application_hides_monitor "private|inaccessible")
+jgui_compile_fail(monitor_not_in_the_umbrella "no template|FrameMonitor. is not a member|no member named|was not declared|has not been declared")
 jgui_compile_fail(warn_narrowing "conversion\\]")
 jgui_compile_fail(warn_sign_conversion "sign-conversion\\]")
 jgui_compile_fail(warn_shadow "shadow[-a-z]*\\]")

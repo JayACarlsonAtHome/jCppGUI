@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <chrono>
 #include <concepts>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -28,7 +29,10 @@
 
 #include "fake_compositor/harness.hpp"
 #include "help_ui.hpp"
+#include "jCppGUI/v001/redraw_monitor.hpp"
 #include "jCppGUI/v001/wayland_backend.hpp"
+#include "monitor_helpers.hpp"
+#include "test_access.hpp"
 
 namespace {
 
@@ -784,6 +788,115 @@ void start_signal_storm() {
     ::setitimer(ITIMER_REAL, &timer, nullptr);
 }
 
+// --- The redraw monitor, through the real backend ---
+
+// Real frames, each for its own reason, and a look at what they recorded and at the file, from inside the client.
+struct MonitorRealFrames {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool monitored = true;
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, on_help_x, on_help_y);
+            left_click(session, on_help_x, on_help_y);
+        } else if (idles == 2) {
+            session.configure(500, 400);
+        } else {
+            session.close_window();
+        }
+    }
+    template <class Monitor>
+    [[nodiscard]] static bool monitor_is_right(const Monitor& monitor, const std::string& text) {
+        const auto& frames = monitor.frames();
+        if (frames.size() < 3) return false;
+        if (frames[0].reason != jgui::RedrawReason::FirstFrame || frames[frames.size() - 1].reason != jgui::RedrawReason::Resize) return false;
+        if (frames[frames.size() - 1].area.size() != jgui::Size{jgui::Width{500}, jgui::Height{400}}) return false;
+        for (std::size_t i = 0; i < frames.size(); ++i) {
+            const jgui::FrameRow& row = frames[i];
+            if (row.frame_id != i + 1 || row.layout_ns <= 0 || row.acquire_ns <= 0 || row.paint_ns <= 0 || row.hash_ns <= 0 || row.present_ns <= 0) return false;
+        }
+        bool panel_named = false;
+        for (std::size_t i = 0; i < monitor.damage().size(); ++i) panel_named = panel_named || monitor.damage()[i].widget.class_name == "demo::HelpPanel";
+        if (!panel_named || monitor.error().has_value()) return false;
+        return jgui_test::blocks_all_close(text) && jgui_test::rows_of_section(text, "Frames").size() == frames.size() &&
+               jgui_test::rows_of_section(text, "Damage").size() == monitor.damage().size();
+    }
+};
+
+// The compositor holds every buffer. The fifth frame must wait, and each time it does is a row.
+struct MonitorNeverRelease {
+    static constexpr ClientEnd end = NeverRelease::end;
+    static constexpr bool monitored = true;
+    NeverRelease script{};
+    template <class Event>
+    void on(Session& session, const Event& what)
+        requires requires(NeverRelease& inner) { inner.on(session, what); }
+    {
+        script.on(session, what);
+    }
+    void finish(Session& session) const { script.finish(session); }
+    template <class Monitor>
+    [[nodiscard]] static bool monitor_is_right(const Monitor& monitor, const std::string& text) {
+        if (monitor.frames().size() != 4 || monitor.deferred_rows().size() == 0) return false;
+        for (std::size_t i = 0; i < monitor.deferred_rows().size(); ++i) {
+            const jgui::DeferredRow& row = monitor.deferred_rows()[i];
+            if (row.next_frame_id != 5 || row.reason != jgui::RedrawReason::Resize) return false;
+        }
+        return jgui_test::blocks_all_close(text) && jgui_test::rows_of_section(text, "Deferred").size() == monitor.deferred_rows().size();
+    }
+};
+
+// The client cannot write its file: a directory stands there. The window behaves as ever.
+struct MonitorCannotWrite {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool monitored = true;
+    static constexpr bool file_is_blocked = true;
+    void on(Session& session, const BufferCommitted& commit) {
+        session.release(commit.buffer);
+        session.close_window();
+    }
+    template <class Monitor>
+    [[nodiscard]] static bool monitor_is_right(const Monitor& monitor, const std::string&) {
+        return monitor.frames().size() == 1 && monitor.error().has_value() && monitor.error()->message.contains("not a regular file");
+    }
+};
+
+// What arrives at the compositor, for comparing a run with a monitor and one without.
+struct CommitRecord {
+    std::vector<std::vector<std::uint32_t>> pictures{};
+};
+
+// A window driven through the same things twice, with each commit's pixels read back from the buffer file. The
+// compositor is in this process, so the record stays here while the client is in a child.
+struct RecordCommits {
+    static constexpr ClientEnd end = ends_clean;
+    CommitRecord* record{};
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) {
+        if (const auto pixels = session.pixels_of(commit.buffer); pixels) record->pictures.emplace_back(pixels->begin(), pixels->end());
+        session.release(commit.buffer);
+    }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, on_help_x, on_help_y);
+            left_click(session, on_help_x, on_help_y);
+        } else if (idles == 2) {
+            pointer_motion(session, on_close_x, on_close_y);
+        } else if (idles == 3) {
+            session.configure(500, 400);
+        } else if (idles == 4) {
+            session.configure(500, 400);
+        } else {
+            session.close_window();
+        }
+    }
+};
+
 // --- The client: the real backend, under the demo's real tree ---
 
 [[nodiscard]] std::expected<void, jgui::Error> run_real_client(bool signal_storm, bool first_frame_only) {
@@ -797,7 +910,7 @@ void start_signal_storm() {
 }
 
 template <class Script>
-[[nodiscard]] bool run_one() {
+[[nodiscard]] bool run_plain_scenario() {
     constexpr bool signal_storm = std::same_as<Script, SignalStorm>;
     constexpr bool first_frame_only = requires { requires Script::first_frame_only; };
     GlobalSet globals{};
@@ -810,6 +923,84 @@ template <class Script>
         }
         return as_expected ? 0 : 1;
     });
+}
+
+[[nodiscard]] std::string read_text_file(const std::string& path) {
+    std::string text;
+    const UniqueFd fd{::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW)};
+    struct stat status {};
+    if (fd.get() < 0 || ::fstat(fd.get(), &status) != 0) return text;
+    text.resize(static_cast<std::size_t>(status.st_size));
+    if (!jgui::detail::read_at(fd.get(), std::span{text}, 0)) text.clear();
+    return text;
+}
+
+[[nodiscard]] std::expected<jgui::WaylandBackend, jgui::Error> test_backend() {
+    return jgui::WaylandBackend::create(jgui::WaylandOptions{
+        .title = "jCppGUI", .app_id = "jcppgui.test", .size = jgui::Size{jgui::Width{640}, jgui::Height{480}}});
+}
+
+// The real client with a real monitor, which writes beside the socket, in the scenario's private directory.
+template <class Script>
+[[nodiscard]] int run_monitored_client() {
+    const char* found = std::getenv("XDG_RUNTIME_DIR");
+    if (found == nullptr) return 1;
+    const std::string directory{found};
+    if constexpr (requires { requires Script::file_is_blocked; }) {
+        if (!std::filesystem::create_directory(directory + "/redraw_monitor.jtext")) return 1;
+    }
+    auto backend = test_backend();
+    if (!backend) return 1;
+    auto app = jgui::make_application(std::move(*backend), demo::make_ui(), jgui::FrameMonitor<>{jgui::SteadyClock{}, jgui::FileSink{directory}});
+    if (!app) return 1;
+    if (!ended_as_expected(Script::end, app->run())) return 1;
+    if (!Script::monitor_is_right(jgui_test::monitor(*app), read_text_file(directory + "/redraw_monitor.jtext"))) {
+        std::cerr << "the monitor did not record what happened\n";
+        return 1;
+    }
+    return 0;
+}
+
+// The same script against a client with no monitor and one with: the same frames, pixel for pixel, on the wire.
+[[nodiscard]] bool run_monitor_versus_none() {
+    CommitRecord without;
+    CommitRecord with;
+    const bool plain = run_scenario(RecordCommits{.record = &without}, GlobalSet{}, [] {
+        return ended_as_expected(RecordCommits::end, run_real_client(false, false)) ? 0 : 1;
+    });
+    const bool watched = run_scenario(RecordCommits{.record = &with}, GlobalSet{}, [] {
+        const char* found = std::getenv("XDG_RUNTIME_DIR");
+        if (found == nullptr) return 1;
+        auto backend = test_backend();
+        if (!backend) return 1;
+        auto app = jgui::make_application(std::move(*backend), demo::make_ui(), jgui::FrameMonitor<>{jgui::SteadyClock{}, jgui::FileSink{found}});
+        if (!app) return 1;
+        return ended_as_expected(RecordCommits::end, app->run()) ? 0 : 1;
+    });
+    std::cout << "commits without a monitor: " << without.pictures.size() << ", with: " << with.pictures.size() << '\n';
+    if (!plain || !watched || without.pictures.size() < 4) return false;
+    if (without.pictures.size() != with.pictures.size()) {
+        std::cerr << "a monitor changed how many frames reach the compositor\n";
+        return false;
+    }
+    if (without.pictures != with.pictures) {
+        std::cerr << "a monitor changed the pixels that reach the compositor\n";
+        return false;
+    }
+    return true;
+}
+
+struct MonitorVersusNone {};
+
+template <class Script>
+[[nodiscard]] bool run_one() {
+    if constexpr (std::same_as<Script, MonitorVersusNone>) {
+        return run_monitor_versus_none();
+    } else if constexpr (requires { requires Script::monitored; }) {
+        return run_scenario(Script{}, GlobalSet{}, [] { return run_monitored_client<Script>(); });
+    } else {
+        return run_plain_scenario<Script>();
+    }
 }
 
 template <class Script>
@@ -870,6 +1061,10 @@ constexpr auto scenarios = std::tuple{
     Named<ProtocolErrorOnDisplay>{"protocol_error_on_display"},
     Named<ProtocolErrorOnNothing>{"protocol_error_on_nothing"},
     Named<SignalStorm>{"signal_storm"},
+    Named<MonitorRealFrames>{"monitor_real_frames"},
+    Named<MonitorNeverRelease>{"monitor_never_release"},
+    Named<MonitorVersusNone>{"monitor_versus_none"},
+    Named<MonitorCannotWrite>{"monitor_cannot_write"},
 };
 
 }  // namespace

@@ -12,6 +12,8 @@
 - The core logic run in `static_assert`, including the demo tree from events to pixels.
 - Compile-fail tests that prove the compiler rejects the mistakes it is meant to catch.
 - The real `WaylandBackend` against a scripted compositor, with no screen, over a real socket.
+- A redraw monitor for development, `jcppgui-demo --redraw-monitor`, which records each frame to a jText file. A file from a live
+  `--smoke` run passed jText's own parser and validator, in a throwaway check that is not part of this repository.
 
 ## What is tested through the real backend
 
@@ -39,6 +41,17 @@ ack before a commit, no write to a held buffer, no attach of a held buffer, ids,
 from every proxy-making call and every refused listener, the `EINVAL` fallback of `memfd_create`, and failing reservations and seals.
 It also does a real short write and a real short read, under `RLIMIT_FSIZE`, and checks the compositor's request numbers against
 libwayland's. `tests/fuzz/fuzz_backend.cpp` fuzzes the backend's input path through a real socket.
+
+## The redraw monitor
+
+`tests/test_redraw_monitor.cpp` runs it with a test clock in `static_assert`, through the application and the demo's tree, and at run time
+with the real font and the real file: a directory, a symlink, a dangling symlink, a pipe, a missing or unwritable directory and a real
+failed write under `RLIMIT_FSIZE`, each with the program going on. `tests/test_fake_compositor.cpp` runs it through the real backend, and shows the
+same frames, pixel for pixel, reach the compositor with a monitor and without.
+
+Not shown: a long interactive session against a real compositor, and how long writing takes with a full 65536 rows. Nothing in this repository
+checks the file with jText's validator, because it does not depend on jText. A crash loses more than about a second after a quiet
+time, and a system crash may lose more than that: see `docs/Architecture.md`.
 
 ## What has not been shown
 

@@ -2,7 +2,8 @@
 // Purpose: The event loop, split in two. ApplicationCore holds all the logic: it owns the backend and
 //          the tree by value, sends events into the tree, carries out what widgets ask of the window
 //          system, and redraws only when damaged. It is constexpr, so it can be run whole in a static_assert. Application
-//          adds only what needs the system: the real font engine and the UI-thread check.
+//          adds only what needs the system: the real font engine and the UI-thread check. A monitor, chosen by type,
+//          is told what happens at named points: the core itself never reads a clock or a file.
 #pragma once
 
 #include <cstdint>
@@ -13,29 +14,28 @@
 #include <utility>
 
 #include "backend.hpp"
+#include "redraw_points.hpp"
 #include "text.hpp"
 #include "tree.hpp"
 
 namespace jgui::inline v001 {
 
-template <class B, class Root>
+template <class B, class Root, class Monitor = NoMonitor>
 class ApplicationCore {
     static_assert(Backend<B>, "this type is not a backend");
+    static_assert(RedrawMonitor<Monitor>, "this type is not a redraw monitor");
 
 public:
-    constexpr ApplicationCore(B backend, Root root)
-        : backend_{std::move(backend)}, root_{std::move(root)}, painting_{std::make_unique<detail::FrameLedger>()} {}
+    constexpr ApplicationCore(B backend, Root root, Monitor monitor = Monitor{})
+        : backend_{std::move(backend)}, root_{std::move(root)}, painting_{std::make_unique<detail::FrameLedger>()}, monitor_{std::move(monitor)} {}
 
     // Runs until the window is closed or something fails. Sleeps in the backend's wait.
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> run(const Shaper& text) {
         const Entry entry{*this};
-        while (!closed_) {
-            if (auto result = settle(text); !result) return std::unexpected(std::move(result.error()));
-            if (closed_) break;
-            if (auto result = backend_.wait(*this); !result) return std::unexpected(std::move(result.error()));
-        }
-        return {};
+        auto result = run_until_closed(text);
+        monitor_.finish();
+        return result;
     }
 
     // Handles what is already queued, and draws if that caused damage. Never sleeps.
@@ -50,14 +50,20 @@ public:
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> present_first_frame(const Shaper& text) {
         const Entry entry{*this};
-        while (frames_ == 0) {
-            if (auto result = settle(text); !result) return std::unexpected(std::move(result.error()));
-            if (frames_ != 0) break;
-            if (closed_) return make_error(ErrorCode::Protocol, "the window closed before its first frame");
-            if (auto result = backend_.wait(*this); !result) return std::unexpected(std::move(result.error()));
-        }
-        return backend_.sync();
+        auto result = wait_for_first_frame(text);
+        monitor_.finish();
+        return result;
     }
+
+    // For a program that runs its own loop through process_pending: a monitor's last word. run and
+    // present_first_frame do this by themselves.
+    constexpr void finish_monitor() {
+        const Entry entry{*this};
+        monitor_.finish();
+    }
+
+    // Why a monitor stopped, for the program to report at exit. It gives out the reason and never the monitor.
+    [[nodiscard]] constexpr std::optional<Error> monitor_error() const { return monitor_.error(); }
 
     [[nodiscard]] constexpr Root& ui() noexcept { return root_; }
     [[nodiscard]] constexpr bool closed() const noexcept { return closed_; }
@@ -84,6 +90,27 @@ private:
     private:
         ApplicationCore& core_;
     };
+
+    template <TextShaper Shaper>
+    [[nodiscard]] constexpr std::expected<void, Error> run_until_closed(const Shaper& text) {
+        while (!closed_) {
+            if (auto result = settle(text); !result) return std::unexpected(std::move(result.error()));
+            if (closed_) break;
+            if (auto result = backend_.wait(*this); !result) return std::unexpected(std::move(result.error()));
+        }
+        return {};
+    }
+
+    template <TextShaper Shaper>
+    [[nodiscard]] constexpr std::expected<void, Error> wait_for_first_frame(const Shaper& text) {
+        while (frames_ == 0) {
+            if (auto result = settle(text); !result) return std::unexpected(std::move(result.error()));
+            if (frames_ != 0) break;
+            if (closed_) return make_error(ErrorCode::Protocol, "the window closed before its first frame");
+            if (auto result = backend_.wait(*this); !result) return std::unexpected(std::move(result.error()));
+        }
+        return backend_.sync();
+    }
 
     // --- The event sink, which only a backend's event queue calls: on the UI thread, outside any C callback ---
 
@@ -135,9 +162,17 @@ private:
         if (asked.close) on(CloseEvent{});
     }
 
-    // Reports a failure recorded during delivery, then draws if anything is damaged.
+    // Reports a failure recorded during delivery, then draws if anything is damaged. Whatever came of it, nothing
+    // is being measured now, so this is when a monitor may do its own work.
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> settle(const Shaper& text) {
+        auto result = settle_damage(text);
+        monitor_.between_frames();
+        return result;
+    }
+
+    template <TextShaper Shaper>
+    [[nodiscard]] constexpr std::expected<void, Error> settle_damage(const Shaper& text) {
         if (failure_) {
             Error error = std::move(*failure_);
             failure_.reset();
@@ -145,8 +180,17 @@ private:
         }
         if (closed_ || !have_size_) return {};
         if (!damaged_ && !root_.damaged()) return {};
-        if (!backend_.can_present(root_.size())) return {};
+        if (!backend_.can_present(root_.size())) {
+            monitor_.deferred(redraw_reason(), root_.size());
+            return {};
+        }
         return draw(text);
+    }
+
+    // Asks nothing of the tree beyond what settle already knows: a monitor must not change what the tree is asked.
+    [[nodiscard]] constexpr RedrawReason redraw_reason() const noexcept {
+        if (frames_ == 0) return RedrawReason::FirstFrame;
+        return damaged_ ? RedrawReason::Resize : RedrawReason::WidgetDamage;
     }
 
     // Every canvas of this frame stops working when this returns, before the pixels leave for the display.
@@ -163,13 +207,20 @@ private:
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> draw(const Shaper& text) {
         const Rect whole{Point{}, root_.size()};
+        monitor_.frame_begins(redraw_reason(), whole);
+        if constexpr (Monitor::watches) root_.report_damage(monitor_);
+        monitor_.phases_begin();
         if (auto laid_out = root_.layout(whole, text); !laid_out) return std::unexpected(std::move(laid_out.error()));
+        monitor_.laid_out();
         auto frame = backend_.acquire_frame(root_.size());
         if (!frame) return std::unexpected(std::move(frame.error()));
         auto pixels = backend_.frame_pixels(*frame);
         if (!pixels) return std::unexpected(std::move(pixels.error()));
+        monitor_.acquired();
         paint(*pixels, whole);
+        monitor_.painted(*pixels);
         if (auto presented = backend_.present(std::move(*frame), whole); !presented) return std::unexpected(std::move(presented.error()));
+        monitor_.presented();
         root_.clear_damage();
         damaged_ = false;
         ++frames_;
@@ -186,18 +237,23 @@ private:
     bool closed_{};
     bool damaged_{};
     bool entered_{};
+    // Last, and taking no room when it is empty, so a core with no monitor is as it would be with no member at all.
+    [[no_unique_address]] Monitor monitor_;
 };
 
 template <Backend B, class Root>
 ApplicationCore(B, Root) -> ApplicationCore<B, Root>;
 
-template <Backend B, class Root>
+template <Backend B, class Root, class Monitor>
+ApplicationCore(B, Root, Monitor) -> ApplicationCore<B, Root, Monitor>;
+
+template <Backend B, class Root, class Monitor = NoMonitor>
 class Application {
 public:
-    [[nodiscard]] static std::expected<Application, Error> create(B backend, Root root) {
+    [[nodiscard]] static std::expected<Application, Error> create(B backend, Root root, Monitor monitor = Monitor{}) {
         auto text = TextEngine::create();
         if (!text) return std::unexpected(std::move(text.error()));
-        return Application{std::move(backend), std::move(root), std::move(*text)};
+        return Application{std::move(backend), std::move(root), std::move(monitor), std::move(*text)};
     }
 
     [[nodiscard]] std::expected<void, Error> run() {
@@ -211,6 +267,14 @@ public:
     [[nodiscard]] std::expected<void, Error> present_first_frame() {
         check_thread();
         return core_.present_first_frame(text_);
+    }
+    void finish_monitor() {
+        check_thread();
+        core_.finish_monitor();
+    }
+    [[nodiscard]] std::optional<Error> monitor_error() const {
+        check_thread();
+        return core_.monitor_error();
     }
 
     [[nodiscard]] Root& ui() {
@@ -233,21 +297,21 @@ public:
 private:
     friend struct detail::TestAccess;
 
-    Application(B backend, Root root, TextEngine text)
-        : core_{std::move(backend), std::move(root)}, text_{std::move(text)}, owner_{std::this_thread::get_id()} {}
+    Application(B backend, Root root, Monitor monitor, TextEngine text)
+        : core_{std::move(backend), std::move(root), std::move(monitor)}, text_{std::move(text)}, owner_{std::this_thread::get_id()} {}
 
     void check_thread() const noexcept {
         require(std::this_thread::get_id() == owner_, "Application used from a thread that does not own it");
     }
 
-    ApplicationCore<B, Root> core_;
+    ApplicationCore<B, Root, Monitor> core_;
     TextEngine text_;
     std::thread::id owner_;
 };
 
-template <class B, class Root>
-[[nodiscard]] std::expected<Application<B, Root>, Error> make_application(B backend, Root root) {
-    return Application<B, Root>::create(std::move(backend), std::move(root));
+template <class B, class Root, class Monitor = NoMonitor>
+[[nodiscard]] std::expected<Application<B, Root, Monitor>, Error> make_application(B backend, Root root, Monitor monitor = Monitor{}) {
+    return Application<B, Root, Monitor>::create(std::move(backend), std::move(root), std::move(monitor));
 }
 
 }  // namespace jgui::inline v001

@@ -57,7 +57,7 @@ Anything that is part of the window is a class template; system-level classes wi
 helper in `src/wayland/`, which casts straight back to the exact type it was registered with. The
 pointer never leaves that helper. The exception ends when our own Wayland client replaces libwayland,
 which is the step after this prototype. It stays the only `void*` we write: `pread` and `pwrite` take
-typed pointers that convert at the call, in `src/wayland/file_io.hpp` only, and nothing casts back.
+typed pointers that convert at the call, in `src/file_io.hpp` only, and nothing casts back.
 
 This design is proven by a prototype compiled with g++ 16 and clang 22 under ASan and UBSan:
 tag lookup, generic callbacks, self-destruction during a callback, and compile-time rejection of a

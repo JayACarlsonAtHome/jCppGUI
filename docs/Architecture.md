@@ -46,7 +46,8 @@ Non-`constexpr` code is limited to what needs the OS or a C library:
 |---|---|
 | `src/wayland/wayland_impl.hpp`, `wayland_backend.cpp` | libwayland, sockets, `poll`. Every C call that can fail is behind a template parameter, `Api`, so a test can make it fail, with no test branch here |
 | `load_keymap`, `create_buffer_file`, `UniqueFd` in `src/wayland/untrusted` | `close`, `fstat`, `memfd_create`, `posix_fallocate`, xkbcommon. The checks on values are `constexpr` |
-| `read_at`, `write_at` in `src/wayland/file_io.hpp` | `pread`, `pwrite`. Their loop and arithmetic are `constexpr` and tested with made-up system calls |
+| `read_at`, `write_at` in `src/file_io.hpp` | `pread`, `pwrite`. Their loop and arithmetic are `constexpr` and tested with made-up system calls |
+| `FileSink` in `src/monitor/file_sink.cpp`, `SteadyClock` | `openat`, `fstat`, `fstatat`, `unlinkat`, `renameat`, the clocks. `FrameMonitor` is `constexpr` over a clock and a sink given as template parameters |
 | `TextEngine` in `src/text/text.cpp` | fontconfig, HarfBuzz, FreeType. Validation, rounding and glyph copying are `constexpr` |
 | `Application` | `std::this_thread::get_id`, and it owns a `TextEngine` |
 
@@ -89,8 +90,9 @@ The arithmetic is only what means something: `Left + Width` is `Right`, `Right -
 past the last pixel, so `left_after(Right)` and `top_after(Bottom)` name where the next thing starts, which is also how
 an edge moves by a length: `left_after(left + padding)`. Edges of different kinds cannot be compared or added.
 
-The number can be read only by `PixelBuffer`, `Canvas`, `TextRun` and `Rect`, which index memory or do the sums in 64 bits, and
-in `src/` through `detail::GeometryAccess`, for libwayland and the font libraries. These stay plain `int32_t`, because each
+The number can be read only by `PixelBuffer`, `Canvas`, `TextRun` and `Rect`, which index memory or do the sums in 64 bits,
+in `src/` through `detail::GeometryAccess`, for libwayland and the font libraries, and by `detail::RedrawNumbers`, only to write it in the
+redraw monitor's file. These stay plain `int32_t`, because each
 is a bare length with no axis, or is not a window position at all: the fields of a `FrameMetrics` type, which `WindowFrame`
 turns into typed values in one place, `max_buffer_side`, a buffer's stride in bytes,.
 
@@ -197,6 +199,41 @@ offers: `Dynamic::create`, `destroy`, `find`, `show`, `hide`, `captured` and `fo
 `children()` on a `MenuBar` or `WindowFrame`, which gives only the same widgets. A pointer from `Dynamic::find` can be kept past
 the item's life, as any C++ pointer can. A callback can loop for ever, recurse through `send` until the stack runs out, or
 call `std::exit`. Through a pointer to its `Application`: `ui()`, `closed()`, `frames()` and `size()`, which are harmless.
+
+## The redraw monitor
+
+A development tool, chosen by type: `ApplicationCore<B, Root, Monitor = NoMonitor>`, and likewise `Application` and `make_application`.
+`NoMonitor` is empty and every point on it does nothing, and it is held with `[[no_unique_address]]`, so a core without a monitor is the
+size it would be with no such member, as `tests/test_redraw_monitor.cpp` shows against a struct of the same members. `FrameMonitor` is in
+`redraw_monitor.hpp`, which `jgui.hpp` does not include, and a program using its default file links `jgui_monitor`.
+
+**The core never reads a clock or a file.** It tells the monitor what happens at named points, listed with the `RedrawMonitor` concept. It
+asks the tree nothing extra for this except, with a monitor that watches, the damage walk below. `FrameMonitor<Clock, Sink>` owns the time and
+the output, so the same logic and the same file text run in `static_assert` with a test clock and a sink in memory.
+
+**One file, four sections.** `redraw_monitor.jtext` is a whole jText file in the full profile, written by a small writer of our own. It does not link the jText library.
+
+| Section | One row per | Holds |
+|---|---|---|
+| `Run` | run | the label, the budget, the row limit, how many rows of each kind there were and were dropped, rows refused, writes, the last write's time, whether the run ended |
+| `Frames` | frame presented | id, start, reason, drawn area, nanoseconds for layout, acquire, paint, hash, present and total, the previous file write's time, `Slow`, `SamePixels` |
+| `Damage` | damaged widget in a frame | record id, frame id, class name, tag, position in the tree |
+| `Deferred` | time there was damage and `can_present` said no | record id, the frame waiting, time, reason, size |
+
+- `total` is the sum of the four phases, so what the monitor itself adds is not in it: not the hash, and no file write. `Slow` compares that to the budget.
+- `SamePixels` is a 64-bit FNV-1a of the pixels equal to the previous frame's, at the same size. The monitor hashes inside its call, is given the pixels only for that call, and keeps only the number.
+- The reason is the first that holds: `FirstFrame`, `Resize`, `WidgetDamage`. It comes from what the core already knows.
+- **Damage** is found by a compile-time walk of the tree before damage is cleared, and before the timing starts. Names come from `std::source_location` in a `consteval` function, checked on g++ and clang++. Only the class's name without its template arguments is kept, because those can be very long and on clang++ can hold a source path, and the tag's name beside it. The two compilers print inline namespaces and anonymous namespaces differently.
+- A `Dynamic`, or a widget holding one, is one row, however many items are in it: its items have no place in the compile-time tree. A composite that does not offer `own_damage()` is named only when none of its children is damaged, because their damage hides its own. `WindowFrame` offers it.
+- A frame that fails part way is not recorded.
+
+**Writing** happens only between frames, on the UI thread, at most once per interval, default one second, and once at the end of `run` or `present_first_frame`. A program with its own `process_pending` loop calls `finish_monitor`. Each write is a whole new file, renamed over the old, so a reader always sees a whole valid file. Rows are bounded, 65536 of each kind by default, keeping the newest, and each section's drop count is in `Run`. So a full monitor writes some megabytes each second. A failed write stops all further writing and nothing else. `monitor_error()` gives the reason for the program to report at exit, and the monitor itself is never given out.
+
+**The writer's limits.** The format has no escapes. A line uses `▮▌`, and falls back as the spec says on a character the data holds. A value with a control character, invalid UTF-8 or space around it cannot read back as itself, so its row is left out and counted, and a run label like that is dropped and counted. No value can break the file's structure.
+
+**The limits of "a crash loses about a second".** That holds while frames keep coming. The loop sleeps with no timer, so rows recorded just before a quiet time wait for the next event, and a crash in the quiet time loses them. The file is not flushed to the disk with `fsync`, so a crash of the whole system can lose more.
+
+The file's place is the working directory when the monitor is made, as the application's base directory, or a directory given to `FileSink`. See `docs/SECURITY.md`.
 
 ## Frames
 

@@ -22,14 +22,23 @@ struct TestAccess {
     [[nodiscard]] static constexpr std::int32_t number(Extent<Tag> value) noexcept {
         return value.value_;
     }
-    template <class B, class Root>
-    [[nodiscard]] static constexpr B& backend(ApplicationCore<B, Root>& core) noexcept {
+    template <class B, class Root, class Monitor>
+    [[nodiscard]] static constexpr B& backend(ApplicationCore<B, Root, Monitor>& core) noexcept {
         return core.backend_;
     }
-    template <class B, class Root>
-    [[nodiscard]] static B& backend(Application<B, Root>& application) {
+    template <class B, class Root, class Monitor>
+    [[nodiscard]] static B& backend(Application<B, Root, Monitor>& application) {
         application.check_thread();
         return backend(application.core_);
+    }
+    template <class B, class Root, class Monitor>
+    [[nodiscard]] static constexpr Monitor& monitor(ApplicationCore<B, Root, Monitor>& core) noexcept {
+        return core.monitor_;
+    }
+    template <class B, class Root, class Monitor>
+    [[nodiscard]] static Monitor& monitor(Application<B, Root, Monitor>& application) {
+        application.check_thread();
+        return monitor(application.core_);
     }
     template <class Value>
     [[nodiscard]] static constexpr Value wire(std::uint32_t value) noexcept {
@@ -111,6 +120,12 @@ constexpr auto layout(W& window, jgui::Rect area, const Shaper& text) {
 template <class W>
 constexpr void paint(W& window, jgui::Canvas& canvas) {
     jgui::detail::TestAccess::paint(window, canvas);
+}
+
+// What an application's monitor recorded. Nothing outside the tests can reach it.
+template <class App>
+[[nodiscard]] constexpr auto& monitor(App& app) {
+    return jgui::detail::TestAccess::monitor(app);
 }
 
 // A serial, as a backend would hand one over. Nothing else can make one.

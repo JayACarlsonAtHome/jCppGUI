@@ -29,9 +29,9 @@ match cxxDeleteExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|
 
 # Calls that move raw bytes, outside the named helpers
 match callExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), callee(functionDecl(hasAnyName("::read", "::write", "::recv", "::send", "::fread", "::fwrite", "::readv", "::writev", "::recvfrom", "::sendto", "::sendfile", "::memcpy", "::memmove", "::mmap", "::munmap", "::mprotect"))))
-match callExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), callee(functionDecl(hasAnyName("::pread", "::pwrite", "::pread64", "::pwrite64"))), unless(isExpansionInFileMatching("src/wayland/file_io[.]hpp$")))
+match callExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), callee(functionDecl(hasAnyName("::pread", "::pwrite", "::pread64", "::pwrite64"))), unless(isExpansionInFileMatching("src/file_io[.]hpp$")))
 match callExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), callee(functionDecl(hasAnyName("::sendmsg", "::recvmsg"))), unless(isExpansionInFileMatching("tests/fake_compositor/socket_io[.]hpp$")))
 
 # A typed pointer quietly becoming untyped, outside the named helpers. tests/test_untrusted.cpp frees the text
 # xkbcommon hands back, which is the one std::free in the repository.
-match implicitCastExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), hasImplicitDestinationType(hasCanonicalType(pointsTo(voidType()))), unless(isExpansionInFileMatching("src/wayland/trampoline[.]hpp$")), unless(isExpansionInFileMatching("src/wayland/file_io[.]hpp$")), unless(isExpansionInFileMatching("tests/fake_compositor/socket_io[.]hpp$")), unless(isExpansionInFileMatching("tests/test_untrusted[.]cpp$")))
+match implicitCastExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), hasImplicitDestinationType(hasCanonicalType(pointsTo(voidType()))), unless(isExpansionInFileMatching("src/wayland/trampoline[.]hpp$")), unless(isExpansionInFileMatching("src/file_io[.]hpp$")), unless(isExpansionInFileMatching("tests/fake_compositor/socket_io[.]hpp$")), unless(isExpansionInFileMatching("tests/test_untrusted[.]cpp$")))

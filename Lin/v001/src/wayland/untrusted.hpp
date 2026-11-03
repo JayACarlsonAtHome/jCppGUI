@@ -21,40 +21,13 @@
 #include <xkbcommon/xkbcommon.h>
 
 #include "../c_resource.hpp"
+#include "file_io.hpp"
 #include "jCppGUI/v001/canvas.hpp"
 #include "jCppGUI/v001/error.hpp"
 #include "jCppGUI/v001/geometry.hpp"
 #include "jCppGUI/v001/text.hpp"
 
 namespace jgui::inline v001::detail {
-
-// A file descriptor closed by RAII.
-class UniqueFd {
-public:
-    UniqueFd() noexcept = default;
-    explicit UniqueFd(int fd) noexcept : fd_{fd} {}
-    UniqueFd(UniqueFd&& other) noexcept : fd_{std::exchange(other.fd_, -1)} {}
-    UniqueFd& operator=(UniqueFd&& other) noexcept {
-        if (this != &other) {
-            reset();
-            fd_ = std::exchange(other.fd_, -1);
-        }
-        return *this;
-    }
-    UniqueFd(const UniqueFd&) = delete;
-    UniqueFd& operator=(const UniqueFd&) = delete;
-    ~UniqueFd() { reset(); }
-
-    [[nodiscard]] int get() const noexcept { return fd_; }
-
-private:
-    void reset() noexcept {
-        // A failed close leaves nothing to do: the descriptor must not be closed again, and no write depends on it.
-        if (fd_ >= 0) static_cast<void>(::close(fd_));
-        fd_ = -1;
-    }
-    int fd_{-1};
-};
 
 using XkbContext = CResource<xkb_context, xkb_context_unref>;
 using XkbKeymap = CResource<xkb_keymap, xkb_keymap_unref>;

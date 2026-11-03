@@ -45,6 +45,13 @@ auto ui = jgui::window(jgui::window_frame(
 
 Callbacks are generic lambdas with an explicit `-> void`. `docs/Architecture.md` explains why.
 
+## Watching redraws
+
+`./build/gcc-debug/jcppgui-demo --redraw-monitor` runs the demo with a development tool that records each frame to `redraw_monitor.jtext`
+in the working directory: why it was drawn, how long each part took, which widgets asked for it, and whether it changed any pixel.
+A program opts in by passing a `jgui::FrameMonitor<>` to `make_application`, from `jCppGUI/v001/redraw_monitor.hpp`, and linking `jgui_monitor`.
+Without one, the toolkit has no monitor in it. See `docs/Architecture.md`.
+
 ## Documents
 
 - `docs/Goals.md`: purpose and priorities.

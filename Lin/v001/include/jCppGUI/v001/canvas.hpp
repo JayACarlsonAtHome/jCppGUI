@@ -91,6 +91,22 @@ public:
 
     [[nodiscard]] constexpr Size size() const noexcept { return size_; }
 
+    // A 64-bit FNV-1a over the pixels, a whole pixel at a time, row by row, so the gaps between rows do not count. Each
+    // step can be undone, so two buffers of one size that differ in a single pixel never hash alike.
+    [[nodiscard]] constexpr std::uint64_t content_hash() const {
+        std::uint64_t hash = 0xCBF29CE484222325ULL;
+        const auto columns = static_cast<std::size_t>(size_.width().value_);
+        const auto rows = static_cast<std::size_t>(size_.height().value_);
+        const auto stride = static_cast<std::size_t>(stride_bytes_ / 4);
+        for (std::size_t row = 0; row < rows; ++row) {
+            for (const std::uint32_t pixel : pixels_.subspan(row * stride, columns)) {
+                hash ^= pixel;
+                hash *= 0x100000001B3ULL;
+            }
+        }
+        return hash;
+    }
+
 private:
     friend class Canvas;
 

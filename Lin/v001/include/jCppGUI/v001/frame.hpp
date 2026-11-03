@@ -113,6 +113,8 @@ public:
     [[nodiscard]] constexpr const children_type& children() const noexcept { return children_; }
     [[nodiscard]] constexpr bool close_hovered() const noexcept { return close_hover_; }
     [[nodiscard]] constexpr bool close_armed() const noexcept { return close_armed_; }
+    // Whether the frame itself needs a redraw, whatever its content does.
+    [[nodiscard]] constexpr bool own_damage() const noexcept { return damaged_; }
 
     template <TextShaper Shaper>
     constexpr std::expected<Rect, Error> layout(const TreeKey& key, Rect area, const Shaper& text) {
