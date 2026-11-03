@@ -48,7 +48,7 @@ Non-`constexpr` code is limited to what needs the OS or a C library:
 | `load_keymap`, `create_buffer_file`, `UniqueFd` in `src/wayland/untrusted` | `close`, `fstat`, `memfd_create`, `posix_fallocate`, xkbcommon. The checks on values are `constexpr` |
 | `read_at`, `write_at` in `src/file_io.hpp` | `pread`, `pwrite`. Their loop and arithmetic are `constexpr` and tested with made-up system calls |
 | `read_jtext_file` in `src/jtext/read_file.cpp` | `open`, `fstat`, `fstatat`. Parsing what it read is `constexpr` |
-| `FileSink` in `src/monitor/file_sink.cpp`, `SteadyClock` | `openat`, `fstat`, `fstatat`, `unlinkat`, `renameat`, the clocks. `FrameMonitor` is `constexpr` over a clock and a sink given as template parameters |
+| `FileSink` in `src/monitor/file_sink.cpp`, `SteadyClock` | `openat`, `fstat`, `fstatat`, `unlinkat`, `renameat`, the clocks. `FrameMonitor` and `SettingsRecorder` are `constexpr` over a clock and a sink given as template parameters |
 | `TextEngine` in `src/text/text.cpp` | fontconfig, HarfBuzz, FreeType. Validation, rounding and glyph copying are `constexpr` |
 | `Application` | `std::this_thread::get_id`, and it owns a `TextEngine` |
 
@@ -94,8 +94,8 @@ past the last pixel, so `left_after(Right)` and `top_after(Bottom)` name where t
 an edge moves by a length: `left_after(left + padding)`. Edges of different kinds cannot be compared or added.
 
 The number can be read only by `PixelBuffer`, `Canvas`, `TextRun` and `Rect`, which index memory or do the sums in 64 bits,
-in `src/` through `detail::GeometryAccess`, for libwayland and the font libraries, by `detail::RedrawNumbers`, only to write it in the
-redraw monitor's file, and by `detail::CellNumbers`, defined only in `cell_text.hpp`, only to show it as a cell's text. `tests/check_source_rules.sh` keeps each to its file.
+in `src/` through `detail::GeometryAccess`, for libwayland and the font libraries, by `detail::FileNumbers`, defined in `jtext_writer.hpp`, only to write it in a
+jText file, and by `detail::CellNumbers`, defined only in `cell_text.hpp`, only to show it as a cell's text. `tests/check_source_rules.sh` keeps each to its file.
 A length can also be multiplied and divided: `repeated_extent`, `whole_units_in` and `rescaled_extent` give a length or a count, in 64 bits and saturating, so nothing above the backend line reads the number to do those sums. `whole_units_in(x, Width{1})` does give the number as a count, and no rule stops that. These stay plain `int32_t`, because each
 is a bare length with no axis, or is not a window position at all: the fields of a `FrameMetrics` type, which `WindowFrame`
 turns into typed values in one place, `max_buffer_side`, a buffer's stride in bytes,.
@@ -219,7 +219,7 @@ size it would be with no such member, as `tests/test_redraw_monitor.cpp` shows a
 asks the tree nothing extra for this except, with a monitor that watches, the damage walk below. `FrameMonitor<Clock, Sink>` owns the time and
 the output, so the same logic and the same file text run in `static_assert` with a test clock and a sink in memory.
 
-**One file, four sections.** `redraw_monitor.jtext` is a whole jText file in the full profile, written by a small writer of our own. It does not link the jText library.
+**One file, four sections.** `redraw_monitor.jtext` is a whole jText file in the full profile, written by a small writer of our own in `jtext_writer.hpp`. It does not link the jText library.
 
 | Section | One row per | Holds |
 |---|---|---|
@@ -244,6 +244,41 @@ the output, so the same logic and the same file text run in `static_assert` with
 The file's place is the application's base directory (see below), or a directory given to `FileSink`. With no base directory to be found, the monitor refuses: the program carries on, nothing is written, and the reason is readable at exit. See `docs/SECURITY.md`.
 
 **The application's base directory** is the `vNNN` folder that contains the running executable, so for `Lin/v001/build/gcc-release/jcppgui-demo` it is `Lin/v001`, and the file is `Lin/v001/redraw_monitor.jtext`. `application_base_from`, in `base_directory.hpp`, is the rule as a pure function: from the executable's parent folder upward, the nearest name that is exactly `v` and three digits, and the file name never counts. It refuses a relative or empty path and a path with no such folder, and also a repeated or trailing slash and a `.` or `..` name, which the kernel never reports and which walking up by text could get wrong. `application_base_directory` applies it to the kernel's `proc/self/exe` link. It never looks at `argv[0]`, the environment or where the program was started from. So a symbolic link to the executable finds the base of what it leads to, and a copy or a hard link stands for itself. An executable replaced or removed while running is refused, as is one whose real name ends the same way as the kernel's ` (deleted)` mark.
+
+## The settings record
+
+**It is a record, and nothing is built from it.** The application creates what it needs in code, as it always has, and then writes down what it created, as a way to look things up, report, and check that things are working. No program but the viewer reads this file, and nothing in the toolkit does.
+
+`SettingsRecorder<Clock, Sink>`, in `settings_recorder.hpp`, fits the same slot as a redraw monitor, so a program pays nothing unless it names it, and `jgui.hpp` does not include it. `make_settings_recorder()` gives the usual one, and a program that uses it links `jgui_monitor`. `BothMonitors<A, B>` puts two monitors in that one slot, told everything in order, and is its own type. Two recorders in it do not compile, because each would number the same items. With a recorder in the slot, `ApplicationCore` walks the tree after each frame presented, so after everything a monitor measures, and with any other monitor that walk is not compiled at all.
+
+**One file, two sections.** `settings.jtext`, in the application's base directory, in the full profile.
+
+| Section | One row per | Holds |
+|---|---|---|
+| `Items` | item in the tree, in order of ID | `ID`, `Parent_ID`, `Class_Name`, `Name`, `Left`, `Top`, `Bottom`, `Right`, `Height`, `Width` |
+| `Problems` | thing found wrong | `Record_ID`, `Item_ID`, `What_Failed`. Empty is the usual case, and jText's validator gives its warning for an empty section |
+
+- **`ID` is field 1,** the record id the format requires. The `Window` is 1, with a `Parent_ID` of 0, and it is a row of its own, which the redraw monitor's `Tree_Position` does not count. Everything the compiler knows of follows depth first from 2, so its ID is the same in every run of that program. A `Dynamic` is one row, however many items it holds.
+- **Items of a `Dynamic` are numbered above all of those,** in the order frames first see them. An item keeps its ID for as long as it lives. An ID is never used again in a run, and an item in a slot used again is a new item with a new ID. So a fixed widget's ID does not move as items come and go, and an ID in one file means the same thing in a later file of that run, but not of another run. An item that comes and goes between two frames takes no ID. A widget inside such an item is numbered the same way, and goes with it. The recorder holds this table, by slot and generation, so a `Dynamic` holds nothing extra for it.
+- **A widget that holds a `Dynamic` privately** can declare `holds_items` and `visit_items`, which takes a `TreeKey`, and its items become its children. `demo::HelpPanel` does. A widget that does not say so is one row.
+- **`Class_Name`** is the redraw monitor's compile-time name. **`Name`** is the name of the widget's `tag`, the compile-time name each widget already declares, and it is empty only for the `Window`, which has no tag. Items of one `Dynamic` share a name. Both compilers print these differently, as in the redraw monitor.
+- **Geometry** is each item's `bounds()` after the frame's layout. A child that `OneShown` is not showing, and all that is under it, is written with a zero rectangle at the corner, because the one it last had is out of date. It keeps its ID.
+
+**The checks,** each a small `constexpr` helper, run on every row whenever the rows change. A failure is a row in `Problems`, and ends nothing.
+
+| Check | `What_Failed` |
+|---|---|
+| `Right - Left == Width` | `Right - Left is not Width` |
+| `Bottom - Top == Height` | `Bottom - Top is not Height` |
+| No far edge before the near one. `Width` and `Height` cannot be negative, as types, so this is how a size below zero would show | `Right is before Left`, `Bottom is before Top` |
+| The parent is in the file. Only the row with ID 1 may have a parent of 0 | `The parent is not in the file` |
+| A child's rectangle lies inside its parent's | `Outside its parent` |
+
+**The last one is a promise the toolkit really makes:** every one of its widgets lays out inside the rectangle it was offered, by `Rect::intersect` or by taking it whole, and every parent offers rectangles inside its own. A rectangle with nothing in it is excused, because it has no pixels to be outside with, and a parent out of room can leave one just past its own edge: `inset` moves the corner even when the size has reached zero. A program's own widget can break this, and then this says so. The tests run the demo and the viewer's window at 1x1, 3x3, 20x5 and 200x120, and no check fails. Because every far edge is computed from the near one and the length, the first two checks can fail on a real widget only when an edge saturates at the limit of `int32_t`. They are there to catch a change in that. Two more rows are possible: `This row could not be written`, for a row that cannot stand in a line, which no compile-time name does; and a row with an `Item_ID` of 0 saying how many items were over the limit.
+
+**Writing.** Only when something recorded has changed since the last write, so a frame that changes nothing writes nothing. The first write is straight after the first frame, then at most once per interval, default one second, and once at the end of `run` or `present_first_frame`, whether or not anything changed. A program with its own `process_pending` loop calls `finish_monitor`. The file, its refusals and what happens on a failure are the redraw monitor's: `FileSink`, a whole new file renamed over the old, writing stopping at the first failure, the program going on, and `monitor_error()` giving the reason at exit. `BothMonitors` gives both reasons when both failed. The loop sleeps with no timer, so a change just before a quiet time waits for the next event, or the end.
+
+**Limits.** All of the compile-time tree is always written, which the compiler already bounds. As well as that, at most 65536 items of `Dynamic`s and what is inside them, by default `SettingsRecorderOptions::item_limit`, and `Problems` at most that many, with one more row saying how many were not listed. An item over the limit is counted, and what is inside it is not.
 
 ## Frames
 
@@ -320,9 +355,9 @@ using Grid = jgui::DataGrid<GridTag, Row, Picked, jgui::Column<"Left", &Row::lef
 
 ## The viewer
 
-`demo/viewer.cpp` is `jcppgui-viewer`. It shows `redraw_monitor.jtext` from the application's base directory, or the path given as its one argument, and reads it once, at the start. `demo/viewer_ui.hpp` is its window, which the tests include: a menu bar with a button per section, a line saying what shows, and the chosen section's grid in all the room left. It opens on `Frames`.
+`demo/viewer.cpp` is `jcppgui-viewer`. It shows `redraw_monitor.jtext` and `settings.jtext` from the application's base directory, or the paths given as its two optional arguments, in that order, and reads each once, at the start. `demo/viewer_ui.hpp` is its window, which the tests include: a menu bar with a button per section of both files, a line saying what shows, and the chosen section's grid in all the room left. It opens on `Frames`.
 
-A path, a file or a section that cannot be read never ends the program. The window opens, the line says why, and no grid is shown. A section the file lacks, or that lacks a column, is that section's trouble alone. Rows left out are counted on the line. Each section's grid keeps its rows, its scroll and its sort while another shows.
+A path, a file or a section that cannot be read never ends the program. The window opens, the line says why, and no grid is shown. Either file's trouble shows only at that file's buttons. A section the file lacks, or that lacks a column, is that section's trouble alone. Rows left out are counted on the line. Each section's grid keeps its rows, its scroll and its sort while another shows.
 
 `OneShown<Tag, Children...>` is the small widget this needed. It holds several widgets and only the one shown gets the layout, the paint and the events, so the others cost nothing. A callback holds no key, so the one going away is told the pointer and the focus have gone as soon as that delivery ends.
 

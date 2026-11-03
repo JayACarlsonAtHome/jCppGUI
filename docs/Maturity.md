@@ -13,7 +13,7 @@
 - Compile-fail tests that prove the compiler rejects the mistakes it is meant to catch.
 - The real `WaylandBackend` against a scripted compositor, with no screen, over a real socket.
 - `DataGrid`, a read-only typed table with virtual drawing, scroll bars, wheel and smooth scrolling, selection, sorting and column resizing.
-- `jcppgui-viewer`, which shows a redraw monitor's file in those grids, one section at a time. **It has only run against the test compositor, and no one has seen it on a real screen.**
+- `jcppgui-viewer`, which shows a redraw monitor's file and a settings record in those grids, one section at a time. **It has only run against the test compositor, and no one has seen it on a real screen.**
 - A redraw monitor for development, `jcppgui-demo --redraw-monitor`, which records each frame to a jText file. A file from a live
   `--smoke` run passed jText's own parser and validator, in a throwaway check that is not part of this repository.
 
@@ -75,6 +75,16 @@ replaced or removed while running. Not tested: the kernel's link itself failing 
 Not shown: a long interactive session against a real compositor, and how long writing takes with a full 65536 rows. Nothing in this repository
 checks the file with jText's validator, because it does not depend on jText. A crash loses more than about a second after a quiet
 time, and a system crash may lose more than that: see `docs/Architecture.md`.
+
+## The settings record
+
+A record of what the application created, for looking up, reporting and checking. Nothing is built from it, and no program but the viewer reads it.
+
+`tests/test_settings_recorder.cpp` runs in `static_assert`, through the real application and the demo's and the viewer's trees: each check and each way it can fail, how items are numbered as they come and go, exact rows for a known tree, a resize, no change and no write, the interval, a failed write, a widget not shown, a composite inside a `Dynamic`, the limit, and `BothMonitors`, with the frame monitor's file the same as with no recorder beside it. A deliberately broken widget gives a `Problems` row, and one pixel less does not. At run time: the real font and the real file read back with the viewer's own code, a symlink, a directory and a missing directory at its place, each with the program going on, and the same pixels with a recorder and without. The `fake_settings_demo_*` scenarios start the real demo from a copy, against the test compositor only: the file in the base directory and nowhere else, with the item from a real click on Help, both flags together, and no base directory. The `fake_settings_viewer_*` scenarios start the real viewer, compare every pixel, and look for named text in a row of `Items` and of `Problems`: two good files, a bad row, a settings file missing, malformed, or the monitor's file missing instead, and both default files in a copy's base directory.
+
+A file from the real demo through the test compositor, and one with a row in `Problems`, passed jText's own parser and validator with no errors, in a throwaway check that is not part of this repository. It gives its warning for an empty section, which is the usual `Problems`.
+
+Not shown: any of this on a real screen, a real resize against a real compositor, how long a write takes at the item limit, or a widget of a real program failing a check: the only failures seen were made on purpose. `tests/fuzz/fuzz_jtext.cpp` round-trips what the shared line writer takes, and has no case of its own for this file.
 
 ## The jText reader and the viewer
 
