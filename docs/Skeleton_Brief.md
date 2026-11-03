@@ -15,11 +15,12 @@ the line. A drop-down menu needs Wayland popups and comes in a later slice.
 Priorities, in order: **secure first, efficient second.** A check is removed only when a
 measurement shows that it matters.
 
-## Clean-room rule
+## U++ as a reference
 
-jCppGUI takes concepts from U++ and no code. Do not open, read, search or copy from `uppsrc`,
-`upp_basefix`, `jText_GUI/gui`, or any other U++ source. Do not reuse U++ class names. The concepts
-are listed below, and that list is all the implementer needs.
+As of 2026-11-03, this replaces the rule first written here. U++ is open source and so are we, so it is a reference for how
+things were done and may be read freely. We write our own code because U++ code would not meet our type and security rules,
+which is a security reason and not a legal one. We fully comply with its licence wherever it applies, and expect our code to
+be so different that the question does not arise.
 
 Concepts to carry over:
 
@@ -370,7 +371,7 @@ Short and candid, in the style of `jText_GUI/docs/`:
 - `Maturity.md`: what works and what does not. State plainly that this is a skeleton.
 - `SECURITY.md`: trust boundaries (compositor values, keymap fd, later clipboard, files, fonts and
   images), the hardening flags, and what is not yet fuzzed.
-- `PROCESS.md`: `Lin/v001` is the only active tree. Build order and the clean-room rule.
+- `PROCESS.md`: `Lin/v001` is the only active tree. Build order and the U++ policy.
 - `README.md`: what it is and how to build.
 
 ## Out of scope for this slice
