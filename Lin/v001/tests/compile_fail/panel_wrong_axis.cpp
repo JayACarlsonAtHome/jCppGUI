@@ -9,8 +9,8 @@ int main() {
     using WidePanel = jgui::PanelSize<jgui::detail::WidthTag>;
     const std::array<WidePanel, 1> panels{WidePanel{}};
 #ifdef JGUI_BREAK
-    return jgui::split_remaining_space(jgui::Height{5}, std::span<const WidePanel>{panels}).empty() ? 1 : 0;
+    return static_cast<int>(jgui::split_remaining_space(jgui::Height{5}, std::span<const WidePanel>{panels}).size()) - 1;
 #else
-    return jgui::split_remaining_space(jgui::Width{5}, std::span<const WidePanel>{panels}).empty() ? 1 : 0;
+    return static_cast<int>(jgui::split_remaining_space(jgui::Width{5}, std::span<const WidePanel>{panels}).size()) - 1;
 #endif
 }
