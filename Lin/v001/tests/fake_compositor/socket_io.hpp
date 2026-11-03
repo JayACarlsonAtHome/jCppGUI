@@ -1,7 +1,7 @@
 // File: tests/fake_compositor/socket_io.hpp
 // Purpose: The only place sockets, and the passing of file descriptors with SCM_RIGHTS, meet untyped memory. sendmsg,
 //          recvmsg, iovec and CMSG all work through untyped pointers, and no typed call passes a descriptor. It
-//          is for the test compositor only, and it AWAITS THE OWNER'S APPROVAL: see docs/Maturity.md.
+//          is for the test compositor only, under the owner's approval of 2026-11-02: see docs/Review_Checklist.md.
 //          Everything callers see is typed. tests/check_source_rules.sh keeps it the only such place.
 #pragma once
 

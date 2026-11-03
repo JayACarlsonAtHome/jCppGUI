@@ -63,8 +63,6 @@ libwayland's. `tests/fuzz/fuzz_backend.cpp` fuzzes the backend's input path thro
 - **`bsir.sh` has not been run end to end**, on any system. **It still needs the owner to run it**, because it needs sudo. It is
   written for Fedora only and stops on a system with no `dnf`. Only its syntax, its usage text and its recipes' check lines
   have been tried.
-- **`tests/fake_compositor/socket_io.hpp` awaits the owner's approval.** It is the one helper, for tests only, where `sendmsg`,
-  `recvmsg`, `iovec` and `CMSG` meet untyped memory. A descriptor cannot be passed any other way. The rule scripts keep it the only place.
 - A compositor that stays connected and never answers makes `connect` wait for ever. There is no timeout.
 
 - One font, one size, one line. No text editing, input methods or font selection. No bidirectional

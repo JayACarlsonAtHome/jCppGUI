@@ -36,7 +36,8 @@ after dispatch returns.
   trivially copyable elements, compute byte counts and offsets with checks, and handle short transfers
   and interrupted calls. The rule scripts refuse `pread` and `pwrite` anywhere else, and all other byte I/O and raw
   byte copies everywhere. In tests only, `tests/fake_compositor/socket_io.hpp` does this for `sendmsg` and `recvmsg`,
-  because a descriptor cannot be passed any other way. **That helper awaits the owner's approval.**
+  because a descriptor cannot be passed any other way. **The owner approved that helper on 2026-11-02, for test code only:**
+  production code, including our later Wayland client, needs its own approval.
 - **C pointer and count pairs, and C strings.** `detail::copy_from_c` and `detail::string_from_c` in `src/c_resource.hpp` are the
   only places they are read. `copy_from_c` refuses a null pointer with a count and a count over the caller's limit before
   allocating, and copies into a vector we own. So no array or string from a C library is worked on in place. A count is
