@@ -1,12 +1,14 @@
 // File: tests/viewer_helpers.hpp
-// Purpose: What the viewer's tests share: a redraw monitor's file with known rows in it, from the real writer.
+// Purpose: What the viewer's tests share: a redraw monitor's file and a settings record with known rows in them, from the real writers.
 #pragma once
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "jCppGUI/v001/redraw_monitor.hpp"
+#include "jCppGUI/v001/settings_recorder.hpp"
 #include "monitor_helpers.hpp"
 
 namespace jgui_test {
@@ -32,6 +34,21 @@ inline constexpr std::int32_t viewer_test_frames = 200;
     monitor.deferred(jgui::RedrawReason::Resize, jgui::Size{jgui::Width{800}, jgui::Height{600}});
     monitor.finish();
     return monitor.sink().saved;
+}
+
+inline constexpr std::string_view settings_test_left = "4242";
+
+// A settings record from the real writer: three items, the last with a place it has no right to, so one problem.
+[[nodiscard]] constexpr std::string settings_file_text() {
+    jgui::SettingsRecorder recorder{TestClock{}, MemorySink{}};
+    const jgui::Rect whole{jgui::Point{}, jgui::Size{jgui::Width{640}, jgui::Height{480}}};
+    recorder.items_begin(3);
+    recorder.item_found(jgui::ItemFound{1, 0, "jgui::Window", "", whole});
+    recorder.item_found(jgui::ItemFound{2, 1, "jgui::Button", "demo::HelpButton", jgui::Rect{jgui::Point{jgui::Left{7}, jgui::Top{9}}, jgui::Size{jgui::Width{50}, jgui::Height{20}}}});
+    recorder.item_found(jgui::ItemFound{3, 1, "jgui::Label", "demo::Stray", jgui::Rect{jgui::Point{jgui::Left{4242}, jgui::Top{1}}, jgui::Size{jgui::Width{10}, jgui::Height{10}}}});
+    recorder.items_end();
+    recorder.finish();
+    return recorder.sink().saved;
 }
 
 }  // namespace jgui_test

@@ -3,3 +3,5 @@ build*/
 compile_commands.json
 redraw_monitor.jtext
 redraw_monitor.jtext.tmp
+settings.jtext
+settings.jtext.tmp

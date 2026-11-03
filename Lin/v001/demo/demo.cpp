@@ -2,6 +2,7 @@
 // Purpose: Opens a 640x480 window with a menu bar holding a Help button. --smoke waits for the first
 //          configure, presents one frame and exits 0, for testing against a live compositor. --redraw-monitor
 //          runs the same window with the redraw monitor, which records to redraw_monitor.jtext in the application base directory.
+//          --record-settings writes down what the window holds, in settings.jtext beside it. The two can be used together.
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
@@ -10,6 +11,7 @@
 
 #include "help_ui.hpp"
 #include "jCppGUI/v001/redraw_monitor.hpp"
+#include "jCppGUI/v001/settings_recorder.hpp"
 #include "jCppGUI/v001/wayland_backend.hpp"
 
 namespace {
@@ -48,14 +50,17 @@ int main(int argc, char** argv) {
     if (!arguments) return report(arguments.error());
     bool smoke = false;
     bool redraw_monitor = false;
+    bool record_settings = false;
     for (std::size_t i = 1; i < arguments->size(); ++i) {
         const std::string_view argument = arguments->at(i);
         if (argument == "--smoke") {
             smoke = true;
         } else if (argument == "--redraw-monitor") {
             redraw_monitor = true;
+        } else if (argument == "--record-settings") {
+            record_settings = true;
         } else {
-            std::cerr << "usage: jcppgui-demo [--smoke] [--redraw-monitor]\n";
+            std::cerr << "usage: jcppgui-demo [--smoke] [--redraw-monitor] [--record-settings]\n";
             return exit_usage;
         }
     }
@@ -64,5 +69,7 @@ int main(int argc, char** argv) {
         return exit_ctest_skip;
     }
 
+    if (redraw_monitor && record_settings) return run_demo(smoke, jgui::BothMonitors{jgui::FrameMonitor<>{}, jgui::make_settings_recorder()});
+    if (record_settings) return run_demo(smoke, jgui::make_settings_recorder());
     return redraw_monitor ? run_demo(smoke, jgui::FrameMonitor<>{}) : run_demo(smoke, jgui::NoMonitor{});
 }

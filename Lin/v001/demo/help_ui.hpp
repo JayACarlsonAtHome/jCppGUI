@@ -24,6 +24,7 @@ template <class Tag, template <class...> class Slots = std::deque>
 class HelpPanel {
 public:
     using tag = Tag;
+    static constexpr bool holds_items = true;
 
     constexpr bool on(ToggleHelp) {
         if (line_.shown()) {
@@ -36,6 +37,10 @@ public:
 
     [[nodiscard]] constexpr bool shown() const noexcept { return line_.shown(); }
     [[nodiscard]] constexpr jgui::Rect bounds() const noexcept { return line_.bounds(); }
+    template <class Visit>
+    constexpr void visit_items(const jgui::TreeKey& key, Visit&& visit) {
+        line_.visit_items(key, visit);
+    }
     constexpr void paint(const jgui::TreeKey& key, jgui::Canvas& canvas) { line_.paint(key, canvas); }
     template <jgui::TextShaper Shaper>
     constexpr std::expected<jgui::Rect, jgui::Error> layout(const jgui::TreeKey& key, jgui::Rect area, const Shaper& text) {

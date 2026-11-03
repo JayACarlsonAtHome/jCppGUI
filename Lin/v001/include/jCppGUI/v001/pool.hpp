@@ -46,6 +46,12 @@ private:
     std::uint32_t generation_;
 };
 
+// Where a handle's item stands in its pool. A slot used again has a new generation, so this never names two items in one run.
+struct ItemPlace {
+    std::uint32_t index{};
+    std::uint32_t generation{};
+};
+
 template <class T, template <class...> class Slots>
 class Pool {
 public:
@@ -103,6 +109,8 @@ public:
         }
         dying_.clear();
     }
+
+    [[nodiscard]] constexpr ItemPlace place_of(Handle<T> handle) const noexcept { return ItemPlace{handle.index_, handle.generation_}; }
 
     [[nodiscard]] constexpr std::size_t slot_count() const noexcept { return slots_.size(); }
     [[nodiscard]] constexpr std::size_t retired_count() const noexcept { return retired_; }

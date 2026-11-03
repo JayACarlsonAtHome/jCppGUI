@@ -194,6 +194,10 @@ template <std::size_t = 0>
 struct Rig {
     using Tree = decltype(viewer::make_ui(viewer::LoadedFile{}));
     constexpr explicit Rig(std::string_view text, Size size = window_size) : core{HeadlessBackend{size}, viewer::make_ui(viewer::load_file(parse_jtext(text)))} { settle(); }
+    constexpr Rig(std::string_view text, std::string_view settings, Size size = window_size)
+        : core{HeadlessBackend{size}, viewer::make_ui(viewer::load_file(parse_jtext(text)), viewer::load_settings_file(parse_jtext(settings)))} {
+        settle();
+    }
     constexpr void settle() { require(core.process_pending(BlockShaper{}).has_value(), "a frame failed"); }
     template <class E>
     constexpr void deliver(const E& event) {
@@ -314,6 +318,62 @@ static_assert(a_missing_section_or_column_is_that_sections_trouble_alone());
     return rig.status() == "Deferred: 1 row, 3 rows left out: a value did not convert" && rig.get<viewer::DeferredGridTag>().rows().size() == 1;
 }
 static_assert(left_out_rows_are_counted_on_the_line(), "a word for a number, a negative length, and fields missing");
+
+// --- The settings record, a file of its own ---
+
+[[nodiscard]] constexpr bool the_two_settings_buttons_show_their_sections() {
+    const std::string settings = jgui_test::settings_file_text();
+    Rig<> rig{jgui_test::redraw_file_text(rows_in_the_file), settings};
+    if (rig.shown() != viewer::frames_position) return false;
+    rig.click<viewer::ItemsButton>();
+    if (rig.shown() != viewer::items_position || rig.status() != "Items: 3 rows") return false;
+    const auto& items = rig.get<viewer::ItemsGridTag>().rows();
+    if (items.size() != 3 || items[0].name != "" || items[0].parent_id != 0 || items[1].class_name != "jgui::Button" || items[1].name != "demo::HelpButton" || items[1].left != Left{7} || items[1].top != Top{9} || items[1].bottom != Bottom{29} || items[1].right != Right{57} ||
+        items[1].height != Height{20} || items[1].width != Width{50})
+        return false;
+    rig.click<viewer::ProblemsButton>();
+    if (rig.shown() != viewer::problems_position || rig.status() != "Problems: 1 row") return false;
+    const auto& problems = rig.get<viewer::ProblemsGridTag>().rows();
+    return problems.size() == 1 && problems[0].record_id == 1 && problems[0].item_id == 3 && problems[0].what_failed == "Outside its parent";
+}
+static_assert(the_two_settings_buttons_show_their_sections());
+
+// Neither file's trouble touches the other's sections, in either direction, and each section says for itself.
+[[nodiscard]] constexpr bool each_file_stands_alone() {
+    const std::string monitor = jgui_test::redraw_file_text(rows_in_the_file);
+    const std::string settings = jgui_test::settings_file_text();
+    Rig<> no_settings{monitor, "nonsense"};
+    if (no_settings.shown() != viewer::frames_position || no_settings.status() != "Frames: 10 rows") return false;
+    no_settings.click<viewer::ItemsButton>();
+    if (no_settings.shown() != std::nullopt || !no_settings.status().starts_with("jText line 1: ")) return false;
+    no_settings.click<viewer::ProblemsButton>();
+    if (no_settings.shown() != std::nullopt || !no_settings.status().starts_with("jText line 1: ")) return false;
+    no_settings.click<viewer::RunButton>();
+    if (no_settings.shown() != viewer::run_position || no_settings.status() != "Run: 1 row") return false;
+
+    Rig<> no_monitor{"nonsense", settings};
+    if (no_monitor.shown() != std::nullopt || !no_monitor.status().starts_with("jText line 1: ")) return false;
+    no_monitor.click<viewer::ItemsButton>();
+    return no_monitor.shown() == viewer::items_position && no_monitor.status() == "Items: 3 rows";
+}
+static_assert(each_file_stands_alone());
+
+// One bad row, and one section missing from the file, are that section's trouble alone.
+[[nodiscard]] constexpr bool a_bad_settings_row_is_counted_and_a_missing_section_is_said() {
+    std::string bad = jgui_test::settings_file_text();
+    bad.replace(bad.find(jgui_test::settings_test_left), jgui_test::settings_test_left.size(), "nope");
+    Rig<> rig{jgui_test::redraw_file_text(rows_in_the_file), bad};
+    rig.click<viewer::ItemsButton>();
+    if (rig.shown() != viewer::items_position || rig.status() != "Items: 2 rows, 1 row left out: a value did not convert" || rig.get<viewer::ItemsGridTag>().rows().size() != 2) return false;
+    rig.click<viewer::ProblemsButton>();
+    if (rig.shown() != viewer::problems_position || rig.status() != "Problems: 1 row") return false;
+
+    // The monitor's file has neither section, so a wrong file given for the settings says so.
+    Rig<> wrong{jgui_test::redraw_file_text(rows_in_the_file), jgui_test::redraw_file_text(rows_in_the_file)};
+    wrong.click<viewer::ItemsButton>();
+    return wrong.shown() == std::nullopt && wrong.status() == "the file has no section named Items";
+}
+static_assert(a_bad_settings_row_is_counted_and_a_missing_section_is_said());
 
 }  // namespace
 

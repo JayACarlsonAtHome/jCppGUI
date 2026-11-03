@@ -288,17 +288,19 @@ set(JGUI_FAKE_SCENARIOS
   demo_as_built demo_copy_under_a_base demo_copy_with_no_base
   cursor_all_edges cursor_no_protocol cursor_seat_removed cursor_pointer_flap cursor_manager_removed cursor_manager_late cursor_during_drag
   grid_axis_hostile grid_axis_no_enter grid_wheel_then_pixels grid_resize_during_thumb_drag grid_pointer_gone_during_capture grid_seat_gone_during_capture grid_cursor
-  viewer_first_frame viewer_section_switch viewer_wheel_scroll viewer_resize viewer_missing_file viewer_malformed_file viewer_refused_symlink viewer_path_not_text viewer_copy_with_no_base viewer_file_in_its_base viewer_65536_rows)
+  viewer_first_frame viewer_section_switch viewer_wheel_scroll viewer_resize viewer_missing_file viewer_malformed_file viewer_refused_symlink viewer_path_not_text viewer_copy_with_no_base viewer_file_in_its_base viewer_65536_rows
+  settings_demo_records settings_demo_both_flags settings_demo_no_base
+  settings_viewer_items settings_viewer_bad_row settings_viewer_missing_file settings_viewer_only_settings settings_viewer_malformed_file settings_viewer_files_in_its_base)
 foreach(scenario ${JGUI_FAKE_SCENARIOS})
   add_test(NAME fake_${scenario} COMMAND test_fake_compositor ${scenario})
   set_tests_properties(fake_${scenario} PROPERTIES TIMEOUT 300
     ENVIRONMENT "JGUI_TEST_KEYMAP=${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/seeds/keymap/minimal.xkb")
 endforeach()
 # These three start the real demo program itself, so the base directory it finds is a real one.
-set_property(TEST fake_demo_as_built fake_demo_copy_under_a_base fake_demo_copy_with_no_base APPEND PROPERTY
+set_property(TEST fake_demo_as_built fake_demo_copy_under_a_base fake_demo_copy_with_no_base fake_settings_demo_records fake_settings_demo_both_flags fake_settings_demo_no_base APPEND PROPERTY
   ENVIRONMENT "JGUI_TEST_DEMO=$<TARGET_FILE:jcppgui-demo>" "JGUI_TEST_BASE=${CMAKE_CURRENT_SOURCE_DIR}")
 # These start the real viewer program itself, against the same compositor.
-foreach(scenario viewer_first_frame viewer_section_switch viewer_wheel_scroll viewer_resize viewer_missing_file viewer_malformed_file viewer_refused_symlink viewer_path_not_text viewer_copy_with_no_base viewer_file_in_its_base viewer_65536_rows)
+foreach(scenario viewer_first_frame viewer_section_switch viewer_wheel_scroll viewer_resize viewer_missing_file viewer_malformed_file viewer_refused_symlink viewer_path_not_text viewer_copy_with_no_base viewer_file_in_its_base viewer_65536_rows settings_viewer_items settings_viewer_bad_row settings_viewer_missing_file settings_viewer_only_settings settings_viewer_malformed_file settings_viewer_files_in_its_base)
   set_property(TEST fake_${scenario} APPEND PROPERTY ENVIRONMENT "JGUI_TEST_VIEWER=$<TARGET_FILE:jcppgui-viewer>")
 endforeach()
 # One C call failing at a time, through the real implementation. It goes against the compositor above.
@@ -314,6 +316,16 @@ target_include_directories(test_redraw_monitor PRIVATE src)
 target_link_libraries(test_redraw_monitor PRIVATE jgui_monitor)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   target_compile_options(test_redraw_monitor PRIVATE -fconstexpr-steps=50000000)
+endif()
+
+# The settings recorder. It runs the application, the demo's tree and the viewer's window in static_assert.
+jgui_test(test_settings_recorder)
+target_include_directories(test_settings_recorder PRIVATE src)
+target_link_libraries(test_settings_recorder PRIVATE jgui_monitor jgui_jtext jgui_program)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(test_settings_recorder PRIVATE -fconstexpr-steps=400000000)
+else()
+  target_compile_options(test_settings_recorder PRIVATE -fconstexpr-ops-limit=800000000)
 endif()
 
 # Where the base directory is: the rule in static_assert, and at run time this program started from copies and links of itself.
@@ -396,6 +408,9 @@ jgui_compile_fail(set_text_result_ignored "unused-result|nodiscard|warn_unused_r
 jgui_compile_fail(callback_reaches_monitor "no member|has no member")
 jgui_compile_fail(application_hides_monitor "private|inaccessible")
 jgui_compile_fail(monitor_not_in_the_umbrella "no template|FrameMonitor. is not a member|no member named|was not declared|has not been declared")
+jgui_compile_fail(settings_not_in_the_umbrella "no template|SettingsRecorder. is not a member|no member named|was not declared|has not been declared")
+jgui_compile_fail(callback_records_items "private|inaccessible")
+jgui_compile_fail(two_item_recorders "only one of two monitors")
 jgui_compile_fail(grid_member_no_format "no cell format")
 jgui_compile_fail(grid_column_wrong_row "belongs to another row type")
 jgui_compile_fail(grid_duplicate_column "have the same name")

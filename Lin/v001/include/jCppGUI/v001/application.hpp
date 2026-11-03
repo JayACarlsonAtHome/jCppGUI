@@ -238,6 +238,8 @@ private:
         root_.clear_damage();
         damaged_ = false;
         ++frames_;
+        // After the last thing a monitor measures. Only a monitor that asks for this pays for it.
+        if constexpr (ItemRecorder<Monitor>) root_.record_items(monitor_);
         return {};
     }
 

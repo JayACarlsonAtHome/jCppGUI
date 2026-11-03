@@ -4,6 +4,7 @@
 //          that asks for it includes. Also the compile-time names of types, with no run-time type information.
 #pragma once
 
+#include <compare>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +17,24 @@
 #include "geometry.hpp"
 
 namespace jgui::inline v001 {
+
+// One item of the tree, as a recorder is told of it. The names are in static storage, and a parent's ID of 0 means it has none.
+struct ItemFound {
+    std::uint64_t id{};
+    std::uint64_t parent_id{};
+    std::string_view class_name{};
+    std::string_view name{};
+    Rect bounds{};
+};
+
+// What tells one item from another when it has no place in the compile-time tree: the node that holds it, and its place there. For an
+// item of a Dynamic that is its slot and that slot's generation. For a widget inside such an item it is its position in the item.
+struct ItemKey {
+    std::uint64_t scope{};
+    std::uint64_t position{};
+    std::uint64_t generation{};
+    friend constexpr auto operator<=>(const ItemKey&, const ItemKey&) = default;
+};
 
 // Why a frame is drawn, the first of these that holds.
 enum class RedrawReason : std::uint8_t { FirstFrame, Resize, WidgetDamage };
@@ -73,6 +92,17 @@ concept RedrawMonitor = requires(M& monitor, const M& constant, RedrawReason rea
     { constant.error() } -> std::same_as<std::optional<Error>>;
 };
 
+// A monitor that also wants the tree written down. After each frame presented, so outside everything a monitor measures, the core walks
+// the tree: items_begin, with how many items the compile-time tree has, then item_found for each, then items_end. item_id numbers an
+// item that has no place in the compile-time tree, and 0 means there is no room for it. A monitor without these costs nothing.
+template <class M>
+concept ItemRecorder = requires(M& monitor, std::uint64_t count, const ItemKey& key, const ItemFound& item) {
+    { monitor.items_begin(count) } -> std::same_as<void>;
+    { monitor.item_id(key) } -> std::same_as<std::uint64_t>;
+    { monitor.item_found(item) } -> std::same_as<void>;
+    { monitor.items_end() } -> std::same_as<void>;
+};
+
 // The usual case: no monitor. Empty, and every point does nothing.
 struct NoMonitor {
     static constexpr bool watches = false;
@@ -90,5 +120,6 @@ struct NoMonitor {
 };
 
 static_assert(RedrawMonitor<NoMonitor>);
+static_assert(!ItemRecorder<NoMonitor>);
 
 }  // namespace jgui::inline v001

@@ -1,5 +1,5 @@
 // File: demo/viewer_ui.hpp
-// Purpose: The viewer's window: a menu bar with one button per section of the redraw monitor's file, a line that says what is showing
+// Purpose: The viewer's window: a menu bar with one button per section of the redraw monitor's file and of the settings record, a line that says what is showing
 //          or what went wrong, and the chosen section's grid in all the room left. Each section's columns are declared here, in C++,
 //          with the names the file uses. The tests include this too, so they check the real tree.
 #pragma once
@@ -75,10 +75,32 @@ struct DeferredRow {
     jgui::Height height{};
 };
 
+// One item as the settings record wrote it down, in the order the file has its columns.
+struct ItemsRow {
+    std::uint64_t id{};
+    std::uint64_t parent_id{};
+    std::string class_name{};
+    std::string name{};
+    jgui::Left left{};
+    jgui::Top top{};
+    jgui::Bottom bottom{};
+    jgui::Right right{};
+    jgui::Height height{};
+    jgui::Width width{};
+};
+
+struct ProblemsRow {
+    std::uint64_t record_id{};
+    std::uint64_t item_id{};
+    std::string what_failed{};
+};
+
 struct RunGridTag;
 struct FramesGridTag;
 struct DamageGridTag;
 struct DeferredGridTag;
+struct ItemsGridTag;
+struct ProblemsGridTag;
 
 using RunGrid = DataGrid<RunGridTag, RunRow, NoGridMessage, Column<"Run_ID", &RunRow::run_id, 70>, Column<"Label", &RunRow::label, 160>, Column<"Slow_Budget_ns", &RunRow::slow_budget_ns, 120>,
                          Column<"Row_Limit", &RunRow::row_limit, 90>, Column<"Frames_Seen", &RunRow::frames_seen, 100>, Column<"Frames_Dropped", &RunRow::frames_dropped, 120>,
@@ -98,10 +120,19 @@ using DamageGrid = DataGrid<DamageGridTag, DamageRow, NoGridMessage, Column<"Rec
 using DeferredGrid = DataGrid<DeferredGridTag, DeferredRow, NoGridMessage, Column<"Record_ID", &DeferredRow::record_id, 90>, Column<"Next_Frame_ID", &DeferredRow::next_frame_id, 120>,
                               Column<"Time_ns", &DeferredRow::time_ns, 120>, Column<"Reason", &DeferredRow::reason, 120>, Column<"Width", &DeferredRow::width, 60>, Column<"Height", &DeferredRow::height, 60>>;
 
+using ItemsGrid = DataGrid<ItemsGridTag, ItemsRow, NoGridMessage, Column<"ID", &ItemsRow::id, 60>, Column<"Parent_ID", &ItemsRow::parent_id, 80>, Column<"Class_Name", &ItemsRow::class_name, 200>,
+                           Column<"Name", &ItemsRow::name, 200>, Column<"Left", &ItemsRow::left, 60>, Column<"Top", &ItemsRow::top, 60>, Column<"Bottom", &ItemsRow::bottom, 60>,
+                           Column<"Right", &ItemsRow::right, 60>, Column<"Height", &ItemsRow::height, 60>, Column<"Width", &ItemsRow::width, 60>>;
+
+using ProblemsGrid = DataGrid<ProblemsGridTag, ProblemsRow, NoGridMessage, Column<"Record_ID", &ProblemsRow::record_id, 90>, Column<"Item_ID", &ProblemsRow::item_id, 80>,
+                              Column<"What_Failed", &ProblemsRow::what_failed, 360>>;
+
 struct RunButton;
 struct FramesButton;
 struct DamageButton;
 struct DeferredButton;
+struct ItemsButton;
+struct ProblemsButton;
 struct StatusLine;
 struct SectionGrids;
 
@@ -109,6 +140,8 @@ inline constexpr std::string_view run_section = "Run";
 inline constexpr std::string_view frames_section = "Frames";
 inline constexpr std::string_view damage_section = "Damage";
 inline constexpr std::string_view deferred_section = "Deferred";
+inline constexpr std::string_view items_section = "Items";
+inline constexpr std::string_view problems_section = "Problems";
 inline constexpr std::string_view status_when_refused = "This text cannot be shown.";
 inline constexpr std::size_t most_path_bytes = 4096;
 inline constexpr std::size_t most_title_name_bytes = 255;  // the longest name a file has on Linux, and well under a title's limit
@@ -183,10 +216,22 @@ struct LoadedFile {
                       load_section<DeferredGrid>(file, deferred_section)};
 }
 
+// The settings record is a file of its own, so it can be missing or refused while the monitor's file is fine, or the other way about.
+struct LoadedSettings {
+    LoadedSection<ItemsRow> items{};
+    LoadedSection<ProblemsRow> problems{};
+};
+
+[[nodiscard]] constexpr LoadedSettings load_settings_file(const std::expected<jgui::JTextFile, jgui::Error>& file) {
+    return LoadedSettings{load_section<ItemsGrid>(file, items_section), load_section<ProblemsGrid>(file, problems_section)};
+}
+
 inline constexpr std::size_t run_position = 0;
 inline constexpr std::size_t frames_position = 1;
 inline constexpr std::size_t damage_position = 2;
 inline constexpr std::size_t deferred_position = 3;
+inline constexpr std::size_t items_position = 4;
+inline constexpr std::size_t problems_position = 5;
 
 // What a section's button does. It says its section's status, and shows its grid, or no grid when there is none to show. Messages
 // from the reader are text, and fit a line, and the path was checked. So a refusal here, which keeps the old text, does not happen.
@@ -215,17 +260,20 @@ template <class Row>
 }
 
 // The whole window. It opens on the Frames section, the one with most to look at.
-[[nodiscard]] constexpr auto make_ui(LoadedFile loaded) {
+[[nodiscard]] constexpr auto make_ui(LoadedFile loaded, LoadedSettings settings = LoadedSettings{}) {
     auto ui = jgui::window(jgui::window_frame(
         jgui::menu_bar(jgui::button<RunButton>("Run", show_of(loaded.run, run_position)), jgui::button<FramesButton>("Frames", show_of(loaded.frames, frames_position)),
-                       jgui::button<DamageButton>("Damage", show_of(loaded.damage, damage_position)), jgui::button<DeferredButton>("Deferred", show_of(loaded.deferred, deferred_position))),
-        jgui::label<StatusLine>(status_text(loaded.frames.status)), jgui::one_shown<SectionGrids>(RunGrid{}, FramesGrid{}, DamageGrid{}, DeferredGrid{})));
+                       jgui::button<DamageButton>("Damage", show_of(loaded.damage, damage_position)), jgui::button<DeferredButton>("Deferred", show_of(loaded.deferred, deferred_position)),
+                       jgui::button<ItemsButton>("Items", show_of(settings.items, items_position)), jgui::button<ProblemsButton>("Problems", show_of(settings.problems, problems_position))),
+        jgui::label<StatusLine>(status_text(loaded.frames.status)), jgui::one_shown<SectionGrids>(RunGrid{}, FramesGrid{}, DamageGrid{}, DeferredGrid{}, ItemsGrid{}, ProblemsGrid{})));
     ui.template get<SectionGrids>().show(loaded.frames.usable ? std::optional<std::size_t>{frames_position} : std::nullopt);
     // The reader holds no more rows than a grid does, as the static_assert above shows, so none of these refuses.
     static_cast<void>(ui.template get<RunGridTag>().set_rows(std::move(loaded.run.rows)));
     static_cast<void>(ui.template get<FramesGridTag>().set_rows(std::move(loaded.frames.rows)));
     static_cast<void>(ui.template get<DamageGridTag>().set_rows(std::move(loaded.damage.rows)));
     static_cast<void>(ui.template get<DeferredGridTag>().set_rows(std::move(loaded.deferred.rows)));
+    static_cast<void>(ui.template get<ItemsGridTag>().set_rows(std::move(settings.items.rows)));
+    static_cast<void>(ui.template get<ProblemsGridTag>().set_rows(std::move(settings.problems.rows)));
     return ui;
 }
 

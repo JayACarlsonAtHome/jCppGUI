@@ -6,6 +6,7 @@
 #include <array>
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <expected>
 #include <optional>
@@ -105,6 +106,77 @@ constexpr void report_node_damage(Node& node, const TreeKey& key, U& ui, std::si
     }
 }
 
+// A node that can answer for items with no place in the compile-time tree: a Dynamic, or a widget holding one.
+template <class Node>
+concept HoldsItems = requires { requires Node::holds_items; };
+
+// How many items the compile-time tree has from this node down, counting the node. A Dynamic is one, however many it holds.
+template <class Node>
+consteval std::uint64_t fixed_item_count();
+
+template <class... C>
+consteval std::uint64_t fixed_items_in_tuple(std::type_identity<std::tuple<C...>>) {
+    return (std::uint64_t{0} + ... + fixed_item_count<C>());
+}
+
+template <class Node>
+consteval std::uint64_t fixed_item_count() {
+    if constexpr (Composite<Node>) {
+        return 1 + fixed_items_in_tuple(std::type_identity<typename Node::children_type>{});
+    } else {
+        return 1;
+    }
+}
+
+// False for a child its parent is not showing now, so not laying out. Only a parent that can show one child at a time has an answer.
+template <class Node>
+[[nodiscard]] constexpr bool child_is_shown(const Node& node, std::size_t index) noexcept {
+    if constexpr (requires { { node.shown() } -> std::same_as<std::optional<std::size_t>>; }) {
+        return node.shown() == index;
+    } else {
+        return true;
+    }
+}
+
+// A run of nodes the compiler knows. In the tree itself, scope is 0 and the position is the ID. Below an item of a Dynamic, scope is that
+// item's ID and the recorder gives each its number, since they come and go with the item.
+struct ItemWalk {
+    std::uint64_t scope{};
+    std::uint64_t position{};
+};
+
+// One node and everything below it. A widget not shown says so with an empty rectangle at the corner: the one it last had would be
+// out of date. An item the recorder has no room for is left out with all that is in it.
+template <class Node, class Recorder>
+constexpr void record_node(Node& node, const TreeKey& key, Recorder& recorder, ItemWalk& walk, std::uint64_t parent_id, bool shown);
+
+template <class Node, class Recorder>
+constexpr void record_node_as(std::uint64_t id, Node& node, const TreeKey& key, Recorder& recorder, ItemWalk& walk, std::uint64_t parent_id, bool shown) {
+    recorder.item_found(ItemFound{id, parent_id, class_name_of<Node>(), type_name_of<typename Node::tag>(), shown ? node.bounds() : Rect{}});
+    if constexpr (Composite<Node>) {
+        std::size_t index = 0;
+        const auto visit_child = [&](auto& child) {
+            record_node(child, key, recorder, walk, id, shown && child_is_shown(node, index));
+            ++index;
+        };
+        std::apply([&](auto&... child) { (visit_child(child), ...); }, node.children());
+    }
+    if constexpr (HoldsItems<Node>) {
+        node.visit_items(key, [&](auto& item, ItemPlace place) -> void {
+            const std::uint64_t item_id = recorder.item_id(ItemKey{id, place.index, place.generation});
+            ItemWalk inside{item_id, 0};
+            if (item_id != 0) record_node_as(item_id, item, key, recorder, inside, id, shown);
+        });
+    }
+}
+
+template <class Node, class Recorder>
+constexpr void record_node(Node& node, const TreeKey& key, Recorder& recorder, ItemWalk& walk, std::uint64_t parent_id, bool shown) {
+    ++walk.position;
+    const std::uint64_t id = walk.scope == 0 ? walk.position : recorder.item_id(ItemKey{walk.scope, walk.position, 0});
+    if (id != 0) record_node_as(id, node, key, recorder, walk, parent_id, shown);
+}
+
 }  // namespace detail
 
 // A tree node holding items of one concrete type. Several kinds of item use several nodes. Capture
@@ -113,6 +185,7 @@ template <class Tag, Widget T, template <class...> class Slots = std::deque>
 class Dynamic {
 public:
     using tag = Tag;
+    static constexpr bool holds_items = true;
 
     constexpr Dynamic() = default;
     // Assigning over a node could free the item whose callback is running, so a node can only be moved into place.
@@ -162,6 +235,15 @@ public:
     [[nodiscard]] constexpr T* focused() noexcept { return focus_ ? pool_.find(*focus_) : nullptr; }
 
     [[nodiscard]] constexpr Rect bounds() const noexcept { return bounds_; }
+
+    // Each live item and where it stands in the pool, for a walk that writes the tree down. Only the tree holds a key.
+    template <class Visit>
+    constexpr void visit_items(const TreeKey&, Visit&& visit) {
+        for_each_live([&](T& item, Handle<T> handle) {
+            visit(item, pool_.place_of(handle));
+            return false;
+        });
+    }
 
     constexpr void paint(const TreeKey& key, Canvas& canvas) {
         for_each_live([&](T& item, Handle<T>) {
@@ -429,6 +511,19 @@ private:
         const TreeKey key{};
         std::size_t position = 0;
         std::apply([&](auto&... child) { (detail::report_node_damage(child, key, *this, position, monitor), ...); }, children_);
+    }
+
+    // Writes the tree down for a recorder: the window itself as the first item, then the rest, depth first. Only an application with a
+    // recorder instantiates this.
+    template <class Recorder>
+    constexpr void record_items(Recorder& recorder) {
+        static constexpr std::uint64_t window_id = 1;
+        const TreeKey key{};
+        detail::ItemWalk walk{0, window_id};
+        recorder.items_begin(window_id + detail::fixed_items_in_tuple(std::type_identity<children_type>{}));
+        recorder.item_found(ItemFound{window_id, 0, detail::class_name_of<Window>(), {}, Rect{Point{}, size_}});
+        std::apply([&](auto&... child) { (detail::record_node(child, key, recorder, walk, window_id, true), ...); }, children_);
+        recorder.items_end();
     }
 
     template <TextShaper Shaper>

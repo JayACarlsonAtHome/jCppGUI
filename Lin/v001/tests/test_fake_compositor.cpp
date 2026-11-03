@@ -1632,6 +1632,123 @@ template <class Script>
     return true;
 }
 
+// The real demo with --record-settings: one click on Help, so that an item comes into being, and then the window is closed.
+enum class SettingsDemoRun : std::uint8_t { Records, BothFlags, NoBase };
+
+template <SettingsDemoRun Run>
+struct SettingsDemo {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr SettingsDemoRun settings_run = Run;
+    static constexpr std::int32_t across = 640;
+    static constexpr std::int32_t down = 480;
+    bool clicked{};
+    void on(Session& session, const SurfaceReady&) { session.configure(across, down); }
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        if (clicked) {
+            session.close_window();
+            return;
+        }
+        clicked = true;
+        auto reference = jgui::make_application(jgui::HeadlessBackend{jgui::Size{jgui::Width{across}, jgui::Height{down}}}, demo::make_ui());
+        if (!reference || !reference->process_pending()) {
+            session.violation("no reference for where Help is");
+            return;
+        }
+        const jgui::Rect help = reference->ui().template get<demo::HelpButton>().bounds();
+        const jgui::Point at = jgui_test::inside(help, jgui_test::number(help.width()) / 2, jgui_test::number(help.height()) / 2);
+        pointer_enter(session, jgui_test::number(at.left()), jgui_test::number(at.top()));
+        left_click(session, jgui_test::number(at.left()), jgui_test::number(at.top()));
+    }
+};
+
+// What a real run wrote, read back with the viewer's own code, and every line of Items shown in the test's log.
+[[nodiscard]] bool settings_file_is_right(const std::filesystem::path& file) {
+    const auto read = jgui::read_jtext_file(file.string());
+    const viewer::LoadedSettings loaded = viewer::load_settings_file(read);
+    std::cout << read_text_file(file.string());
+    if (!loaded.items.usable || !loaded.problems.usable) {
+        std::cerr << "a section could not be read: " << loaded.items.status << " / " << loaded.problems.status << '\n';
+        return false;
+    }
+    const std::vector<viewer::ItemsRow>& rows = loaded.items.rows;
+    if (rows.size() != 6 || !loaded.problems.rows.empty()) {
+        std::cerr << "not six items and no problems: " << loaded.items.status << " / " << loaded.problems.status << '\n';
+        return false;
+    }
+    const jgui::Rect whole{jgui::Point{}, jgui::Size{jgui::Width{SettingsDemo<SettingsDemoRun::Records>::across}, jgui::Height{SettingsDemo<SettingsDemoRun::Records>::down}}};
+    const bool window_row = rows[0].id == 1 && rows[0].parent_id == 0 && rows[0].class_name.ends_with("Window") && rows[0].name.empty() && rows[0].right == whole.right() && rows[0].bottom == whole.bottom() && rows[0].width == whole.width() && rows[0].height == whole.height();
+    const bool button_row = rows[3].id == 4 && rows[3].parent_id == 3 && rows[3].class_name.ends_with("Button") && rows[3].name == "demo::HelpButton" && rows[3].width != jgui::Width{};
+    const bool line_row = rows[5].id == 6 && rows[5].parent_id == 5 && rows[5].class_name.ends_with("Label") && rows[5].name == "demo::HelpLine" && rows[5].height != jgui::Height{};
+    if (!window_row || !button_row || !line_row) {
+        std::cerr << "the rows are not what the window holds\n";
+        return false;
+    }
+    return true;
+}
+
+template <SettingsDemoRun Run>
+[[nodiscard]] int run_the_real_demo_recording_settings() {
+    using std::filesystem::path;
+    const char* built = std::getenv("JGUI_TEST_DEMO");
+    if (built == nullptr) {
+        std::cerr << "JGUI_TEST_DEMO must be set\n";
+        return 1;
+    }
+    const jgui_test::TemporaryDirectory temporary;
+    const path top = std::filesystem::canonical(temporary.path());
+    if (jgui::application_base_from((top / "program").string())) {
+        std::cerr << "a folder above the temporary directory is named like a version, so this test would prove nothing: " << top << '\n';
+        return 1;
+    }
+    const path working_directory = top / "v888" / "here";
+    const path false_home = top / "v777";
+    std::filesystem::create_directories(working_directory);
+    std::filesystem::create_directories(false_home);
+    const path base = Run == SettingsDemoRun::NoBase ? top / "plain" : top / "v321";
+    const path program = base / "build" / "preset" / "jcppgui-demo";
+    std::filesystem::create_directories(program.parent_path());
+    std::filesystem::copy_file(built, program);
+
+    const path errors = top / "errors.txt";
+    std::vector<std::string> flags{"--record-settings"};
+    if (Run == SettingsDemoRun::BothFlags) flags.emplace_back("--redraw-monitor");
+    const int status = jgui_test::run_program(program, (false_home / "jcppgui-demo").string(), working_directory, flags, errors);
+    const std::string said = read_text_file(errors.string());
+    std::cout << "the demo ended with " << status << " and said: " << said << '\n';
+    if (!std::filesystem::is_empty(working_directory) || !std::filesystem::is_empty(false_home)) {
+        std::cerr << "the working directory or argv[0]'s folder was used\n";
+        return 1;
+    }
+    const path settings = base / jgui::default_settings_file_name;
+    const path monitor = base / jgui::default_redraw_file_name;
+    if (Run == SettingsDemoRun::NoBase) {
+        if (status != 1 || !said.contains("no base directory") || !said.contains(jgui::default_settings_file_name) || std::filesystem::exists(settings)) {
+            std::cerr << "the demo with no base directory did not refuse cleanly\n";
+            return 1;
+        }
+        return 0;
+    }
+    if (status != 0 || !settings_file_is_right(settings)) return 1;
+    if (std::filesystem::exists(settings.string() + ".tmp")) {
+        std::cerr << "a temporary file was left\n";
+        return 1;
+    }
+    if (Run == SettingsDemoRun::Records && std::filesystem::exists(monitor)) {
+        std::cerr << "a monitor's file from a run that did not ask for one\n";
+        return 1;
+    }
+    if (Run == SettingsDemoRun::BothFlags) {
+        const viewer::LoadedFile frames = viewer::load_file(jgui::read_jtext_file(monitor.string()));
+        if (!frames.frames.usable || frames.frames.rows.size() < 2 || !frames.damage.usable || !frames.run.usable || frames.run.rows.empty() || !frames.run.rows[0].ended) {
+            std::cerr << "the monitor's file beside it is not whole: " << frames.frames.status << '\n';
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // Runs in the scenario's client process, and the demo is a child of that. Every folder here that is named like a version
 // is a trap: only the base directory may ever hold the file.
 template <DemoPlace Place>
@@ -1715,6 +1832,11 @@ public:
 
     ViewerReference(const LoadedFile& file, std::int32_t width, std::int32_t height)
         : app_{*jgui::make_application(jgui::HeadlessBackend{jgui::Size{jgui::Width{width}, jgui::Height{height}}}, viewer::make_ui(viewer::load_file(file)))} {
+        settle();
+    }
+
+    ViewerReference(const LoadedFile& file, const LoadedFile& settings, std::int32_t width, std::int32_t height)
+        : app_{*jgui::make_application(jgui::HeadlessBackend{jgui::Size{jgui::Width{width}, jgui::Height{height}}}, viewer::make_ui(viewer::load_file(file), viewer::load_settings_file(settings)))} {
         settle();
     }
 
@@ -1818,6 +1940,7 @@ constexpr std::int32_t viewer_height = 500;
 // What each script keeps: where the file is, as the program was told it, and the buffer that came last.
 struct ViewerState {
     std::string path{};
+    std::string settings_path{};
     std::optional<ObjectId> latest{};
     std::size_t commits_seen{};
 
@@ -1833,14 +1956,16 @@ struct ViewerState {
         return pixels ? std::move(*pixels) : std::vector<std::uint32_t>{};
     }
     [[nodiscard]] ViewerReference::LoadedFile file() const { return jgui::read_jtext_file(path); }
+    [[nodiscard]] ViewerReference::LoadedFile settings_file() const { return jgui::read_jtext_file(settings_path); }
 };
 
-enum class ViewerFile : std::uint8_t { Good, Large, Missing, Malformed, Symlink, PathNotText, GoodInBase, NoBase };
+enum class ViewerFile : std::uint8_t { Good, Large, Missing, Malformed, Symlink, PathNotText, GoodInBase, NoBase, SettingsGood, SettingsBadRow, SettingsMissing, SettingsMalformed, OnlySettings, BothInBase };
 
 // What a scenario's file is, what the program is started with, and where it stands. Everything is under its own temporary directory.
 struct ViewerSetup {
     std::filesystem::path program{};
     std::string path{};
+    std::string settings_path{};
     std::vector<std::string> arguments{};
 };
 
@@ -1871,6 +1996,36 @@ void put_file(const std::filesystem::path& where, std::string_view text) {
             std::filesystem::copy_file(built, setup.program);
             if (kind == ViewerFile::GoodInBase) put_file(base / jgui::default_redraw_file_name, jgui_test::redraw_file_text());
             setup.path = (base / jgui::default_redraw_file_name).string();
+            return setup;
+        }
+        case ViewerFile::BothInBase: {
+            const std::filesystem::path base = top / "v321";
+            setup.program = base / "build" / "preset" / "jcppgui-viewer";
+            std::filesystem::create_directories(setup.program.parent_path());
+            std::filesystem::copy_file(built, setup.program);
+            setup.path = (base / jgui::default_redraw_file_name).string();
+            setup.settings_path = (base / jgui::default_settings_file_name).string();
+            put_file(setup.path, jgui_test::redraw_file_text());
+            put_file(setup.settings_path, jgui_test::settings_file_text());
+            return setup;
+        }
+        case ViewerFile::SettingsGood:
+        case ViewerFile::SettingsBadRow:
+        case ViewerFile::SettingsMissing:
+        case ViewerFile::SettingsMalformed:
+        case ViewerFile::OnlySettings: {
+            const std::filesystem::path settings = top / "other.jtext";
+            if (kind != ViewerFile::OnlySettings) put_file(named, jgui_test::redraw_file_text());
+            if (kind == ViewerFile::SettingsGood || kind == ViewerFile::OnlySettings) put_file(settings, jgui_test::settings_file_text());
+            if (kind == ViewerFile::SettingsMalformed) put_file(settings, "=== jText File ===\n=== Section: Items ===\n 1. ?# x\n");
+            if (kind == ViewerFile::SettingsBadRow) {
+                std::string bad = jgui_test::settings_file_text();
+                bad.replace(bad.find(jgui_test::settings_test_left), jgui_test::settings_test_left.size(), "nope");
+                put_file(settings, bad);
+            }
+            setup.settings_path = settings.string();
+            setup.path = named.string();
+            setup.arguments = {setup.path, setup.settings_path};
             return setup;
         }
         case ViewerFile::Missing:
@@ -2116,11 +2271,128 @@ struct ViewerLargeFile {
     }
 };
 
+constexpr std::size_t items_class_column = 2;
+constexpr std::size_t items_left_column = 4;
+constexpr std::size_t items_bottom_column = 6;
+constexpr std::size_t items_right_column = 7;
+constexpr std::size_t problems_what_column = 2;
+
+// Items, then Problems, then back to Frames, through the wire, each compared with the reference pixel for pixel, with text the script
+// names itself. What each file holds is that file's business: one file's trouble must show only in its own sections.
+template <ViewerFile Kind>
+struct ViewerSettings {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr ViewerFile viewer_file = Kind;
+    static constexpr bool monitor_file_is_fine = Kind != ViewerFile::OnlySettings;
+    static constexpr bool settings_are_refused = Kind == ViewerFile::SettingsMissing || Kind == ViewerFile::SettingsMalformed;
+    enum class Step : std::uint8_t { First, ClickedItems, ClickedProblems, ClickedFrames, Done };
+    ViewerState state{};
+    Step step{Step::First};
+
+    [[nodiscard]] static constexpr std::string_view settings_refusal() { return Kind == ViewerFile::SettingsMissing ? "cannot look at" : "jText line 3: a line stands outside any block"; }
+
+    template <class ButtonTag>
+    static void click_on(Session& session, ViewerReference& reference) {
+        const jgui::Point at = reference.centre_of<ButtonTag>();
+        left_click(session, jgui_test::number(at.left()), jgui_test::number(at.top()));
+    }
+
+    static void says(Session& session, std::span<const std::uint32_t> pixels, ViewerReference& reference, std::string_view text) {
+        if (!text_is_at(pixels, viewer_width, label_text_at(reference.get<viewer::StatusLine>().bounds()), text, jgui::theme::background)) session.violation("the status line does not say: " + std::string{text});
+    }
+
+    void check_items(Session& session, std::span<const std::uint32_t> pixels, ViewerReference& reference) const {
+        if constexpr (settings_are_refused) {
+            says(session, pixels, reference, settings_refusal());
+            if (reference.get<viewer::SectionGrids>().shown()) session.violation("a grid shows for a settings file that was refused");
+        } else {
+            const auto& grid = reference.get<viewer::ItemsGridTag>();
+            if (reference.get<viewer::SectionGrids>().shown() != viewer::items_position) session.violation("the Items grid is not shown");
+            says(session, pixels, reference, Kind == ViewerFile::SettingsBadRow ? "Items: 2 rows, 1 row left out: a value did not convert" : "Items: 3 rows");
+            if (!text_is_at(pixels, viewer_width, header_text_at(grid, 0), "ID", jgui::theme::bar)) session.violation("no ID header");
+            if (!text_is_at(pixels, viewer_width, header_text_at(grid, items_class_column), "Class_Name", jgui::theme::bar)) session.violation("no Class_Name header");
+            if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 1, 0), "2", jgui::theme::background)) session.violation("no ID in the second row");
+            if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 1, items_class_column), "jgui::Button", jgui::theme::background)) session.violation("no class name in the second row");
+            if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 1, items_left_column), "7", jgui::theme::background)) session.violation("no Left in the second row");
+            if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 1, items_bottom_column), "29", jgui::theme::background)) session.violation("no Bottom in the second row");
+            if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 1, items_right_column), "57", jgui::theme::background)) session.violation("no Right in the second row");
+        }
+    }
+
+    void check_problems(Session& session, std::span<const std::uint32_t> pixels, ViewerReference& reference) const {
+        if constexpr (settings_are_refused) {
+            says(session, pixels, reference, settings_refusal());
+            if (reference.get<viewer::SectionGrids>().shown()) session.violation("a grid shows for a settings file that was refused");
+        } else {
+            const auto& grid = reference.get<viewer::ProblemsGridTag>();
+            says(session, pixels, reference, "Problems: 1 row");
+            if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 0, 1), "3", jgui::theme::background)) session.violation("no item in the Problems row");
+            if (!text_is_at(pixels, viewer_width, cell_text_at(grid, 0, problems_what_column), "Outside its parent", jgui::theme::background)) session.violation("no reason in the Problems row");
+        }
+    }
+
+    void check_frames(Session& session, std::span<const std::uint32_t> pixels, ViewerReference& reference) const {
+        if constexpr (monitor_file_is_fine) {
+            says(session, pixels, reference, "Frames: 200 rows");
+            if (reference.get<viewer::SectionGrids>().shown() != viewer::frames_position) session.violation("the Frames grid is not shown");
+        } else {
+            says(session, pixels, reference, "cannot look at");
+            if (reference.get<viewer::SectionGrids>().shown()) session.violation("a grid shows for a monitor file that is missing");
+        }
+    }
+
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ViewerReference reference{state.file(), state.settings_file(), viewer_width, viewer_height};
+        const std::vector<std::uint32_t> pixels = state.picture(session);
+        switch (step) {
+            case Step::First: {
+                if (!reference.same_picture(pixels)) session.violation("the first frame is not the window that was expected");
+                check_frames(session, pixels, reference);
+                const jgui::Point at = reference.centre_of<viewer::ItemsButton>();
+                pointer_enter(session, jgui_test::number(at.left()), jgui_test::number(at.top()));
+                click_on<viewer::ItemsButton>(session, reference);
+                step = Step::ClickedItems;
+                return;
+            }
+            case Step::ClickedItems:
+                reference.click<viewer::ItemsButton>();
+                if (!reference.same_picture(pixels)) session.violation("the Items section is not the window that was expected");
+                check_items(session, pixels, reference);
+                click_on<viewer::ProblemsButton>(session, reference);
+                step = Step::ClickedProblems;
+                return;
+            case Step::ClickedProblems:
+                reference.click<viewer::ItemsButton>();
+                reference.click<viewer::ProblemsButton>();
+                if (!reference.same_picture(pixels)) session.violation("the Problems section is not the window that was expected");
+                check_problems(session, pixels, reference);
+                click_on<viewer::FramesButton>(session, reference);
+                step = Step::ClickedFrames;
+                return;
+            case Step::ClickedFrames:
+                reference.click<viewer::ItemsButton>();
+                reference.click<viewer::ProblemsButton>();
+                reference.click<viewer::FramesButton>();
+                if (!reference.same_picture(pixels)) session.violation("the Frames section is not the window that was expected");
+                check_frames(session, pixels, reference);
+                session.close_window();
+                step = Step::Done;
+                return;
+            case Step::Done:
+            default:
+                return;
+        }
+    }
+};
+
 // Runs in the scenario's client process. The real program starts in a directory of its own, and it must end well.
 [[nodiscard]] int run_the_real_viewer(const ViewerSetup& setup, const std::filesystem::path& top) {
     const std::filesystem::path errors = top / "errors.txt";
     // Two arguments are a mistake it says at once, before it opens any window.
-    if (jgui_test::run_program(setup.program, "jcppgui-viewer", top, {"one", "two"}, errors) != 2) {
+    if (jgui_test::run_program(setup.program, "jcppgui-viewer", top, {"one", "two", "three"}, errors) != 2) {
         std::cerr << "too many arguments did not end in the usage message\n";
         return 1;
     }
@@ -2144,6 +2416,7 @@ template <class Script>
     }
     Script script{};
     script.state.path = setup.path;
+    script.state.settings_path = setup.settings_path;
     return run_scenario(script, GlobalSet{}, [&] { return run_the_real_viewer(setup, top); });
 }
 
@@ -2153,6 +2426,8 @@ template <class Script>
 [[nodiscard]] bool run_one() {
     if constexpr (std::same_as<Script, MonitorVersusNone>) {
         return run_monitor_versus_none();
+    } else if constexpr (requires { Script::settings_run; }) {
+        return run_scenario(Script{}, GlobalSet{}, [] { return run_the_real_demo_recording_settings<Script::settings_run>(); });
     } else if constexpr (requires { Script::viewer_file; }) {
         return run_viewer_scenario<Script>();
     } else if constexpr (requires { Script::place; }) {
@@ -2258,6 +2533,15 @@ constexpr auto scenarios = std::tuple{
     Named<ViewerRefused<ViewerFile::NoBase>>{"viewer_copy_with_no_base"},
     Named<ViewerFileInItsBase>{"viewer_file_in_its_base"},
     Named<ViewerLargeFile>{"viewer_65536_rows"},
+    Named<SettingsDemo<SettingsDemoRun::Records>>{"settings_demo_records"},
+    Named<SettingsDemo<SettingsDemoRun::BothFlags>>{"settings_demo_both_flags"},
+    Named<SettingsDemo<SettingsDemoRun::NoBase>>{"settings_demo_no_base"},
+    Named<ViewerSettings<ViewerFile::SettingsGood>>{"settings_viewer_items"},
+    Named<ViewerSettings<ViewerFile::SettingsBadRow>>{"settings_viewer_bad_row"},
+    Named<ViewerSettings<ViewerFile::SettingsMissing>>{"settings_viewer_missing_file"},
+    Named<ViewerSettings<ViewerFile::OnlySettings>>{"settings_viewer_only_settings"},
+    Named<ViewerSettings<ViewerFile::SettingsMalformed>>{"settings_viewer_malformed_file"},
+    Named<ViewerSettings<ViewerFile::BothInBase>>{"settings_viewer_files_in_its_base"},
 };
 
 }  // namespace
