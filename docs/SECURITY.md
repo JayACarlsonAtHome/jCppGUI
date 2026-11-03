@@ -2,8 +2,13 @@
 
 ## Status
 
-A first internal security review was done on 2026-11-02, and an independent review follows. This is a
-skeleton, and what follows is the design intent and what the tests cover.
+This is an early prototype, still experimental and changing constantly. An internal security review was done on 2026-11-02, with AI tooling, and no independent review has
+been done. What follows is the design intent and what the tests cover. It is not a claim that the code is secure.
+
+## Reporting a vulnerability
+
+Please report it privately, through **Report a vulnerability** on the repository's GitHub Security tab, and not in a public issue.
+This is a small project, with no promised response time.
 
 ## Trust boundaries
 

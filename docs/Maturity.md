@@ -1,6 +1,6 @@
 # Maturity
 
-**This is a skeleton.** It proves foundations. It is not a usable toolkit.
+**This is an early prototype, still experimental and changing constantly.** It proves foundations. It is not a usable toolkit, and this page can fall behind the code.
 
 ## What works
 
@@ -12,9 +12,9 @@
 - The core logic run in `static_assert`, including the demo tree from events to pixels.
 - Compile-fail tests that prove the compiler rejects the mistakes it is meant to catch.
 - The real `WaylandBackend` against a scripted compositor, with no screen, over a real socket.
-- `DataGrid`, a read-only typed table with virtual drawing, scroll bars, wheel and smooth scrolling, selection, sorting, column resizing, and each column's font and alignment from buttons in its header. **The buttons, the wait after a press and monospace text have only run against the test compositor and headless, and no one has seen them on a real screen.**
+- `DataGrid`, a read-only typed table with virtual drawing, scroll bars, wheel and smooth scrolling, selection, sorting, column resizing, and each column's font and alignment from buttons in its header. **The automated tests of the buttons, the wait after a press and monospace text run only against the test compositor and headless. The owner has used the grid on a real screen, as noted for the viewer below.**
 - A timer in the event loop, on the monotonic clock, that a widget asks through `TimersDue`. **That an idle program uses no CPU is shown by counting the loop's turns against the test compositor, and has not been measured on a real session.**
-- `jcppgui-viewer`, which shows a redraw monitor's file and a settings record in those grids, one section at a time. **It has only run against the test compositor, and no one has seen it on a real screen.**
+- `jcppgui-viewer`, which shows a redraw monitor's file and a settings record in those grids, one section at a time. **The automated tests run only against the test compositor. On 2026-11-03 the owner used it on a real screen and accepted the grid by eye, which was not a check of each feature.**
 - A redraw monitor for development, `jcppgui-demo --redraw-monitor`, which records each frame to a jText file. A file from a live
   `--smoke` run passed jText's own parser and validator, in a throwaway check that is not part of this repository.
 
@@ -64,7 +64,7 @@ the keys that sort a current column and every case of them, ties across keys in 
 
 Sorting a million rows, each with its frame, in one delivery: 187 ms by a number, 118 ms by a string, 152 ms by a bool with half the rows tied, 619 ms by that bool and a string, and 617 ms by those two and a number. Going back to the rows' own order took 5 ms. So a sort of that size misses frames, and one of two or more keys misses many, and the program shows nothing until it ends.
 
-Not shown: a real wheel, a real touchpad and real keys against a real compositor. The arrow keys have been through the keyboard on the wire, with a test keymap that has them. The rest of the navigation keys are checked against xkbcommon's values at compile time and run in `static_assert`, but not on the wire. Hover has no look of its own. No one has seen the current column's tint, or a digit in its mark, on a real screen, so how readable they are is unconfirmed.
+Not shown: a real wheel, a real touchpad and real keys against a real compositor. The arrow keys have been through the keyboard on the wire, with a test keymap that has them. The rest of the navigation keys are checked against xkbcommon's values at compile time and run in `static_assert`, but not on the wire. Hover has no look of its own. How readable the current column's tint and a digit in its mark are on a real screen is unconfirmed.
 
 ## The redraw monitor
 
@@ -108,7 +108,7 @@ Files used as test inputs passed jText's own parser and validator, in a throwawa
 | The first frame | 3.7 ms |
 | A wheel-notch frame, total, median and worst of 200 | 2.3 ms, 2.4 ms |
 
-Not shown: the viewer on a real screen, with a real pointer, or a file that changes while it runs: there is no reload or watching. The light profile, raw lines, multiline values, includes and templates are refused, so `samples/workshop_tools` in the jText repository is refused too: one is light profile, and the other has templates.
+Not shown: any automated test of the viewer on a real screen or with a real pointer, beyond the owner's use noted above, or a file that changes while it runs: there is no reload or watching. The light profile, raw lines, multiline values, includes and templates are refused, so `samples/workshop_tools` in the jText repository is refused too: one is light profile, and the other has templates.
 
 ## What has not been shown
 

@@ -3,9 +3,12 @@
 A native C++ GUI toolkit in which every item is its own type. There is no type erasure, so the
 compiler can catch mistakes that other toolkits only find at run time.
 
-**This is a skeleton.** It opens a native Wayland window with a menu bar holding a Help button.
-Clicking Help shows a line of text, and clicking again hides it. A second program, `jcppgui-viewer`, shows a redraw monitor's file and a settings record in
-data grids. See `docs/Maturity.md` for what works and what does not.
+**This is still experimental and changing constantly. It is an early prototype, built security-first and not yet independently reviewed. Do not rely on it to protect anything yet.**
+Anything here, including its API, can change without notice. It runs only on Linux under Wayland, and it has no text entry and no drop-down menus.
+
+It opens a native Wayland window with a menu bar holding a Help button. Clicking Help shows a line of text, and clicking again hides it.
+A second program, `jcppgui-viewer`, shows a redraw monitor's file and a settings record in read-only data grids.
+See `docs/Maturity.md` for what works and what does not, and `docs/SECURITY.md` to report a vulnerability.
 
 ## Build
 
