@@ -614,7 +614,8 @@ void test_the_real_font(Checker& check) {
     const Rect name_cell{Point{left_after(body.left() + Width{80}), body.top()}, Size{Width{99}, grid.row_height() - Height{1}}};
     check(jgui_test::count_other_than(backend, name_cell, theme::background) > 0, "and the text itself is there");
 
-    // Scrolling part of a row leaves the header as it was.
+    // Scrolling all but two pixels of the first row under the header, its text and its line with it, leaves the header as it was.
+    const Height scrolled = grid.row_height() - Height{2};
     std::vector<std::uint32_t> header_before;
     const auto read_header = [&] {
         std::vector<std::uint32_t> pixels;
@@ -625,14 +626,14 @@ void test_the_real_font(Checker& check) {
     };
     header_before = read_header();
     const std::uint64_t frames = app->frames();
-    backend.inject(PointerScroll{jgui_test::centre(body), ScrollDown::of_pixels(5), ScrollAcross{}});
-    check(app->process_pending().has_value() && app->frames() == frames + 1 && grid.scroll_down() == Height{5}, "five pixels down");
+    backend.inject(PointerScroll{jgui_test::centre(body), ScrollDown::of_pixels(number(scrolled)), ScrollAcross{}});
+    check(app->process_pending().has_value() && app->frames() == frames + 1 && grid.scroll_down() == scrolled, "that far down");
     check(read_header() == header_before, "no row reaches the header");
 
     // A click on what shows selects it, at the scrolled place.
     jgui_test::click(*app, jgui_test::inside(body, 300, number(grid.row_height()) * 2));
     check(grid.selected() == GridRow{2}, "the row under the pointer, as scrolled");
-    const Top lit_row = (body.top() + (repeated_extent(grid.row_height(), 2) + Height{3})) - Height{5};
+    const Top lit_row = (body.top() + (repeated_extent(grid.row_height(), 2) + Height{3})) - scrolled;
     check(backend.pixel(Point{left_after(body.left() + Width{500}), lit_row}) == theme::button_pressed.argb, "its row is lit");
 
     // The thumb is drawn where the grid says, in the bar beside the body.

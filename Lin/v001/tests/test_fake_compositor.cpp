@@ -1218,15 +1218,20 @@ struct GridResizeDuringThumbDrag {
             pointer_button(session, wire::button_left, wire::button_pressed);
             pointer_motion(session, in_the_bar_x, thumb_y + 200);
         } else if (idles == 2) {
+            // Each size is drawn before the next thing happens, so the grid really has been that size.
             session.configure(300, 200);
-            pointer_motion(session, in_the_bar_x, 150);
-            session.configure(1, 1);
-            pointer_motion(session, in_the_bar_x, 150);
-            session.configure(640, 480);
         } else if (idles == 3) {
+            pointer_motion(session, in_the_bar_x, 150);
+        } else if (idles == 4) {
+            session.configure(1, 1);
+        } else if (idles == 5) {
+            pointer_motion(session, in_the_bar_x, 150);
+        } else if (idles == 6) {
+            session.configure(640, 480);
+        } else if (idles == 7) {
             pointer_motion(session, in_the_bar_x, 470);
             pointer_button(session, wire::button_left, wire::button_released);
-        } else if (idles == 4) {
+        } else if (idles == 8) {
             pointer_motion(session, in_the_body_x, in_the_body_y);
             session.close_window();
         }
@@ -1310,6 +1315,8 @@ struct GridCursor {
             pointer_motion(session, 150, 26);
             pointer_button(session, wire::button_left, wire::button_released);
         } else if (idles == 2) {
+            // Still on the boundary, which came along with the drag: the release must have kept its shape, so this sends nothing.
+            pointer_motion(session, 150, 26);
             pointer_motion(session, in_the_body_x, in_the_body_y);
         } else {
             session.close_window();
