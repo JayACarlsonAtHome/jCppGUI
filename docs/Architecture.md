@@ -47,6 +47,7 @@ Non-`constexpr` code is limited to what needs the OS or a C library:
 | `src/wayland/wayland_impl.hpp`, `wayland_backend.cpp` | libwayland, sockets, `poll`. Every C call that can fail is behind a template parameter, `Api`, so a test can make it fail, with no test branch here |
 | `load_keymap`, `create_buffer_file`, `UniqueFd` in `src/wayland/untrusted` | `close`, `fstat`, `memfd_create`, `posix_fallocate`, xkbcommon. The checks on values are `constexpr` |
 | `read_at`, `write_at` in `src/file_io.hpp` | `pread`, `pwrite`. Their loop and arithmetic are `constexpr` and tested with made-up system calls |
+| `read_jtext_file` in `src/jtext/read_file.cpp` | `open`, `fstat`, `fstatat`. Parsing what it read is `constexpr` |
 | `FileSink` in `src/monitor/file_sink.cpp`, `SteadyClock` | `openat`, `fstat`, `fstatat`, `unlinkat`, `renameat`, the clocks. `FrameMonitor` is `constexpr` over a clock and a sink given as template parameters |
 | `TextEngine` in `src/text/text.cpp` | fontconfig, HarfBuzz, FreeType. Validation, rounding and glyph copying are `constexpr` |
 | `Application` | `std::this_thread::get_id`, and it owns a `TextEngine` |
@@ -59,8 +60,8 @@ demo, or your program
   ApplicationCore              sends events into the tree, carries out window requests, damage, drawing
   Window, WindowFrame, MenuBar,  the typed tree, messages and pools
   Button, Label, DataGrid,
-  Dynamic, Pool
-  ScrollBar, and small helpers  scroll_bar, spans, selection_step, index_sort, cell_text
+  OneShown, Dynamic, Pool
+  ScrollBar, and small helpers  scroll_bar, spans, selection_step, index_sort, cell_text, panels
   Canvas, PixelBuffer, Geometry
 ---------------- Backend concept: nothing above this line includes a display header ----------------
   HeadlessBackend              tests inject events and read pixels back
@@ -293,6 +294,41 @@ using Grid = jgui::DataGrid<GridTag, Row, Picked, jgui::Column<"Left", &Row::lef
 - **Selection** is held as a position on the screen and given out as a `GridRow`, an index into the rows as given. It follows its row across a sort. The optional `Notify` message goes out only when the selection really changes, last, so a receiver finds the grid settled, and may give it new rows from there. `set_rows` during that delivery is safe for this reason.
 - **Damage.** Motion draws nothing. A scroll that clamps to the same offset draws nothing. Focus is compared with what was last painted, because the frame clears the focus before a press in the grid gives it back.
 - **Sizes.** A row's height comes from the font, at most `max_grid_row_height`, 2048, and a million of those still fit a length, as a `static_assert` shows. So the offsets are ordinary `Height` and `Width` values.
+
+## The jText reader
+
+`jtext.hpp` reads the full profile of a jText file, written by anything, and it is not in `jgui.hpp`. Parsing takes a `string_view` and is `constexpr`, so it runs in `static_assert`. The result owns a copy of the text and holds 32-bit offsets into it, so it holds no view of anything else, and it can move. `read_jtext_file`, in `src/jtext/`, reads a file through `read_at` and is the only part that needs a library, `jgui_jtext`. It does not link jText's library.
+
+**Lines.** A line is what section 3 of jText's `SPEC.md` says: optional padding of one space, a number from 1 to 99, a period, whitespace, a formatter counted in code points, whitespace, data, and a comment marked by its character with a space on each side. Each value is trimmed of spaces and tabs only. The old longer markers keep their right two characters, as the spec says. A formatter's characters must be punctuation or symbols by Unicode's general category, from a table generated from Unicode 16 and kept in `jtext_characters.hpp`, so a character assigned one of those categories later is refused until the table is regenerated. A comment is recognised and dropped: the spec asks readers to keep comments, and no reader of ours needs them yet.
+
+**Structure.** The `//` wrapper and other comment lines, which start in the first column, are skipped, a byte-order mark is skipped, and a line may end in `\r\n`. Every block must close, so a file cut short anywhere is refused. A record starts at field 1, a later line must be past what its record has filled, and a field its record leaves out is the empty string, so compact rows, one-line-per-field records and a mix of them all read. Field declarations must be numbered in order and need a name and at least one more level. What those levels say is not read: a typed row decides how a value is read.
+
+**It refuses, naming the line, and never guesses.** Beyond what the spec forbids, it refuses what it does not do yet: the light profile, `[]` raw lines, `[*` multiline values, includes and templates. An include is refused so that no file can make this open another. It is stricter than the spec in three places, each to avoid a choice it would otherwise have to guess: two sections or two fields with the same name; a file with no `=== jText File ===` header, which the spec lets older logs omit, because a cut file could look like one; and a control character anywhere, including U+001F, the null mark of files before version 0.8. It also keeps to the spec where jText's own parser is looser: more than one space of padding, no whitespace after the period or after the formatter, and text after a formatter's last punctuation with no space between, are refused. A jText version in the header is not compared to anything. No error message quotes the file.
+
+| Limit | Default |
+|---|---|
+| The whole file, `JTextLimits::file_bytes` | 64 MiB, and never over 4 GiB because offsets are 32 bits |
+| Sections in a file | 256 |
+| Rows in a section | 1,000,000, the same as a grid, as a `static_assert` shows |
+| Values in the file, counted as rows times declared fields | 16,000,000, so a short file cannot ask for much memory: at most 128 MiB of offsets |
+| A section's or a field's name | 256 bytes |
+| Fields in a section | 99, as the format says |
+
+**Helpers** each answer with a `std::expected`, and an empty or wrong value is an `Error`, never a default: `get_section`, `get_field_index`, `get_row_count`, `get_cell_string`, `get_cell_int`, `get_cell_bool`, `get_top_one_string`, `get_top_one_int`. Numbers are strict: an optional sign and digits, in range, and nothing else. A view from `get_cell_string` needs the file to stay alive.
+
+**Typed rows.** `get_typed_rows<Row, Columns...>` takes the same `Column` types a `DataGrid` does, and `get_rows_for_grid<Grid>` takes them from a grid's own declaration, so a program writes them once. Columns are matched to the file's fields by name, in any order. A column the file lacks is an `Error`, and a field the program does not name is ignored. A row with a value that does not convert is left out and counted in `left_out`. `CellParse<T>` says how text becomes each type, and a program can add one. A negative number for a length is a conversion failure, not a zero, and a member with no `CellParse` does not compile.
+
+## The viewer
+
+`demo/viewer.cpp` is `jcppgui-viewer`. It shows `redraw_monitor.jtext` from the application's base directory, or the path given as its one argument, and reads it once, at the start. `demo/viewer_ui.hpp` is its window, which the tests include: a menu bar with a button per section, a line saying what shows, and the chosen section's grid in all the room left. It opens on `Frames`.
+
+A path, a file or a section that cannot be read never ends the program. The window opens, the line says why, and no grid is shown. A section the file lacks, or that lacks a column, is that section's trouble alone. Rows left out are counted on the line. Each section's grid keeps its rows, its scroll and its sort while another shows.
+
+`OneShown<Tag, Children...>` is the small widget this needed. It holds several widgets and only the one shown gets the layout, the paint and the events, so the others cost nothing. A callback holds no key, so the one going away is told the pointer and the focus have gone as soon as that delivery ends.
+
+## Panel helpers
+
+`panels.hpp` is `constexpr` and small. `full_of`, `left_half_of`, `right_half_of`, `top_half_of`, `bottom_half_of` and the four quarters such as `top_left_quarter_of` each take a parent `Rect` and return a `Rect`. A quarter is built as a half of a half. With an odd size, **the left half and the top half take the extra pixel,** so two halves always meet and always make the parent. `split_remaining_space` takes a length and an ordered list of `PanelSize` along one axis, where filling is what a default-made one does and `PanelSize::fixed` must be asked for by name. Fixed panels take their size first, in order, and filling panels share the rest, the earlier ones taking any extra pixels. Too much asked for clips in order, so sizes never go negative or overlap. With no filling panel, what the fixed ones leave stays unused. There is no panel widget, splitter or layer yet. `OneShown` uses `full_of`, and nothing in a program uses `split_remaining_space` yet.
 
 ## OS and version layout
 

@@ -24,7 +24,9 @@ skeleton, and what follows is the design intent and what the tests cover.
 | Program arguments | `program_arguments` refuses a negative count, more than 4096 arguments, a null argument and one over 128 KiB, and returns copies. |
 | C strings | `string_from_c` stops at the terminator or at a limit, and refuses a string over the limit: a global's name, a protocol error's interface, fontconfig's path and each argument. A name compared with it comes from the generated glue, which is built into this program. |
 | The redraw monitor's file | Output, and only with `--redraw-monitor` or a program that asks for `FrameMonitor`. The directory is the application's base directory, found from the kernel's link to the running executable and never from `argv[0]`, the environment or where the program was started, or a directory the program names. It is opened once with `O_DIRECTORY` and `O_CLOEXEC`, and the name must be a plain name in it. With no base directory, nothing is written and the reason is kept for the program to report. A new file is made beside the old with `O_CREAT`, `O_EXCL`, `O_NOFOLLOW`, `O_CLOEXEC` and mode 0600, and renamed over it. If a symlink, a directory, a pipe or anything else not a regular file stands at either name, it is refused and left alone, and writing stops, with the program going on and the reason kept for it to report. A rename replaces a link and never follows it, so swapping one in after the check points nothing anywhere. **What a local attacker can still do:** someone who can write to that directory can replace or remove the file between writes, so what is read there is only as good as that directory. So keep it out of a directory other users can write to. A leftover temporary file that is a regular file is removed, whoever made it. **What it holds is development information:** frame timings, window sizes, class and tag names. Timings say something about what the machine and the program are doing, so treat the file as private and do not ship with the monitor on. No window content is in it: a frame's hash is compared and not written. Values cannot break its structure: see `docs/Architecture.md`. |
-| Clipboard, files, images | Not implemented. They will be trust boundaries when they exist. |
+| jText files | **Untrusted input.** Anyone may have written one, including the viewer's argument. The path itself must be a regular file: `fstatat` without following a link, then `open` with `O_NOFOLLOW`, `O_NONBLOCK` and `O_CLOEXEC`, then `fstat` on what was opened, so a symbolic link, a pipe, a directory or a device is refused, and a swap between the look and the open finds nothing to follow. Links in the folders above it are followed, and it can be any file the user can read. Its size is checked against a limit, 64 MiB by default, before anything is read, and it is read through `read_at` into memory we own. Every limit is in `docs/Architecture.md`, and the limit on values keeps a short file from asking for much memory. Each line must be valid UTF-8 with no control character but a tab, so no text from a file can break a line or a display. An include is refused, so a file cannot make this read another. No error message quotes the file, so what a label shows on refusal is our own text and, at most, the path given. What a file puts in a cell goes to the shaper as any text does, under its own limits: `docs/Architecture.md`. A file changed during a read ends in an `Error` or a structure check, and a file changed afterwards is not seen. |
+| Viewer's path | The argument must be text that can be shown, at most 4096 bytes, or the window says it is not. It is used as given, relative to where the program started. With no argument, the path comes from the application's base directory, as the monitor's does. A title takes at most 255 bytes of its file name, so a long argument cannot cost the window its title. |
+| Clipboard, other files, images | Not implemented. They will be trust boundaries when they exist. |
 
 **Font hinting is off, so that an untrusted font's bytecode does not run.** Every glyph loads with `FT_LOAD_NO_HINTING | FT_LOAD_NO_AUTOHINT`, set
 once in `src/text/text.cpp` and given to both FreeType and HarfBuzz's `hb-ft`. Both flags are needed. FreeType ignores
@@ -56,6 +58,7 @@ after dispatch returns.
   glyph slot, and each value is checked before it is used. The rule scripts refuse `views::counted` and `strlen` and its
   relatives anywhere else.
 - **The redraw monitor's file** uses `write_at` too, and adds no new untyped call. `fstat` and `fstatat` take a typed `struct stat`.
+- **Reading a jText file** uses `read_at` and those same calls, and adds no new untyped call.
 - **Nothing is shared-mapped by our code**, and the same script refuses the mapping calls. The buffer
   file is shared with the compositor by descriptor only, and this process holds no mapping of it. That
   was checked once on the live demo, by reading its mappings while its buffers were open.
@@ -147,13 +150,14 @@ code and with no copy of its logic:
 | `utf8` | `valid_utf8` | none |
 | `keymap` | `load_keymap` under the real compositor context, through a real descriptor | `tests/fuzz/seeds/keymap/minimal.xkb` |
 | `font` | `TextEngine::from_font_bytes` and `shape`, through every font check, HarfBuzz, FreeType and our glyph copying | the default sans-serif, found by `fc-match` at run time and never committed |
+| `jtext` | The jText parser, the helpers and typed rows, with an accepted file's every value checked, and whatever the monitor's writer takes written and read back as the same values. **Here the code being fuzzed is ours and instrumented,** so its coverage guides the search, and it has a dictionary of the grammar | two real monitor files, in `tests/fuzz/seeds/jtext/` |
 | `backend` | The real `WaylandBackend`, reading through a real socket. The input is read as records of an object, an event and arguments, and optionally a keymap, so most of it passes libwayland's own checks and reaches every listener handler | none |
 
-Run one with `bash tests/fuzz/run.sh <utf8|keymap|font|backend> <seconds>`, after `cmake --preset clang-fuzz` and
+Run one with `bash tests/fuzz/run.sh <utf8|keymap|font|backend|jtext> <seconds>`, after `cmake --preset clang-fuzz` and
 `cmake --build --preset clang-fuzz`. Normal CTest does not run these. `ctest --preset clang-fuzz` runs only a tiny
 smoke of each.
 
-**The limit is plain.** System FreeType, HarfBuzz and xkbcommon are not instrumented. libFuzzer gets coverage only
+**The limit is plain, except for `jtext`.** System FreeType, HarfBuzz and xkbcommon are not instrumented. libFuzzer gets coverage only
 from our code, so nothing guides it through their parsers: it mutates whole seed files blindly, and only a crash
 or abort inside a library is noticed. ASan does not see a library's internal memory errors, except where they
 cross an interceptor such as `memcpy`. Finding deep library bugs would need those libraries built from source
@@ -163,6 +167,8 @@ Only short runs have been done so far: about 60 seconds each of `utf8`, `keymap`
 45 seconds and 320,000 inputs of `backend`, with none after the fix for the abort it found within its first 30 seconds:
 an event of a later version reaching an empty listener entry. That is not evidence of safety, and the font run managed
 only about 35,000 inputs. The `backend` harness passes no descriptor other than a keymap's, and it does not draw.
+
+The `jtext` harness ran for 120 seconds on 2026-11-03 under `clang-fuzz`, and 2.26 million inputs found no crash, with coverage of 1704 points. That run followed one of the same length with the same result. Two parser mutations, control characters let through and values left untrimmed, each ended a short run in an abort, so the harness can notice. By hand, its 809 corpus files were also compared with jText's own parser and validator: no file this reader took was refused by that parser, and none this reader refused had passed both. 350 files it took failed that validator, for values or declared types the validator checks and this reader does not. An earlier comparison found one difference, a comment line that did not start in the first column, now refused. These are short runs and one comparison, and not evidence of safety.
 
 ## Accepted risks
 

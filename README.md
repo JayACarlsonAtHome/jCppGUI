@@ -4,8 +4,8 @@ A native C++ GUI toolkit in which every item is its own type. There is no type e
 compiler can catch mistakes that other toolkits only find at run time.
 
 **This is a skeleton.** It opens a native Wayland window with a menu bar holding a Help button.
-Clicking Help shows a line of text, and clicking again hides it. See `docs/Maturity.md` for what
-works and what does not.
+Clicking Help shows a line of text, and clicking again hides it. A second program, `jcppgui-viewer`, shows a redraw monitor's file in
+data grids. See `docs/Maturity.md` for what works and what does not.
 
 ## Build
 
@@ -55,6 +55,15 @@ Callbacks are generic lambdas with an explicit `-> void`. `docs/Architecture.md`
 in the application's base directory, the `vNNN` folder above the executable, so here `Lin/v001/redraw_monitor.jtext`: why it was drawn, how long each part took, which widgets asked for it, and whether it changed any pixel.
 A program opts in by passing a `jgui::FrameMonitor<>` to `make_application`, from `jCppGUI/v001/redraw_monitor.hpp`, and linking `jgui_monitor`.
 Without one, the toolkit has no monitor in it. See `docs/Architecture.md`.
+
+The viewer shows that file, one section at a time. Close the demo first, then:
+
+```
+./build/gcc-debug/jcppgui-viewer
+./build/gcc-debug/jcppgui-viewer some/other.jtext
+```
+
+With no argument, it reads `redraw_monitor.jtext` from the same base directory. A file it cannot read does not end it: the window says why. It reads the full profile of jText only, and reads once, when it starts.
 
 ## Documents
 

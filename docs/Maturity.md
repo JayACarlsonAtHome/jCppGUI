@@ -12,7 +12,8 @@
 - The core logic run in `static_assert`, including the demo tree from events to pixels.
 - Compile-fail tests that prove the compiler rejects the mistakes it is meant to catch.
 - The real `WaylandBackend` against a scripted compositor, with no screen, over a real socket.
-- `DataGrid`, a read-only typed table with virtual drawing, scroll bars, wheel and smooth scrolling, selection, sorting and column resizing. Only through tests so far: no program uses it yet.
+- `DataGrid`, a read-only typed table with virtual drawing, scroll bars, wheel and smooth scrolling, selection, sorting and column resizing.
+- `jcppgui-viewer`, which shows a redraw monitor's file in those grids, one section at a time. **It has only run against the test compositor, and no one has seen it on a real screen.**
 - A redraw monitor for development, `jcppgui-demo --redraw-monitor`, which records each frame to a jText file. A file from a live
   `--smoke` run passed jText's own parser and validator, in a throwaway check that is not part of this repository.
 
@@ -75,6 +76,27 @@ Not shown: a long interactive session against a real compositor, and how long wr
 checks the file with jText's validator, because it does not depend on jText. A crash loses more than about a second after a quiet
 time, and a system crash may lose more than that: see `docs/Architecture.md`.
 
+## The jText reader and the viewer
+
+`tests/test_jtext.cpp` runs in `static_assert`: each small helper, the line grammar, a whole file in every form of record, a file cut at every byte, every refusal and limit, typed rows, and everything `FrameMonitor` writes reading back as the same values, including labels that force each fallback formatter. At run time: a real file, a missing one, a directory, a symbolic link, a dangling one, a pipe, one byte over the limit and a 1 TiB sparse file. `tests/fuzz/fuzz_jtext.cpp` also round-trips whatever the monitor's writer will take. `tests/test_panels.cpp` has the panel helpers in `static_assert`.
+
+`tests/test_viewer.cpp` runs `OneShown` and the viewer's whole window in `static_assert`. The `fake_viewer_*` scenarios start the real program, against the test compositor only. Each compares every pixel that arrives with a headless window made in the compositor's process from the same file, and also looks for text the test names itself, drawn alone with the real font: header text, row text and the status line. They cover the first frame, a click on two section buttons, a wheel notch, three sizes, a missing file, a malformed file, a symbolic link, a path that is not text, the default file in a copy's base directory, no base directory, and 65536 rows.
+
+Files used as test inputs passed jText's own parser and validator, in a throwaway check that is not part of this repository. Over the fuzz corpus, the reader was compared with that parser, again by hand: see `docs/SECURITY.md`.
+
+**Measured** in a `gcc-release` build by `tests/measure_viewer.cpp`, by hand and not under CTest, headless, at 1280x800, on the machine it was run on, with a file of 65536 rows in each of `Frames` and `Damage`, leaving out what the real backend adds to present.
+
+| What | Time |
+|---|---|
+| A 10.4 MB file, `read_jtext_file` as a whole | about 35 ms |
+| Of that, parsing | 28 ms |
+| Of that, reading, from the page cache | about 6 to 10 ms |
+| Typed rows for all four sections | 14 ms |
+| The first frame | 3.7 ms |
+| A wheel-notch frame, total, median and worst of 200 | 2.3 ms, 2.4 ms |
+
+Not shown: the viewer on a real screen, with a real pointer, or a file that changes while it runs: there is no reload or watching. The light profile, raw lines, multiline values, includes and templates are refused, so `samples/workshop_tools` in the jText repository is refused too: one is light profile, and the other has templates.
+
 ## What has not been shown
 
 - **Interactive behaviour in a real session has been checked only by hand, if at all.** Clicking, dragging, resizing and
@@ -113,6 +135,7 @@ time, and a system crash may lose more than that: see `docs/Architecture.md`.
   second. The cost has not been measured.
 - Layout is a simple flow, not a layout manager. Overlapping widgets are possible but untested.
 - A window's side is at most 8192 pixels, and frames wait if the compositor holds too much.
+- The jText reader takes the full profile only, keeps no comments, and does not check values against their declared types: see `docs/Architecture.md`.
 - `DataGrid` holds at most 1,000,000 rows, has no editing and no multiple selection, and keeps neither selection nor sort when given new rows. Pressing in a scroll trough pages once, with no repeat while held.
 - Scale is fixed at 1, so the window is upscaled on HiDPI outputs.
 - The frame has no maximize or minimize control.

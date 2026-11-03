@@ -49,18 +49,19 @@ int main() {
         if (file.get() < 0 || !detail::write_at(file.get(), std::span{std::string_view{text}}, 0)) std::cout << "the file could not be written\n";
     }
 
+    // Taken apart, because read_jtext_file reads and parses as one: the parse of text already in memory and owned is what is not reading.
+    std::string owned = text;
     started = Clock::now();
-    const auto parsed = parse_jtext(text);
+    const auto parsed = parse_owned_jtext(std::move(owned));
     const double parse_ms = ms_since(started);
     if (!parsed) {
         std::cout << parsed.error().message << '\n';
         return 1;
     }
-    std::cout << "parsing took " << parse_ms << " ms, including one copy of the text\n";
-
     started = Clock::now();
     const auto file = read_jtext_file(path.string());
-    std::cout << "read_jtext_file, reading and parsing, took " << ms_since(started) << " ms\n";
+    const double whole_ms = ms_since(started);
+    std::cout << "parsing took " << parse_ms << " ms, and read_jtext_file took " << whole_ms << " ms, so reading took about " << (whole_ms - parse_ms) << " ms, from the page cache\n";
 
     started = Clock::now();
     auto loaded = viewer::load_file(file);
