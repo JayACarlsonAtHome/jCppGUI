@@ -87,6 +87,7 @@ must_catch tests/evil.cpp "positioned file I/O" 'auto n = ::pread(fd, b, 1, 0);'
 must_catch tests/evil.cpp "positioned file I/O" 'auto n = pwrite64(fd, b, 1, 0);'
 must_catch include/jCppGUI/v001/evil.hpp "Wayland or xkb header above" '#include <cursor-shape-v1-client-protocol.hpp>'
 must_catch tests/evil.cpp "the monitor's geometry reader" 'struct jgui::detail::RedrawNumbers {};'
+must_catch tests/evil.cpp "the cell text's geometry reader" 'struct jgui::detail::CellNumbers {};'
 for call in 'read(fd, b, 1)' '::write(fd, b, 1)' 'recv(fd, b, 1, 0)' '::send(fd, b, 1, 0)' 'fread(b, 1, 1, f)' 'std::fwrite(b, 1, 1, f)' 'std::memcpy(a, b, 1)' 'memmove(a, b, 1)'; do
   must_catch tests/evil.cpp "byte I/O" "void f() { $call; }"
 done

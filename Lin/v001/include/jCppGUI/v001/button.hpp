@@ -96,6 +96,11 @@ public:
     }
 
     template <class U>
+    constexpr bool handle(const TreeKey&, U&, const PointerScroll&) {
+        return false;
+    }
+
+    template <class U>
     constexpr bool handle(const TreeKey&, U& ui, const KeyEvent& event) {
         if (!focused_ || !event.pressed) return false;
         if (event.keysym != Key::Return && event.keysym != Key::Space) return false;

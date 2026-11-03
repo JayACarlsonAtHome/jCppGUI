@@ -129,6 +129,7 @@ check "the removed view of C-owned memory" '\bc_array\b'
 check "wire access above the backend line" '\bWireAccess\b' '^(src/wayland/|include/jCppGUI/v001/events\.hpp:?)'
 check "geometry access above the backend line" '\bGeometryAccess\b' '^(src/|include/jCppGUI/v001/geometry\.hpp:?)'
 check "the monitor's geometry reader outside its file" '\bRedrawNumbers\b' '^(include/jCppGUI/v001/(geometry|redraw_monitor)\.hpp:?)'
+check "the cell text's geometry reader outside its file" '\bCellNumbers\b' '^(include/jCppGUI/v001/(geometry|cell_text)\.hpp:?)'
 found="$(cd "$work/stripped" && grep -rnP '\bTestAccess\b' include src demo | grep -vP '(struct TestAccess;|friend struct detail::TestAccess;)')"
 report "test access outside tests" "$found"
 

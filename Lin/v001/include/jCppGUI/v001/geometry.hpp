@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <compare>
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <utility>
@@ -47,6 +48,8 @@ struct GeometryArithmetic;
 struct GeometryAccess;
 // Reads the number to write it in the redraw monitor's file. It is defined only in redraw_monitor.hpp.
 struct RedrawNumbers;
+// Reads the number to show it as the text of a cell. It is defined only in cell_text.hpp.
+struct CellNumbers;
 // Defined only in tests/test_access.hpp.
 struct TestAccess;
 }  // namespace detail
@@ -71,6 +74,7 @@ private:
     friend struct detail::GeometryArithmetic;
     friend struct detail::GeometryAccess;
     friend struct detail::RedrawNumbers;
+    friend struct detail::CellNumbers;
     friend struct detail::TestAccess;
 
     std::int32_t value_{};
@@ -94,6 +98,24 @@ public:
         return Extent{sat_sub(a.value_, b.value_)};
     }
 
+    // The length repeated this many times, saturating.
+    [[nodiscard]] friend constexpr Extent repeated_extent(Extent unit, std::size_t count) noexcept {
+        if (unit.value_ == 0) return Extent{};
+        const std::size_t most = static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max() / unit.value_);
+        return count > most ? Extent{std::numeric_limits<std::int32_t>::max()} : Extent{static_cast<std::int32_t>(count) * unit.value_};
+    }
+
+    // How many whole units fit in the length. None when the unit is empty.
+    [[nodiscard]] friend constexpr std::size_t whole_units_in(Extent total, Extent unit) noexcept {
+        return unit.value_ == 0 ? 0 : static_cast<std::size_t>(total.value_ / unit.value_);
+    }
+
+    // The length, measured on a scale of "from", on a scale of "to", in 64 bits. Zero when "from" is empty.
+    [[nodiscard]] friend constexpr Extent rescaled_extent(Extent value, Extent from, Extent to) noexcept {
+        if (from.value_ == 0) return Extent{};
+        return Extent{saturate_to<std::int32_t>(std::int64_t{value.value_} * std::int64_t{to.value_} / std::int64_t{from.value_})};
+    }
+
 private:
     friend class Rect;
     friend class PixelBuffer;
@@ -102,6 +124,7 @@ private:
     friend struct detail::GeometryArithmetic;
     friend struct detail::GeometryAccess;
     friend struct detail::RedrawNumbers;
+    friend struct detail::CellNumbers;
     friend struct detail::TestAccess;
 
     std::int32_t value_{};

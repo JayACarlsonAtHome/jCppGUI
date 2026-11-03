@@ -220,6 +220,11 @@ public:
     }
 
     template <class U>
+    constexpr bool handle(const TreeKey& key, U& ui, const PointerScroll& event) {
+        return for_each_live_reversed([&](T& item, Handle<T>) { return item.handle(key, ui, event); });
+    }
+
+    template <class U>
     constexpr void notify(const TreeKey& key, U& ui, const PointerLeave& event) {
         capture_.reset();
         notify_each(key, ui, event);
@@ -380,6 +385,10 @@ public:
     }
     constexpr void request_close() noexcept { requests_.close = true; }
     constexpr void request_cursor(CursorShape shape) noexcept { requests_.cursor = shape; }
+    // The same, unless something has already asked during this delivery.
+    constexpr void suggest_cursor(CursorShape shape) noexcept {
+        if (!requests_.cursor) requests_.cursor = shape;
+    }
 
 private:
     template <class B, class Root, class Monitor>

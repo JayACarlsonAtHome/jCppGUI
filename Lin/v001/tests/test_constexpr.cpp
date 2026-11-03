@@ -372,6 +372,7 @@ struct OrderSink {
     constexpr void on(const PointerButton&) { seen[count++] = 4; }
     constexpr void on(const PointerLeave&) { seen[count++] = 5; }
     constexpr void on(const KeyEvent&) { seen[count++] = 6; }
+    constexpr void on(const PointerScroll&) { seen[count++] = 7; }
 };
 
 consteval bool queue_keeps_arrival_order() {

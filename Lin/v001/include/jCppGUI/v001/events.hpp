@@ -3,6 +3,7 @@
 //          through the widget tree.
 #pragma once
 
+#include <algorithm>
 #include <concepts>
 #include <cstdint>
 
@@ -18,6 +19,8 @@ struct WireAccess;
 struct SerialTag;
 struct PointerButtonTag;
 struct KeysymTag;
+struct ScrollDownTag;
+struct ScrollAcrossTag;
 }  // namespace detail
 
 // A number that belongs to the display protocol. Each meaning is its own type, with no implicit conversion
@@ -70,7 +73,7 @@ private:
 enum class ResizeEdge : std::uint8_t { TopSide, BottomSide, LeftSide, RightSide, TopLeft, TopRight, BottomLeft, BottomRight };
 
 // What the pointer looks like over the window: the plain arrow, or the arrow for resizing from one edge or corner.
-enum class CursorShape : std::uint8_t { Default, ResizeTop, ResizeBottom, ResizeLeft, ResizeRight, ResizeTopLeft, ResizeTopRight, ResizeBottomLeft, ResizeBottomRight };
+enum class CursorShape : std::uint8_t { Default, ResizeTop, ResizeBottom, ResizeLeft, ResizeRight, ResizeTopLeft, ResizeTopRight, ResizeBottomLeft, ResizeBottomRight, ResizeColumn };
 
 // --- Delivered by a backend ---
 
@@ -97,6 +100,47 @@ struct PointerButton {
 
 struct PointerLeave {};
 
+// The most one event can ask for, whatever a device or a compositor says.
+inline constexpr std::int32_t max_scroll_steps = 16;
+inline constexpr std::int32_t max_scroll_pixels = 1024;
+
+// How far a wheel or a finger moved along one axis: in steps where the device has them, otherwise in pixels.
+// Positive is down or to the right. It holds at most the limits above, so anything hostile stops at them here.
+template <class Tag>
+class ScrollAmount {
+public:
+    constexpr ScrollAmount() noexcept = default;
+
+    [[nodiscard]] static constexpr ScrollAmount of_steps(std::int32_t steps) noexcept {
+        return ScrollAmount{std::clamp(steps, -max_scroll_steps, max_scroll_steps), 0};
+    }
+    [[nodiscard]] static constexpr ScrollAmount of_pixels(std::int32_t pixels) noexcept {
+        return ScrollAmount{0, std::clamp(pixels, -max_scroll_pixels, max_scroll_pixels)};
+    }
+
+    [[nodiscard]] constexpr std::int32_t steps() const noexcept { return steps_; }
+    [[nodiscard]] constexpr std::int32_t pixels() const noexcept { return pixels_; }
+    [[nodiscard]] constexpr bool none() const noexcept { return steps_ == 0 && pixels_ == 0; }
+
+    friend constexpr bool operator==(const ScrollAmount&, const ScrollAmount&) = default;
+
+private:
+    constexpr ScrollAmount(std::int32_t steps, std::int32_t pixels) noexcept : steps_{steps}, pixels_{pixels} {}
+
+    std::int32_t steps_{};
+    std::int32_t pixels_{};
+};
+
+using ScrollDown = ScrollAmount<detail::ScrollDownTag>;
+using ScrollAcross = ScrollAmount<detail::ScrollAcrossTag>;
+
+// One pointer frame's scrolling, with where the pointer was.
+struct PointerScroll {
+    Point position;
+    ScrollDown down{};
+    ScrollAcross across{};
+};
+
 struct KeyEvent {
     Keysym keysym;
     ModifierMask modifiers{};
@@ -118,7 +162,15 @@ inline constexpr ModifierMask Super{1U << 3U};
 namespace Key {
 inline constexpr Keysym Space{0x0020};
 inline constexpr Keysym Return{0xff0d};
-}  // namespace Keysym
+inline constexpr Keysym Home{0xff50};
+inline constexpr Keysym Left{0xff51};
+inline constexpr Keysym Up{0xff52};
+inline constexpr Keysym Right{0xff53};
+inline constexpr Keysym Down{0xff54};
+inline constexpr Keysym PageUp{0xff55};
+inline constexpr Keysym PageDown{0xff56};
+inline constexpr Keysym End{0xff57};
+}  // namespace Key
 
 // --- Sent through the tree by the toolkit ---
 

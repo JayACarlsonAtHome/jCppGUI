@@ -214,6 +214,16 @@ jgui_test(test_bad_text)
 jgui_test(test_messages)
 jgui_test(test_thread)
 jgui_test(test_callback_access)
+jgui_test(test_grid_helpers)
+# The whole grid runs in static_assert, many frames of it, which needs a higher step budget on both compilers.
+jgui_test(test_datagrid)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(test_datagrid PRIVATE -fconstexpr-steps=200000000)
+else()
+  target_compile_options(test_datagrid PRIVATE -fconstexpr-ops-limit=400000000)
+endif()
+# What a frame of the grid costs, printed by hand, in a release build: docs/Maturity.md has what it said. Not a test.
+jgui_test_program(measure_datagrid)
 
 jgui_test(test_untrusted)
 target_include_directories(test_untrusted PRIVATE src src/wayland)
@@ -237,7 +247,8 @@ set(JGUI_FAKE_SCENARIOS
   protocol_error_on_surface protocol_error_on_display protocol_error_on_nothing signal_storm
   monitor_real_frames monitor_never_release monitor_versus_none monitor_cannot_write
   demo_as_built demo_copy_under_a_base demo_copy_with_no_base
-  cursor_all_edges cursor_no_protocol cursor_seat_removed cursor_pointer_flap cursor_manager_removed cursor_manager_late cursor_during_drag)
+  cursor_all_edges cursor_no_protocol cursor_seat_removed cursor_pointer_flap cursor_manager_removed cursor_manager_late cursor_during_drag
+  grid_axis_hostile grid_axis_no_enter grid_wheel_then_pixels grid_resize_during_thumb_drag grid_pointer_gone_during_capture grid_seat_gone_during_capture grid_cursor)
 foreach(scenario ${JGUI_FAKE_SCENARIOS})
   add_test(NAME fake_${scenario} COMMAND test_fake_compositor ${scenario})
   set_tests_properties(fake_${scenario} PROPERTIES TIMEOUT 300
@@ -341,6 +352,10 @@ jgui_compile_fail(set_text_result_ignored "unused-result|nodiscard|warn_unused_r
 jgui_compile_fail(callback_reaches_monitor "no member|has no member")
 jgui_compile_fail(application_hides_monitor "private|inaccessible")
 jgui_compile_fail(monitor_not_in_the_umbrella "no template|FrameMonitor. is not a member|no member named|was not declared|has not been declared")
+jgui_compile_fail(grid_member_no_format "no cell format")
+jgui_compile_fail(grid_column_wrong_row "belongs to another row type")
+jgui_compile_fail(grid_duplicate_column "have the same name")
+jgui_compile_fail(grid_rows_result_ignored "unused-result|nodiscard|warn_unused_result|unused return value")
 jgui_compile_fail(warn_narrowing "conversion\\]")
 jgui_compile_fail(warn_sign_conversion "sign-conversion\\]")
 jgui_compile_fail(warn_shadow "shadow[-a-z]*\\]")

@@ -149,6 +149,8 @@ private:
         carry_out_requests();
     }
 
+    constexpr void on(const PointerScroll& event) { send_to_tree(event); }
+
     constexpr void on(const KeyEvent& event) { send_to_tree(event); }
 
     // Delivers the event, then carries out what the widgets asked of the window system. The answer is for

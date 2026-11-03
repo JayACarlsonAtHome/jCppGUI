@@ -21,6 +21,7 @@ struct Sink {
     void on(const jgui::PointerButton&) { record(4); }
     void on(const jgui::PointerLeave&) { record(5); }
     void on(const jgui::KeyEvent&) { record(6); }
+    void on(const jgui::PointerScroll&) { record(7); }
 };
 
 }  // namespace

@@ -40,6 +40,7 @@ struct NoSink {
     void on(const jgui::PointerMove&) {}
     void on(const jgui::PointerButton&) {}
     void on(const jgui::PointerLeave&) {}
+    void on(const jgui::PointerScroll&) {}
     void on(const jgui::KeyEvent&) {}
 };
 

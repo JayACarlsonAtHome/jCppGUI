@@ -40,6 +40,10 @@ inline constexpr Width bar_pad_x{2};
 inline constexpr Height bar_pad_y{2};
 inline constexpr Width label_pad_x{8};
 inline constexpr Height label_pad_y{6};
+inline constexpr Width scroll_bar_across{12};
+inline constexpr Height scroll_bar_down{12};
+inline constexpr Width cell_pad_x{4};
+inline constexpr Height cell_pad_y{2};
 }  // namespace theme
 
 namespace detail {
@@ -60,7 +64,7 @@ class TreeKey;
 // Each of these takes a TreeKey, which only the tree can make and a callback never sees.
 template <class W>
 concept Widget = requires(W& widget, const W& constant, const TreeKey& key, Canvas& canvas, Rect area, const detail::ProbeShaper& text,
-                          detail::ProbeUi& ui, const PointerPress& press, const PointerRelease& release, const PointerMove& move, const KeyEvent& pressed_key) {
+                          detail::ProbeUi& ui, const PointerPress& press, const PointerRelease& release, const PointerMove& move, const PointerScroll& scroll, const KeyEvent& pressed_key) {
     typename W::tag;
     { constant.bounds() } -> std::same_as<Rect>;
     { widget.paint(key, canvas) } -> std::same_as<void>;
@@ -68,6 +72,7 @@ concept Widget = requires(W& widget, const W& constant, const TreeKey& key, Canv
     { widget.handle(key, ui, press) } -> std::same_as<bool>;
     { widget.handle(key, ui, release) } -> std::same_as<bool>;
     { widget.handle(key, ui, move) } -> std::same_as<bool>;
+    { widget.handle(key, ui, scroll) } -> std::same_as<bool>;
     { widget.handle(key, ui, pressed_key) } -> std::same_as<bool>;
     { widget.handle(key, ui, HoldsCapture{}) } -> std::same_as<bool>;
     { widget.handle(key, ui, QueryDamage{}) } -> std::same_as<bool>;
@@ -119,13 +124,24 @@ constexpr bool deliver(Children& children, const TreeKey& key, U& ui, const E& e
     return broadcast(children, key, ui, event);
 }
 
-// A press goes to the topmost widget under it: last painted first, stopping at the first that takes it.
-template <class Children, class U>
-constexpr bool deliver(Children& children, const TreeKey& key, U& ui, const PointerPress& event) {
+// Last painted first, stopping at the first that takes it.
+template <class Children, class U, class E>
+constexpr bool deliver_to_topmost(Children& children, const TreeKey& key, U& ui, const E& event) {
     return [&]<std::size_t... I>(std::index_sequence<I...>) {
         constexpr std::size_t count = sizeof...(I);
         return (std::get<count - 1 - I>(children).handle(key, ui, event) || ...);
     }(std::make_index_sequence<std::tuple_size_v<Children>>{});
+}
+
+// A press goes to the topmost widget under it, and so does scrolling.
+template <class Children, class U>
+constexpr bool deliver(Children& children, const TreeKey& key, U& ui, const PointerPress& event) {
+    return deliver_to_topmost(children, key, ui, event);
+}
+
+template <class Children, class U>
+constexpr bool deliver(Children& children, const TreeKey& key, U& ui, const PointerScroll& event) {
+    return deliver_to_topmost(children, key, ui, event);
 }
 
 // Motion reaches the topmost widget under the pointer, and those below it see the pointer leave.

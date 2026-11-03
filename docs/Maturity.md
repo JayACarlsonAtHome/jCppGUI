@@ -12,6 +12,7 @@
 - The core logic run in `static_assert`, including the demo tree from events to pixels.
 - Compile-fail tests that prove the compiler rejects the mistakes it is meant to catch.
 - The real `WaylandBackend` against a scripted compositor, with no screen, over a real socket.
+- `DataGrid`, a read-only typed table with virtual drawing, scroll bars, wheel and smooth scrolling, selection, sorting and column resizing. Only through tests so far: no program uses it yet.
 - A redraw monitor for development, `jcppgui-demo --redraw-monitor`, which records each frame to a jText file. A file from a live
   `--smoke` run passed jText's own parser and validator, in a throwaway check that is not part of this repository.
 
@@ -31,7 +32,7 @@ ack before a commit, no write to a held buffer, no attach of a held buffer, ids,
 - **The seat.** Capabilities flapping, the seat going with a button held, and every missing or too old global.
 - **Keymaps.** A pipe, a directory, a short file, 1 MiB with no terminator, size 0xFFFFFFFF, format 7, and none at all. A valid
   one followed by extreme keys, modifiers and states.
-- **The pointer.** `wl_fixed` extremes, bogus buttons and states, a leave with no enter, a burst of motion, and events of later versions.
+- **The pointer.** `wl_fixed` extremes, bogus buttons and states, a leave with no enter, a burst of motion, and events of later versions. Scrolling: `INT32_MIN`, `INT32_MAX` and zero as pixels and as steps, an unknown axis and source, a flood in one frame and a flood of frames.
 - **The pointer's look.** `cursor-shape-v1` over all 8 edges and the middle, with each request's serial, device and shape value held to the protocol, only changes
   sent, and re-entering on a corner. A compositor without it, the global going away, the seat or the pointer going with a shape set, and a drag across the edges.
 - **The connection.** 70,000 events at once, a sudden disconnect at each stage, part of a message and then a hang-up, a size that
@@ -43,6 +44,23 @@ ack before a commit, no write to a held buffer, no attach of a held buffer, ids,
 from every proxy-making call and every refused listener, the `EINVAL` fallback of `memfd_create`, and failing reservations and seals.
 It also does a real short write and a real short read, under `RLIMIT_FSIZE`, and checks the compositor's request numbers against
 libwayland's. `tests/fuzz/fuzz_backend.cpp` fuzzes the backend's input path through a real socket.
+
+## The data grid
+
+`tests/test_grid_helpers.cpp` has each small helper in `static_assert`. `tests/test_datagrid.cpp` runs the grid in `static_assert`, from injected events to state and pixels, with a shaper that needs no font: selection, keys, wheel, thumb drag, trough paging, sorting, stability, column drags,
+cursor shapes, the frame's edges, damage, a leave and a resize during a capture, and windows of 1x1. At run time, with the real font, it has the row limit and the picture. Compile-fail pairs cover a member with no format, a member of another row, a duplicate column and an ignored `set_rows` answer. `tests/test_fake_compositor.cpp` has `grid_*` scenarios through the real backend: hostile axis values and floods, scrolling with no pointer here, a wheel notch and then pixels read back from the buffer file, a resize during a thumb drag, the pointer and the seat going during a capture, and the column cursor on the wire.
+
+**Measured** in a `gcc-release` build by `tests/measure_datagrid.cpp`, by hand and not under CTest, through `FrameMonitor` with the steady clock, headless, at 1280x800 with 6 columns and 32 rows showing, on the machine it was run on. These leave out what the real backend adds to present, which is writing the frame to the buffer file.
+
+| Rows | Layout, median | Paint, median | Wheel-notch frame total, median | Worst |
+|---|---|---|---|---|
+| 100 | 0.84 ms | 1.30 ms | 2.14 ms | 2.73 ms |
+| 1,000,000 | 0.84 ms | 1.30 ms | 2.14 ms | 2.19 ms |
+| 1,000 with 100,000 bytes in one column of each | 4.80 ms | 1.46 ms | 6.26 ms | 6.90 ms |
+
+Sorting a million rows took about 170 ms by a number and 105 ms by a string, with its frame, in one delivery. So a sort of that size misses frames.
+
+Not shown: a real wheel, a real touchpad and real keys against a real compositor. The navigation keys are checked against xkbcommon's values at compile time and run in `static_assert`, but not through the keyboard on the wire, whose test keymap is a minimal one. Hover has no look of its own.
 
 ## The redraw monitor
 
@@ -95,6 +113,7 @@ time, and a system crash may lose more than that: see `docs/Architecture.md`.
   second. The cost has not been measured.
 - Layout is a simple flow, not a layout manager. Overlapping widgets are possible but untested.
 - A window's side is at most 8192 pixels, and frames wait if the compositor holds too much.
+- `DataGrid` holds at most 1,000,000 rows, has no editing and no multiple selection, and keeps neither selection nor sort when given new rows. Pressing in a scroll trough pages once, with no repeat while held.
 - Scale is fixed at 1, so the window is upscaled on HiDPI outputs.
 - The frame has no maximize or minimize control.
 - A compositor without `cursor-shape-v1` gets no resize cursors, only the drawn arrow.

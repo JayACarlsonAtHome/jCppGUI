@@ -24,6 +24,7 @@
 #include "file_io.hpp"
 #include "jCppGUI/v001/canvas.hpp"
 #include "jCppGUI/v001/error.hpp"
+#include "jCppGUI/v001/events.hpp"
 #include "jCppGUI/v001/geometry.hpp"
 #include "jCppGUI/v001/text.hpp"
 
@@ -119,6 +120,43 @@ inline constexpr std::size_t max_window_string_bytes = 4096 - 8 - 4 - 1;
     return Size{width > 0 ? Width{std::min(width, max_buffer_side)} : fallback.width(),
                 height > 0 ? Height{std::min(height, max_buffer_side)} : fallback.height()};
 }
+
+// What one axis of the pointer has said since the last pointer frame. Steps win over pixels, because a wheel sends both
+// for one notch. Pixels arrive in the protocol's fixed point, with 8 bits of fraction, and what is left over of a pixel
+// waits for the next frame, so slow smooth scrolling still moves. Each total stays within what one event can ask for, so
+// no flood can overflow it.
+template <class Tag>
+class AxisTally {
+public:
+    constexpr void add_fixed_pixels(std::int32_t fixed) noexcept {
+        constexpr std::int64_t most = std::int64_t{max_scroll_pixels} * 256;
+        fixed_ = std::clamp(fixed_ + std::int64_t{fixed}, -most, most);
+    }
+    constexpr void add_steps(std::int32_t steps) noexcept {
+        steps_ = std::clamp(steps_ + std::int64_t{steps}, std::int64_t{-max_scroll_steps}, std::int64_t{max_scroll_steps});
+    }
+
+    [[nodiscard]] constexpr ScrollAmount<Tag> take() noexcept {
+        if (steps_ != 0) {
+            const auto steps = static_cast<std::int32_t>(steps_);
+            steps_ = 0;
+            fixed_ = 0;
+            return ScrollAmount<Tag>::of_steps(steps);
+        }
+        const auto pixels = static_cast<std::int32_t>(fixed_ / 256);
+        fixed_ %= 256;
+        return ScrollAmount<Tag>::of_pixels(pixels);
+    }
+
+private:
+    std::int64_t fixed_{};
+    std::int64_t steps_{};
+};
+
+struct PointerScrollTally {
+    AxisTally<detail::ScrollDownTag> down{};
+    AxisTally<detail::ScrollAcrossTag> across{};
+};
 
 // An evdev key code in xkb numbering, which is 8 higher. Empty for a code too large to convert.
 [[nodiscard]] constexpr std::optional<std::uint32_t> evdev_to_xkb(std::uint32_t key) noexcept {

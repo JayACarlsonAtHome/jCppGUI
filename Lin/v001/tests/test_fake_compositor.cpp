@@ -30,6 +30,7 @@
 #include "fake_compositor/harness.hpp"
 #include "help_ui.hpp"
 #include "jCppGUI/v001/base_directory.hpp"
+#include "jCppGUI/v001/jgui.hpp"
 #include "jCppGUI/v001/redraw_monitor.hpp"
 #include "jCppGUI/v001/wayland_backend.hpp"
 #include "monitor_helpers.hpp"
@@ -996,6 +997,331 @@ struct CursorDuringDrag {
     }
 };
 
+// --- The data grid, through the real backend ---
+
+[[nodiscard]] std::expected<jgui::WaylandBackend, jgui::Error> test_backend();
+
+// A grid of a thousand rows in the frame, as in a program. The script sits in this process, and the client in a child, so
+// what each script wants of the grid's end state is asked in the child, by the script's own static function.
+struct GridTag;
+struct GridLine {
+    int number{};
+    std::string name{};
+};
+using WireGrid = jgui::DataGrid<GridTag, GridLine, jgui::NoGridMessage, jgui::Column<"Number", &GridLine::number, 100>, jgui::Column<"Name", &GridLine::name, 100>>;
+constexpr std::int32_t grid_rows = 1000;
+
+template <class Script>
+[[nodiscard]] int run_grid_client() {
+    auto backend = test_backend();
+    if (!backend) return 1;
+    auto app = jgui::make_application(std::move(*backend), jgui::window(jgui::window_frame(WireGrid{})));
+    if (!app) return 1;
+    std::vector<GridLine> lines;
+    for (std::int32_t i = 0; i < grid_rows; ++i) lines.push_back(GridLine{i, "row " + std::to_string(i)});
+    if (!app->ui().get<GridTag>().set_rows(std::move(lines))) return 1;
+    if (!ended_as_expected(Script::end, app->run())) return 1;
+    if (!Script::grid_is_right(app->ui().get<GridTag>())) {
+        std::cerr << "the grid ended in the wrong state, scrolled " << jgui_test::number(app->ui().get<GridTag>().scroll_down()) << '\n';
+        return 1;
+    }
+    return 0;
+}
+
+constexpr std::int32_t in_the_body_x = 400;
+constexpr std::int32_t in_the_body_y = 200;
+constexpr std::int32_t in_the_bar_x = 630;  // the bar is the last 12 of a client area ending at 636
+
+void scroll_frame_of_steps(Session& session, std::int32_t steps) {
+    if (!session.pointer()) return;
+    session.queue(event::pointer_axis_source(*session.pointer(), wire::axis_source_wheel));
+    session.queue(event::pointer_axis_discrete(*session.pointer(), wire::axis_vertical, steps));
+    session.queue(event::pointer_axis(*session.pointer(), 0, wire::axis_vertical, Fixed::from_int(steps * 15)));
+    session.queue(event::pointer_frame(*session.pointer()));
+}
+
+void scroll_frame_of_pixels(Session& session, Fixed pixels) {
+    if (!session.pointer()) return;
+    session.queue(event::pointer_axis_source(*session.pointer(), wire::axis_source_finger));
+    session.queue(event::pointer_axis(*session.pointer(), 0, wire::axis_vertical, pixels));
+    session.queue(event::pointer_frame(*session.pointer()));
+}
+
+// The first row, going down one column of a 640 wide picture, in this colour, and how many follow it. Both zero when there is none.
+struct ColourRun {
+    std::int32_t first{};
+    std::int32_t length{};
+};
+[[nodiscard]] ColourRun colour_run_at(std::span<const std::uint32_t> pixels, std::int32_t x, std::uint32_t colour) {
+    constexpr std::size_t stride = 640;
+    ColourRun run;
+    const std::size_t rows = pixels.size() / stride;
+    for (std::size_t y = 0; y < rows; ++y) {
+        const bool here = pixels[y * stride + static_cast<std::size_t>(x)] == colour;
+        if (here && run.length == 0) run.first = static_cast<std::int32_t>(y);
+        if (here) ++run.length;
+        if (!here && run.length != 0) break;
+    }
+    return run;
+}
+
+// Values no compositor should send, each through the whole path, then a wheel going down until there is no further to go.
+struct GridAxisHostile {
+    static constexpr ClientEnd end = ends_clean;
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.pointer()) return;
+        ++idles;
+        const ObjectId pointer = *session.pointer();
+        if (idles == 1) {
+            pointer_enter(session, in_the_body_x, in_the_body_y);
+            for (const std::int32_t value : {int32_least, int32_most, 0, -1, 1, int32_most, int32_least}) {
+                scroll_frame_of_pixels(session, Fixed{value});
+                session.queue(event::pointer_axis_discrete(pointer, wire::axis_vertical, value));
+                session.queue(event::pointer_axis_discrete(pointer, wire::axis_horizontal, value));
+                session.queue(event::pointer_frame(pointer));
+                session.queue(event::pointer_axis(pointer, 0, uint32_most, Fixed{value}));
+                session.queue(event::pointer_axis_discrete(pointer, 7, value));
+                session.queue(event::pointer_axis_stop(pointer, 0, uint32_most));
+                session.queue(event::pointer_axis_source(pointer, uint32_most));
+                session.queue(event::pointer_frame(pointer));
+            }
+        } else if (idles == 2) {
+            // A flood, and many axis events in one frame: the total stops at what one event can ask for.
+            for (std::int32_t i = 0; i < 3000; ++i) session.queue(event::pointer_axis(pointer, 0, wire::axis_vertical, Fixed{int32_most}));
+            session.queue(event::pointer_frame(pointer));
+            for (std::int32_t i = 0; i < 2000; ++i) scroll_frame_of_steps(session, 1);
+        } else {
+            session.close_window();
+        }
+    }
+    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) {
+        const jgui::Height last = repeated_extent(grid.row_height(), static_cast<std::size_t>(grid_rows)) - grid.body_area().height();
+        return grid.scroll_down() == last;
+    }
+};
+
+// Scrolling with the pointer never in the window, or after it has gone, moves nothing.
+struct GridAxisNoEnter {
+    static constexpr ClientEnd end = ends_clean;
+    std::size_t idles{};
+    std::size_t commits_before{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ++idles;
+        if (idles == 1) {
+            commits_before = session.commits_with_buffer();
+            scroll_frame_of_steps(session, 3);
+            scroll_frame_of_pixels(session, Fixed::from_int(100));
+            pointer_enter(session, in_the_body_x, in_the_body_y);
+            session.pointer_leave();
+            scroll_frame_of_steps(session, 3);
+        } else {
+            if (session.commits_with_buffer() != commits_before) session.violation("scrolling with no pointer here drew a frame");
+            session.close_window();
+        }
+    }
+    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) { return grid.scroll_down() == jgui::Height{}; }
+};
+
+// A click, a wheel notch, then smooth pixels, and half pixels that add up, each read back from the pixels on the wire: a selected
+// row's lit band moves up exactly as far as it should.
+struct GridWheelThenPixels {
+    static constexpr ClientEnd end = ends_clean;
+    enum class Step : std::uint8_t { First, Clicked, Wheeled, Smooth, HalfOnce, HalfTwice, Done };
+    Step step{Step::First};
+    std::optional<ObjectId> latest{};
+    std::int32_t row_height{};
+    std::int32_t band_top{};
+    [[nodiscard]] ColourRun band(Session& session) const {
+        if (!latest) return ColourRun{};
+        const auto pixels = session.pixels_of(*latest);
+        return pixels ? colour_run_at(*pixels, in_the_body_x, jgui::theme::button_pressed.argb) : ColourRun{};
+    }
+    void on(Session& session, const BufferCommitted& commit) {
+        if (latest) session.release(*latest);
+        latest = commit.buffer;
+    }
+    void expect_moved(Session& session, std::int32_t by, const char* what) {
+        const ColourRun now = band(session);
+        if (now.length == 0 || band_top - now.first != by) session.violation(std::string{what} + ": it went from " + std::to_string(band_top) + " to " + std::to_string(now.first));
+        band_top = now.first;
+    }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        switch (step) {
+            case Step::First:
+                pointer_enter(session, in_the_body_x, in_the_body_y);
+                left_click(session, in_the_body_x, in_the_body_y);
+                step = Step::Clicked;
+                return;
+            case Step::Clicked: {
+                const ColourRun lit = band(session);
+                if (lit.length == 0) session.violation("the click lit no row");
+                band_top = lit.first;
+                row_height = lit.length + 1;  // the last line of a row is its line
+                scroll_frame_of_steps(session, 1);
+                step = Step::Wheeled;
+                return;
+            }
+            case Step::Wheeled:
+                expect_moved(session, row_height * 3, "one notch is three rows");
+                scroll_frame_of_pixels(session, Fixed::from_int(10));
+                step = Step::Smooth;
+                return;
+            case Step::Smooth:
+                expect_moved(session, 10, "smooth scrolling goes by its pixels");
+                scroll_frame_of_pixels(session, Fixed{128});
+                step = Step::HalfOnce;
+                return;
+            case Step::HalfOnce:
+                expect_moved(session, 0, "half a pixel moves nothing yet");
+                scroll_frame_of_pixels(session, Fixed{128});
+                step = Step::HalfTwice;
+                return;
+            case Step::HalfTwice:
+                expect_moved(session, 1, "and the second half makes one");
+                session.close_window();
+                step = Step::Done;
+                return;
+            case Step::Done:
+            default:
+                return;
+        }
+    }
+    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) {
+        return grid.scroll_down() == repeated_extent(grid.row_height(), 3) + jgui::Height{11} && grid.selected().has_value();
+    }
+};
+
+// The window shrinks and then grows with the thumb held, and the pointer goes on dragging.
+struct GridResizeDuringThumbDrag {
+    static constexpr ClientEnd end = ends_clean;
+    std::size_t idles{};
+    std::optional<ObjectId> latest{};
+    std::int32_t thumb_y{};
+    void on(Session& session, const BufferCommitted& commit) {
+        if (latest) session.release(*latest);
+        latest = commit.buffer;
+    }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ++idles;
+        if (idles == 1) {
+            const auto pixels = session.pixels_of(*latest);
+            const ColourRun thumb = pixels ? colour_run_at(*pixels, in_the_bar_x, jgui::theme::button_edge.argb) : ColourRun{};
+            if (thumb.length == 0) session.violation("no thumb was drawn");
+            thumb_y = thumb.first + 1;
+            pointer_enter(session, in_the_bar_x, thumb_y);
+            pointer_button(session, wire::button_left, wire::button_pressed);
+            pointer_motion(session, in_the_bar_x, thumb_y + 200);
+        } else if (idles == 2) {
+            session.configure(300, 200);
+            pointer_motion(session, in_the_bar_x, 150);
+            session.configure(1, 1);
+            pointer_motion(session, in_the_bar_x, 150);
+            session.configure(640, 480);
+        } else if (idles == 3) {
+            pointer_motion(session, in_the_bar_x, 470);
+            pointer_button(session, wire::button_left, wire::button_released);
+        } else if (idles == 4) {
+            pointer_motion(session, in_the_body_x, in_the_body_y);
+            session.close_window();
+        }
+    }
+    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) {
+        const jgui::Height last = repeated_extent(grid.row_height(), static_cast<std::size_t>(grid_rows)) - grid.body_area().height();
+        return grid.scroll_down() == last;
+    }
+};
+
+// The pointer leaves in the middle of a thumb drag and comes back: the drag is over.
+struct GridPointerGoneDuringCapture {
+    static constexpr ClientEnd end = ends_clean;
+    std::size_t idles{};
+    std::optional<ObjectId> latest{};
+    void on(Session& session, const BufferCommitted& commit) {
+        if (latest) session.release(*latest);
+        latest = commit.buffer;
+    }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ++idles;
+        if (idles == 1) {
+            const auto pixels = session.pixels_of(*latest);
+            const ColourRun thumb = pixels ? colour_run_at(*pixels, in_the_bar_x, jgui::theme::button_edge.argb) : ColourRun{};
+            pointer_enter(session, in_the_bar_x, thumb.first + 1);
+            pointer_button(session, wire::button_left, wire::button_pressed);
+            session.pointer_leave();
+            pointer_enter(session, in_the_bar_x, 400);
+            pointer_motion(session, in_the_bar_x, 410);
+            pointer_button(session, wire::button_left, wire::button_released);
+        } else {
+            session.close_window();
+        }
+    }
+    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) { return grid.scroll_down() == jgui::Height{}; }
+};
+
+// The seat loses its pointer in the middle of a column drag, then gets one back.
+struct GridSeatGoneDuringCapture {
+    static constexpr ClientEnd end = ends_clean;
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.seat()) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, 104, 26);  // the first boundary, in the header
+            pointer_button(session, wire::button_left, wire::button_pressed);
+            pointer_motion(session, 200, 26);
+            session.queue(event::seat_capabilities(*session.seat(), wire::capability_keyboard));
+        } else if (idles == 2) {
+            session.queue(event::seat_capabilities(*session.seat(), wire::capability_pointer | wire::capability_keyboard));
+        } else if (idles == 3) {
+            pointer_enter(session, 300, 26);
+            pointer_motion(session, 400, 26);
+        } else {
+            session.close_window();
+        }
+    }
+    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) { return grid.column_width(0) == jgui::Width{196}; }
+};
+
+// The column boundary's shape over a boundary, and nowhere else, with the frame's edges as they were.
+struct GridCursor {
+    static constexpr ClientEnd end = ends_clean;
+    std::size_t idles{};
+    void on(Session& session, const BufferCommitted& commit) { session.release(commit.buffer); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        ++idles;
+        if (idles == 1) {
+            pointer_enter(session, in_the_body_x, in_the_body_y);
+            pointer_motion(session, 104, 26);
+            pointer_motion(session, 104, 26);
+            pointer_motion(session, 104, in_the_body_y);
+            pointer_motion(session, on_left_edge_x, on_left_edge_y);
+            pointer_motion(session, 104, 26);
+            pointer_button(session, wire::button_left, wire::button_pressed);
+            pointer_motion(session, 150, 300);
+            pointer_motion(session, 150, 26);
+            pointer_button(session, wire::button_left, wire::button_released);
+        } else if (idles == 2) {
+            pointer_motion(session, in_the_body_x, in_the_body_y);
+        } else {
+            session.close_window();
+        }
+    }
+    void finish(Session& session) const {
+        const std::vector<std::uint32_t> wanted{wire::shape_default, wire::shape_col_resize, wire::shape_default, wire::shape_w_resize, wire::shape_col_resize, wire::shape_default};
+        if (session.shapes() != wanted) session.violation("the shapes that arrived are not those of the places crossed, once each");
+    }
+    [[nodiscard]] static bool grid_is_right(const WireGrid& grid) { return grid.column_width(0) == jgui::Width{146}; }
+};
+
 // --- The redraw monitor, through the real backend ---
 
 // Real frames, each for its own reason, and a look at what they recorded and at the file, from inside the client.
@@ -1293,6 +1619,8 @@ template <class Script>
         return run_monitor_versus_none();
     } else if constexpr (requires { Script::place; }) {
         return run_scenario(Script{}, GlobalSet{}, [] { return run_the_real_demo<Script::place>(); });
+    } else if constexpr (requires { &Script::grid_is_right; }) {
+        return run_scenario(Script{}, GlobalSet{}, [] { return run_grid_client<Script>(); });
     } else if constexpr (requires { requires Script::monitored; }) {
         return run_scenario(Script{}, GlobalSet{}, [] { return run_monitored_client<Script>(); });
     } else {
@@ -1372,6 +1700,13 @@ constexpr auto scenarios = std::tuple{
     Named<CursorManagerRemoved>{"cursor_manager_removed"},
     Named<CursorManagerLate>{"cursor_manager_late"},
     Named<CursorDuringDrag>{"cursor_during_drag"},
+    Named<GridAxisHostile>{"grid_axis_hostile"},
+    Named<GridAxisNoEnter>{"grid_axis_no_enter"},
+    Named<GridWheelThenPixels>{"grid_wheel_then_pixels"},
+    Named<GridResizeDuringThumbDrag>{"grid_resize_during_thumb_drag"},
+    Named<GridPointerGoneDuringCapture>{"grid_pointer_gone_during_capture"},
+    Named<GridSeatGoneDuringCapture>{"grid_seat_gone_during_capture"},
+    Named<GridCursor>{"grid_cursor"},
 };
 
 }  // namespace

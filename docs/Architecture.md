@@ -58,7 +58,9 @@ demo, or your program
   Application                  the real font engine and the thread check
   ApplicationCore              sends events into the tree, carries out window requests, damage, drawing
   Window, WindowFrame, MenuBar,  the typed tree, messages and pools
-  Button, Label, Dynamic, Pool
+  Button, Label, DataGrid,
+  Dynamic, Pool
+  ScrollBar, and small helpers  scroll_bar, spans, selection_step, index_sort, cell_text
   Canvas, PixelBuffer, Geometry
 ---------------- Backend concept: nothing above this line includes a display header ----------------
   HeadlessBackend              tests inject events and read pixels back
@@ -91,8 +93,9 @@ past the last pixel, so `left_after(Right)` and `top_after(Bottom)` name where t
 an edge moves by a length: `left_after(left + padding)`. Edges of different kinds cannot be compared or added.
 
 The number can be read only by `PixelBuffer`, `Canvas`, `TextRun` and `Rect`, which index memory or do the sums in 64 bits,
-in `src/` through `detail::GeometryAccess`, for libwayland and the font libraries, and by `detail::RedrawNumbers`, only to write it in the
-redraw monitor's file. These stay plain `int32_t`, because each
+in `src/` through `detail::GeometryAccess`, for libwayland and the font libraries, by `detail::RedrawNumbers`, only to write it in the
+redraw monitor's file, and by `detail::CellNumbers`, defined only in `cell_text.hpp`, only to show it as a cell's text. `tests/check_source_rules.sh` keeps each to its file.
+A length can also be multiplied and divided: `repeated_extent`, `whole_units_in` and `rescaled_extent` give a length or a count, in 64 bits and saturating, so nothing above the backend line reads the number to do those sums. `whole_units_in(x, Width{1})` does give the number as a count, and no rule stops that. These stay plain `int32_t`, because each
 is a bare length with no axis, or is not a window position at all: the fields of a `FrameMetrics` type, which `WindowFrame`
 turns into typed values in one place, `max_buffer_side`, a buffer's stride in bytes,.
 
@@ -175,7 +178,7 @@ see `SECURITY.md`.
 
 ## What a callback can reach
 
-A callback receives the `Window`, and can use only `get<Tag>()`, `send<Message>()`, `size()` and the four requests.
+A callback receives the `Window`, and can use only `get<Tag>()`, `send<Message>()`, `size()` and the requests: move, resize, cursor, a cursor suggestion and close.
 
 - **The tree's machinery is private.** `dispatch`, `notify`, `clear_damage`, `layout`, `paint`, `damaged`, `capture_active`,
   `set_size` and `take_requests` are private, with `ApplicationCore` as a friend, so an attempt does not compile. Neither
@@ -195,7 +198,7 @@ friends declared by name, so **a program could define one of those names itself 
 way to stop that. Only the rule script stops it in this repository.
 
 **What remains reachable from a callback.** The public interface of each widget it gets by tag, which is what the widget
-offers: `Dynamic::create`, `destroy`, `find`, `show`, `hide`, `captured` and `focused`, `Label::set_text`, the state getters, and
+offers: `Dynamic::create`, `destroy`, `find`, `show`, `hide`, `captured` and `focused`, `Label::set_text`, `DataGrid::set_rows`, the state getters, and
 `children()` on a `MenuBar` or `WindowFrame`, which gives only the same widgets. A pointer from `Dynamic::find` can be kept past
 the item's life, as any C++ pointer can. A callback can loop for ever, recurse through `send` until the stack runs out, or
 call `std::exit`. Through a pointer to its `Application`: `ui()`, `closed()`, `frames()` and `size()`, which are harmless.
@@ -258,6 +261,35 @@ or fontconfig type appears above the backend line, and so that a program using t
 when those details change. Nothing is erased: each has exactly one implementation, known at link time. The
 owner approved keeping them. `WaylandImpl` gets revisited with our own Wayland client.
 
+## Scrolling
+
+`wl_pointer` is bound at version 5, so a wheel arrives as `axis_source`, `axis_discrete`, `axis` and `frame`. `axis_value120` is version 8 and is not used. Handlers add to a `detail::AxisTally`
+per axis, in `src/wayland/untrusted.hpp`, and `frame` turns what has gathered into one `PointerScroll`. Steps win over pixels for an axis, because a wheel sends both for one notch. What is left of a pixel
+waits for the next frame, until `axis_stop`, so slow smooth scrolling moves. Each total stays inside what one event can ask for, so no flood can overflow it.
+
+`PointerScroll` carries a `ScrollDown` and a `ScrollAcross`, two types, each at most `max_scroll_steps` or `max_scroll_pixels` however it was made. Scrolling with no pointer in the window is dropped in
+the backend. It goes to the topmost widget under the pointer, as a press does, and the frame passes it on only over the client area. A compositor that never sends `frame` gets no scrolling.
+
+## The data grid
+
+```cpp
+struct Row { Left left; std::string name; };
+using Picked = jgui::Message<"picked", jgui::To<Status>, jgui::GridRow>;
+using Grid = jgui::DataGrid<GridTag, Row, Picked, jgui::Column<"Left", &Row::left>, jgui::Column<"Name", &Row::name, 240>>;
+```
+
+- **Columns are types.** The title and the member are template arguments, and the third is the width it starts at. The text comes from `CellFormat<T>`, chosen by the member's type: whole numbers, `bool`, `std::string`
+  and the six geometry types, and a program can add one for its own type. No format, a member of another row type and a name used twice do not compile. A character type counts as no format, because it is not a number. A column's member must also be ordered, for sorting.
+- **The widget holds only a grid's own logic.** The arithmetic and the moves are in small headers of their own, each usable alone and tested alone in `tests/test_grid_helpers.cpp`.
+  `ScrollBar<Axis>` is a part a widget holds, not a widget: it keeps one offset clamped and draws its track and thumb.
+- **Rows.** `set_rows` takes a `std::vector<Row>`, at most `max_grid_rows`, 1,000,000, and refuses more with an `Error`, keeping the old rows. New rows clear the selection and the sort, with no message, because the caller did it.
+- **Text is shaped in `layout`,** because only `layout` is given a shaper, and only for the rows and columns in view. `paint` reads what was shaped and never the rows, so a paint costs the same for any number of rows, and that is measured:
+  see `docs/Maturity.md`. There is no cache of shaped text across frames, because the measurement did not show one is needed. Only as much of a cell's text as could show is shaped, so a very long value costs what a short one does. A cell the shaper refuses as text is left blank and the program goes on.
+- **Sorting** is by `stable_sort_indices`, a merge sort of an index vector, because `std::stable_sort` is not `constexpr` in C++23. The rows do not move. Each sort starts from the rows' own order, so rows that compare equal keep that order in both directions. It runs in the delivery of the release, so a sort of many rows holds up that one delivery.
+- **Selection** is held as a position on the screen and given out as a `GridRow`, an index into the rows as given. It follows its row across a sort. The optional `Notify` message goes out only when the selection really changes, last, so a receiver finds the grid settled, and may give it new rows from there. `set_rows` during that delivery is safe for this reason.
+- **Damage.** Motion draws nothing. A scroll that clamps to the same offset draws nothing. Focus is compared with what was last painted, because the frame clears the focus before a press in the grid gives it back.
+- **Sizes.** A row's height comes from the font, at most `max_grid_row_height`, 2048, and a million of those still fit a length, as a `static_assert` shows. So the offsets are ordinary `Height` and `Width` values.
+
 ## OS and version layout
 
 ```
@@ -298,14 +330,14 @@ jgui::window(jgui::window_frame<MyMetrics>(jgui::menu_bar(...), content));
   paints on top. The frame's own close-box state survives the pointer crossing a widget, which a
   sibling could not do, because the tree tells a sibling below the widget that the pointer left.
 - **Reaching the window system.** A widget cannot see the backend. It asks the `Window` it receives as
-  `ui`: `request_move(serial)`, `request_resize(serial, edge)`, `request_cursor(shape)` or `request_close()`. These are typed
+  `ui`: `request_move(serial)`, `request_resize(serial, edge)`, `request_cursor(shape)`, `suggest_cursor(shape)` or `request_close()`. These are typed
   fields, and `ApplicationCore` carries them out through the backend when the dispatch returns, in the
   same call that delivered the press. `PointerPress` carries the press's serial for this. Close goes
   through the same `on(CloseEvent)` as a close from the compositor.
 - **Size.** The `Window` holds the validated window size, set as soon as a resize arrives, so a press
   queued behind a resize is judged at the new size even before the next layout.
 - **A window with no frame** also works, with no chrome. Clearing the focus on a press is the frame's
-  job, so such a window does not do it, and its pointer is always the plain arrow.
+  job, so such a window does not do it, and its pointer is the plain arrow, unless a widget in it asks for another.
 
 ### What the pointer looks like
 
@@ -314,9 +346,12 @@ part of the `Backend` concept, so all of this runs headless and in `static_asser
 
 - **The shape comes from the frame's own hit test.** `cursor_for` maps each of the 8 `ResizeEdge` values to its shape and everything else to
   the arrow. The frame asks on each motion, and on an enter, which a backend delivers as a `PointerMove` marked `entered`.
+- **Content can say what it wants over itself.** On motion the frame asks first and the content is delivered to after it, and the last request in one delivery wins.
+  `DataGrid` does this to show `CursorShape::ResizeColumn` over a header boundary, and never asks outside its own bounds, so the frame's edges keep their shapes.
 - **Only a change is sent.** `ApplicationCore` remembers the shape it last asked for, and forgets it at each enter.
-- **Nothing changes while a press is captured,** such as a drag off the Help button. When that press is released, the frame asks for what is under the
-  pointer then, because a drag can end over an edge with no motion to say so.
+- **Nothing changes while a press is captured,** such as a drag off the Help button. When that press is released, the frame suggests what is under the
+  pointer then, because a drag can end over an edge with no motion to say so. A suggestion gives way to anything already asked for in that delivery, so content that
+  has just answered for itself is left alone.
 - **On Wayland it uses `cursor-shape-v1`, as an optional global.** The compositor draws the user's own themed cursors, so this process parses no XCursor file and
   does not use libwayland-cursor, which maps files in. Each request carries the serial of the latest enter. The device goes before its pointer on
   teardown, on losing the seat and on losing the pointer. The protocol has no events, so it needs no listener and no new untyped pointer. Its generated tables name

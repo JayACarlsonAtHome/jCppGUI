@@ -92,7 +92,7 @@ private:
     std::size_t count_{};
 };
 
-using BackendEventQueue = EventQueue<CloseEvent, ResizeEvent, PointerMove, PointerButton, PointerLeave, KeyEvent>;
+using BackendEventQueue = EventQueue<CloseEvent, ResizeEvent, PointerMove, PointerButton, PointerLeave, PointerScroll, KeyEvent>;
 
 // All of one window's frame buffers, and the memory a frame is drawn in, must fit in this.
 inline constexpr std::size_t window_pixel_budget = std::size_t{1} << 30U;
@@ -154,6 +154,7 @@ struct ProbeSink {
     constexpr void on(const PointerMove&) {}
     constexpr void on(const PointerButton&) {}
     constexpr void on(const PointerLeave&) {}
+    constexpr void on(const PointerScroll&) {}
     constexpr void on(const KeyEvent&) {}
 };
 }  // namespace detail

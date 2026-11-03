@@ -58,6 +58,11 @@ inline constexpr std::uint32_t shape_s_resize = 22;
 inline constexpr std::uint32_t shape_se_resize = 23;
 inline constexpr std::uint32_t shape_sw_resize = 24;
 inline constexpr std::uint32_t shape_w_resize = 25;
+inline constexpr std::uint32_t shape_col_resize = 30;
+inline constexpr std::uint32_t axis_vertical = 0;
+inline constexpr std::uint32_t axis_horizontal = 1;
+inline constexpr std::uint32_t axis_source_wheel = 0;
+inline constexpr std::uint32_t axis_source_finger = 1;
 
 // Each event as a typed function, giving the bytes to send. A descriptor goes alongside and is not in these.
 namespace event {
@@ -93,7 +98,13 @@ namespace event {
 [[nodiscard]] constexpr std::vector<std::byte> pointer_button(ObjectId pointer, std::uint32_t serial, std::uint32_t time, std::uint32_t button, std::uint32_t state) {
     return MessageWriter{pointer, 3}.u32(serial).u32(time).u32(button).u32(state).finish();
 }
+[[nodiscard]] constexpr std::vector<std::byte> pointer_axis(ObjectId pointer, std::uint32_t time, std::uint32_t axis, Fixed value) {
+    return MessageWriter{pointer, 4}.u32(time).u32(axis).fixed(value).finish();
+}
 [[nodiscard]] constexpr std::vector<std::byte> pointer_frame(ObjectId pointer) { return MessageWriter{pointer, 5}.finish(); }
+[[nodiscard]] constexpr std::vector<std::byte> pointer_axis_source(ObjectId pointer, std::uint32_t source) { return MessageWriter{pointer, 6}.u32(source).finish(); }
+[[nodiscard]] constexpr std::vector<std::byte> pointer_axis_stop(ObjectId pointer, std::uint32_t time, std::uint32_t axis) { return MessageWriter{pointer, 7}.u32(time).u32(axis).finish(); }
+[[nodiscard]] constexpr std::vector<std::byte> pointer_axis_discrete(ObjectId pointer, std::uint32_t axis, std::int32_t steps) { return MessageWriter{pointer, 8}.u32(axis).i32(steps).finish(); }
 [[nodiscard]] constexpr std::vector<std::byte> keyboard_keymap(ObjectId keyboard, std::uint32_t format, std::uint32_t size) {
     return MessageWriter{keyboard, 0}.u32(format).u32(size).finish();
 }

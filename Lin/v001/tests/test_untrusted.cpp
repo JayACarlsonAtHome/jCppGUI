@@ -13,6 +13,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <cstdlib>
 #include <limits>
 #include <span>
@@ -33,6 +34,40 @@ using namespace jgui::detail;
 constexpr std::int32_t hi = std::numeric_limits<std::int32_t>::max();
 constexpr std::int32_t lo = std::numeric_limits<std::int32_t>::min();
 constexpr Size fallback{Width{640}, Height{480}};
+
+// What one pointer frame's scrolling comes to. A notch sends steps and pixels, and counts as its steps. Pixels are in 24.8.
+[[nodiscard]] consteval ScrollDown tallied(std::initializer_list<std::int32_t> fixed, std::initializer_list<std::int32_t> steps) {
+    AxisTally<detail::ScrollDownTag> tally;
+    for (const std::int32_t value : fixed) tally.add_fixed_pixels(value);
+    for (const std::int32_t value : steps) tally.add_steps(value);
+    return tally.take();
+}
+static_assert(tallied({}, {}).none());
+static_assert(tallied({256 * 15}, {1}) == ScrollDown::of_steps(1), "a notch");
+static_assert(tallied({256 * 10}, {}) == ScrollDown::of_pixels(10));
+static_assert(tallied({-256 * 10}, {}) == ScrollDown::of_pixels(-10));
+static_assert(tallied({128}, {}).none(), "half a pixel moves nothing yet");
+static_assert(tallied({128, 128}, {}) == ScrollDown::of_pixels(1));
+static_assert(tallied({lo}, {}) == ScrollDown::of_pixels(-max_scroll_pixels) && tallied({hi}, {}) == ScrollDown::of_pixels(max_scroll_pixels), "the most that can be asked for");
+static_assert(tallied({lo, lo, lo, lo}, {}) == ScrollDown::of_pixels(-max_scroll_pixels) && tallied({hi, hi, hi, hi}, {}) == ScrollDown::of_pixels(max_scroll_pixels), "however many of them");
+static_assert(tallied({hi, lo}, {}) == ScrollDown::of_pixels(-max_scroll_pixels), "the total stops at the limit each way, so a flood cannot build up");
+static_assert(tallied({}, {lo}) == ScrollDown::of_steps(-max_scroll_steps) && tallied({}, {hi}) == ScrollDown::of_steps(max_scroll_steps));
+static_assert(tallied({}, {hi, hi, hi}) == ScrollDown::of_steps(max_scroll_steps) && tallied({}, {1, -1}).none(), "steps that cancel out are none");
+static_assert(tallied({}, {0}).none());
+
+[[nodiscard]] consteval bool what_is_left_of_a_pixel_waits() {
+    AxisTally<detail::ScrollDownTag> tally;
+    tally.add_fixed_pixels(256 + 128);
+    if (tally.take() != ScrollDown::of_pixels(1)) return false;
+    tally.add_fixed_pixels(128);
+    if (tally.take() != ScrollDown::of_pixels(1)) return false;
+    if (!tally.take().none()) return false;  // nothing is taken twice
+    tally.add_fixed_pixels(128);
+    tally.add_steps(2);
+    if (tally.take() != ScrollDown::of_steps(2)) return false;
+    return tally.take().none();  // the steps took what a notch's pixels had left
+}
+static_assert(what_is_left_of_a_pixel_waits());
 
 static_assert(configured_size(0, 0, fallback) == fallback, "zero means the client chooses");
 static_assert(configured_size(-1, -1, fallback) == fallback && configured_size(lo, lo, fallback) == fallback);

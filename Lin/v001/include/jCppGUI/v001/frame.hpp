@@ -180,9 +180,16 @@ public:
         }
         close_armed_ = false;
         const bool taken = detail::deliver(children_, key, ui, event);
-        // A drag that just ended may have ended over an edge, with no motion to say so.
-        if (!detail::broadcast(children_, key, ui, HoldsCapture{})) ui.request_cursor(cursor_for(hit(event.position, ui.size())));
+        // A drag that just ended may have ended over an edge, with no motion to say so. Content that has just said what the
+        // pointer looks like over itself is left to say so.
+        if (!detail::broadcast(children_, key, ui, HoldsCapture{})) ui.suggest_cursor(cursor_for(hit(event.position, ui.size())));
         return taken;
+    }
+
+    // Scrolling is for the content, and only over the client area.
+    template <class U>
+    constexpr bool handle(const TreeKey& key, U& ui, const PointerScroll& event) {
+        return client_rect(ui.size()).contains(event.position) && detail::deliver(children_, key, ui, event);
     }
 
     template <class U>

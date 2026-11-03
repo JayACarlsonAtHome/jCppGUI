@@ -91,6 +91,16 @@ struct GlyphBitmap {
     return true;
 }
 
+// As much of the text as fits in this many bytes without cutting a character in two. It looks only at the bytes at the
+// cut, so what lies before them can still be invalid.
+[[nodiscard]] constexpr std::string_view utf8_prefix(std::string_view text, std::size_t most_bytes) noexcept {
+    if (text.size() <= most_bytes) return text;
+    std::size_t end = most_bytes;
+    // At most three continuation bytes can belong to the character that the cut would split.
+    for (int tries = 0; tries < 3 && end > 0 && (static_cast<std::uint8_t>(text[end]) & 0xC0U) == 0x80U; ++tries) --end;
+    return text.substr(0, end);
+}
+
 namespace detail {
 // What every caption must pass, at compile time or when it is set, and again before it is shaped.
 [[nodiscard]] constexpr std::expected<void, Error> check_caption(std::string_view text) {
@@ -210,7 +220,9 @@ namespace detail {
 // show, and the widget draws no text. It is not tried again until the text changes.
 class ShapedCaption {
 public:
-    constexpr explicit ShapedCaption(CheckedText text) : text_{text.view()} {}
+    // Appended and not constructed from, because the string's constructor compares the pointer with null, and g++ will not
+    // do that at compile time for text inside a template argument, which is where a column's title is.
+    constexpr explicit ShapedCaption(CheckedText text) { text_.append(text.view()); }
 
     [[nodiscard]] constexpr std::string_view text() const noexcept { return text_; }
     [[nodiscard]] constexpr const std::optional<TextRun>& run() const noexcept { return run_; }
@@ -243,7 +255,7 @@ public:
     }
 
 private:
-    std::string text_;
+    std::string text_{};
     std::optional<TextRun> run_{};
     std::optional<Error> refusal_{};
 };

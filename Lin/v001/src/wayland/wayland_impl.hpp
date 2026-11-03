@@ -42,6 +42,10 @@
 namespace jgui::inline v001::detail {
 
 static_assert(WireAccess::number(Key::Return) == XKB_KEY_Return && WireAccess::number(Key::Space) == XKB_KEY_space);
+static_assert(WireAccess::number(Key::Up) == XKB_KEY_Up && WireAccess::number(Key::Down) == XKB_KEY_Down);
+static_assert(WireAccess::number(Key::Left) == XKB_KEY_Left && WireAccess::number(Key::Right) == XKB_KEY_Right);
+static_assert(WireAccess::number(Key::PageUp) == XKB_KEY_Page_Up && WireAccess::number(Key::PageDown) == XKB_KEY_Page_Down);
+static_assert(WireAccess::number(Key::Home) == XKB_KEY_Home && WireAccess::number(Key::End) == XKB_KEY_End);
 static_assert(keymap_format_xkb_v1 == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1);
 static_assert(keymap_format_none == WL_KEYBOARD_KEYMAP_FORMAT_NO_KEYMAP);
 
@@ -212,6 +216,7 @@ static_assert(cursor_colour('X') == 0xFF000000U && cursor_colour('.') == 0xFFFFF
         case CursorShape::ResizeTopRight: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NE_RESIZE;
         case CursorShape::ResizeBottomLeft: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SW_RESIZE;
         case CursorShape::ResizeBottomRight: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_SE_RESIZE;
+        case CursorShape::ResizeColumn: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE;
         case CursorShape::Default:
         default: return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
     }
@@ -269,16 +274,17 @@ struct BasicWaylandImpl {
     void on_pointer_enter(wl_pointer* object, std::uint32_t serial, wl_surface*, wl_fixed_t x, wl_fixed_t y) noexcept;
     void on_pointer_leave(wl_pointer*, std::uint32_t, wl_surface*) noexcept {
         enter_serial.reset();
+        scroll_tally = PointerScrollTally{};
         record(PointerLeave{});
     }
     void on_pointer_motion(wl_pointer*, std::uint32_t, wl_fixed_t x, wl_fixed_t y) noexcept;
     void on_pointer_button(wl_pointer*, std::uint32_t serial, std::uint32_t, std::uint32_t button,
                            std::uint32_t state) noexcept;
-    void on_pointer_axis(wl_pointer*, std::uint32_t, std::uint32_t, wl_fixed_t) noexcept {}
-    void on_pointer_frame(wl_pointer*) noexcept {}
+    void on_pointer_axis(wl_pointer*, std::uint32_t, std::uint32_t axis, wl_fixed_t value) noexcept;
+    void on_pointer_frame(wl_pointer*) noexcept;
     void on_pointer_axis_source(wl_pointer*, std::uint32_t) noexcept {}
-    void on_pointer_axis_stop(wl_pointer*, std::uint32_t, std::uint32_t) noexcept {}
-    void on_pointer_axis_discrete(wl_pointer*, std::uint32_t, std::int32_t) noexcept {}
+    void on_pointer_axis_stop(wl_pointer*, std::uint32_t, std::uint32_t axis) noexcept;
+    void on_pointer_axis_discrete(wl_pointer*, std::uint32_t axis, std::int32_t steps) noexcept;
     void on_pointer_axis_value120(wl_pointer*, std::uint32_t, std::int32_t) noexcept {}
     void on_pointer_axis_relative_direction(wl_pointer*, std::uint32_t, std::uint32_t) noexcept {}
     void on_pointer_warp(wl_pointer*, wl_fixed_t, wl_fixed_t) noexcept {}
@@ -369,6 +375,7 @@ struct BasicWaylandImpl {
     XkbState xkb_state_object{};
 
     Point pointer_position{};
+    PointerScrollTally scroll_tally{};
     Size chosen_size;
     Size pending_size{};
     Size geometry{};
@@ -489,6 +496,7 @@ void BasicWaylandImpl<Api>::forget_pointer() noexcept {
     cursor_device.reset();
     pointer.reset();
     enter_serial.reset();
+    scroll_tally = PointerScrollTally{};
 }
 
 // Only ever with the serial of the latest enter, as the protocol wants, and so only while the pointer is here.
@@ -581,6 +589,36 @@ void BasicWaylandImpl<Api>::on_pointer_button(wl_pointer*, std::uint32_t serial,
     const ButtonState mapped =
         state == WL_POINTER_BUTTON_STATE_PRESSED ? ButtonState::Pressed : ButtonState::Released;
     record(PointerButton{pointer_position, WireAccess::make<PointerButtonCode>(button), mapped, WireAccess::make<Serial>(serial)});
+}
+
+// Scrolling counts only while the pointer is in this window. An axis the protocol does not name is ignored.
+template <class Api>
+void BasicWaylandImpl<Api>::on_pointer_axis(wl_pointer*, std::uint32_t, std::uint32_t axis, wl_fixed_t value) noexcept {
+    if (!enter_serial) return;
+    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL) scroll_tally.down.add_fixed_pixels(value);
+    if (axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL) scroll_tally.across.add_fixed_pixels(value);
+}
+
+template <class Api>
+void BasicWaylandImpl<Api>::on_pointer_axis_discrete(wl_pointer*, std::uint32_t axis, std::int32_t steps) noexcept {
+    if (!enter_serial) return;
+    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL) scroll_tally.down.add_steps(steps);
+    if (axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL) scroll_tally.across.add_steps(steps);
+}
+
+// A finger came off, so what was left over of a pixel means nothing now.
+template <class Api>
+void BasicWaylandImpl<Api>::on_pointer_axis_stop(wl_pointer*, std::uint32_t, std::uint32_t axis) noexcept {
+    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL) scroll_tally.down = AxisTally<detail::ScrollDownTag>{};
+    if (axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL) scroll_tally.across = AxisTally<detail::ScrollAcrossTag>{};
+}
+
+// The frame ends a group of events that belong together, so a wheel's step and its pixels count as one.
+template <class Api>
+void BasicWaylandImpl<Api>::on_pointer_frame(wl_pointer*) noexcept {
+    const ScrollDown down = scroll_tally.down.take();
+    const ScrollAcross across = scroll_tally.across.take();
+    if (!down.none() || !across.none()) record(PointerScroll{pointer_position, down, across});
 }
 
 template <class Api>
