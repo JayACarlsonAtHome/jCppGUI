@@ -13,7 +13,8 @@ Linux, with a C++23 compiler, CMake, Ninja, and the Wayland, xkbcommon, FreeType
 fontconfig development files. On Fedora, from `Lin/v001`, `bash bsir.sh` checks for all of these, offers
 what is missing, builds, tests and opens the demo. It runs a system update on every run and needs sudo,
 and it stops on a system with no `dnf`. It has not been run end to end. The
-scripts have no shebang and no executable bit, because a shebang cannot be a relative path.
+scripts have no shebang, because a shebang cannot be a relative path. `Lin/v001/bsir.sh` alone has the executable bit,
+so from a bash shell `./bsir.sh` works as well as `bash bsir.sh`.
 
 To build by hand, with the tools already installed:
 
