@@ -193,11 +193,13 @@ void refused_with(jgui_test::Checker& check, std::string_view name, ErrorCode co
     check(passed, "a failing C call did not end in the Error it should have");
 }
 
-// These fail before any connection, so there is no compositor to run.
+// These fail before any connection, so there is no compositor to run. The child is still pointed at a socket that does not
+// exist, so that if the order of those steps ever changed, it could not reach the real compositor.
 template <Site Fails>
 void refused_before_connecting(jgui_test::Checker& check, ErrorCode code, const char* what) {
     const pid_t child = ::fork();
     if (child == 0) {
+        fake::point_client_at("no-such-private-directory");
         const auto result = connect_and_pump<Fails>();
         ::_exit(!result && result.error().code == code ? 0 : 1);
     }

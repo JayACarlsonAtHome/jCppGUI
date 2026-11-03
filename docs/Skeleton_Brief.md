@@ -333,7 +333,7 @@ configure, presents one frame and exits 0.
 16. Text: invalid UTF-8 and over-long captions return an `Error` and draw nothing.
 16a. Messages: no values, a `std::string`, and a `std::string` plus `std::vector` all reach every
      listed receiver, responses arrive in receiver order, and `void` handlers give `NoReply`.
-17. *Live:* `demo --smoke` under CTest. Return the CTest skip code when `WAYLAND_DISPLAY` is unset.
+17. *Live:* `demo --smoke` under CTest. Return the CTest skip code when `WAYLAND_DISPLAY` is unset. This later became opt-in, through `JCPPGUI_LIVE_TESTS`: see `docs/Maturity.md`.
 
 **Compile-fail tests.** These prove the compiler is doing the job, and each runs under CTest as a
 compile that must fail, with both compilers. Pair each with a nearly identical source that must

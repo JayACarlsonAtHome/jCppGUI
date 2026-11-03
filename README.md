@@ -25,6 +25,10 @@ ctest --preset gcc-debug
 ./build/gcc-debug/jcppgui-demo
 ```
 
+CTest opens no window: every test that connects reaches only the test compositor's private socket. Coverage against a real
+compositor comes from a check by hand, or from configuring with `-DJCPPGUI_LIVE_TESTS=ON`, which no preset does, and which adds
+`demo_smoke` and `demo_smoke_redraw_monitor`. Those two open real windows on the desktop.
+
 The presets are `gcc-debug`, `gcc-release`, `clang-debug`, `clang-release` and `gcc-asan`, plus `gcc-warn`, which
 is build only and never shipped, and `clang-fuzz`: see `docs/SECURITY.md`. Build one compiler at a time. Without a
 preset, name a build type: an unnamed one stops the configure.

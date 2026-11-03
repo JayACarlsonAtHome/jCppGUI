@@ -23,6 +23,7 @@ endforeach()
 option(JGUI_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(JGUI_FUZZ "Build the libFuzzer harnesses with ASan and UBSan, instead of the demo and tests" OFF)
 option(JGUI_WARNINGS_ONLY "Optimize, without the hardening flags that stop warnings firing. Never ship this." OFF)
+option(JCPPGUI_LIVE_TESTS "Add the tests that use the real compositor, which open real windows on the desktop. No preset sets this." OFF)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WAYLAND_CLIENT REQUIRED IMPORTED_TARGET wayland-client)
@@ -272,12 +273,15 @@ target_link_libraries(test_fake_compositor_rules PRIVATE jgui_wayland)
 list(LENGTH JGUI_FAKE_SCENARIOS JGUI_FAKE_SCENARIO_COUNT)
 add_test(NAME fake_compositor_lists_match COMMAND test_fake_compositor --expect-count ${JGUI_FAKE_SCENARIO_COUNT})
 
-add_test(NAME demo_smoke COMMAND jcppgui-demo --smoke)
-set_tests_properties(demo_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
-add_test(NAME demo_smoke_redraw_monitor COMMAND jcppgui-demo --smoke --redraw-monitor)
-set_tests_properties(demo_smoke_redraw_monitor PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
-# Both write the one file in the base directory, and each would remove the other's temporary file.
-set_tests_properties(demo_smoke_redraw_monitor fake_demo_as_built PROPERTIES RESOURCE_LOCK jgui_base_directory_file)
+# Every other test that connects reaches only a private socket. These two reach the real compositor, so they are opt-in.
+if(JCPPGUI_LIVE_TESTS)
+  add_test(NAME demo_smoke COMMAND jcppgui-demo --smoke)
+  set_tests_properties(demo_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+  add_test(NAME demo_smoke_redraw_monitor COMMAND jcppgui-demo --smoke --redraw-monitor)
+  set_tests_properties(demo_smoke_redraw_monitor PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+  # Both write the one file in the base directory, and each would remove the other's temporary file.
+  set_tests_properties(demo_smoke_redraw_monitor fake_demo_as_built PROPERTIES RESOURCE_LOCK jgui_base_directory_file)
+endif()
 
 # --- Compile-fail tests: each case must fail with its diagnostic, and the same source must compile
 #     when the one mistake is left out, so a failure for an unrelated reason is caught. ---

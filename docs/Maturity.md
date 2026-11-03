@@ -64,7 +64,10 @@ time, and a system crash may lose more than that: see `docs/Architecture.md`.
   against what this project understood the protocol to be.
 - **No test has seen a resize cursor on a real screen.** GNOME Shell's library names `wp_cursor_shape_manager_v1`, but what a cursor looks like, and that the
   compositor accepts these requests during real pointer motion, can only be checked by hand. The test compositor enforces what this project read in the protocol.
-- **Against a real compositor, the only automatic check is `demo --smoke`,** which is skipped with no `WAYLAND_DISPLAY`. The keymap rule
+- **By default, no test touches a real compositor or opens a window.** Every test that connects reaches only the test compositor's private
+  socket, and that includes the real demo program in the `fake_demo_*` scenarios. So what the default run covers is this project's reading of the protocol.
+- **Coverage against a real compositor comes from the owner's hand check, or from configuring with `-DJCPPGUI_LIVE_TESTS=ON`,** which no preset
+  does. It adds `demo_smoke` and `demo_smoke_redraw_monitor`, which open real windows, and which are skipped with no `WAYLAND_DISPLAY`. The keymap rule
   was checked against one real keymap, from GNOME. Others have not been tried.
 - **Paths still with no real test:**
   - A real `EINTR` from `pread`, `pwrite` or `posix_fallocate`. On the kernel tried, tmpfs reads and writes ran to the end under
