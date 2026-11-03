@@ -1,0 +1,89 @@
+//File:    populated.jtext
+//Date:    2026-11-03
+//Purpose: jText Data File
+//Related: type=jCppGUI_redraw_monitor
+//
+=== jText File ===
+ 1. ▮▌ populated.jtext
+ 2. ▮▌ 2026-11-03
+ 3. ▮▌ jCppGUI redraw monitor
+ 4. ▮▌ 0.8
+ 5. ▮▌ Sensitive
+ 8. ▮▌ true
+=== Section: Run ===
+=== Fields ===
+ 1. ▮▌ Run_ID▮Integer▮Not Null▮Not Empty
+ 2. ▮▌ Label▮String
+ 3. ▮▌ Slow_Budget_ns▮Integer
+ 4. ▮▌ Row_Limit▮Integer
+ 5. ▮▌ Frames_Seen▮Integer
+ 6. ▮▌ Frames_Dropped▮Integer
+ 7. ▮▌ Damage_Seen▮Integer
+ 8. ▮▌ Damage_Dropped▮Integer
+ 9. ▮▌ Deferred_Seen▮Integer
+10. ▮▌ Deferred_Dropped▮Integer
+11. ▮▌ Rows_Refused▮Integer
+12. ▮▌ Writes_Before_This▮Integer
+13. ▮▌ Previous_Write_ns▮Integer
+14. ▮▌ Ended▮Bool
+=== End Fields ===
+=== Data ===
+ 1. %^ 1%a|b ▮ c ▌ d #x%16000000%65536%5%0%3%0%2%0%0%0%0%Yes
+=== End Data ===
+=== End Section ===
+=== Section: Frames ===
+=== Fields ===
+ 1. ▮▌ Frame_ID▮Integer▮Not Null▮Not Empty
+ 2. ▮▌ Start_ns▮Integer
+ 3. ▮▌ Reason▮String
+ 4. ▮▌ Left▮Integer
+ 5. ▮▌ Top▮Integer
+ 6. ▮▌ Width▮Integer
+ 7. ▮▌ Height▮Integer
+ 8. ▮▌ Layout_ns▮Integer
+ 9. ▮▌ Acquire_ns▮Integer
+10. ▮▌ Paint_ns▮Integer
+11. ▮▌ Hash_ns▮Integer
+12. ▮▌ Present_ns▮Integer
+13. ▮▌ Total_ns▮Integer
+14. ▮▌ Last_Write_ns▮Integer
+15. ▮▌ Slow▮Bool
+16. ▮▌ SamePixels▮Bool
+=== End Fields ===
+=== Data ===
+ 1. ▮▌ 1▮7817821▮FirstFrame▮0▮0▮640▮480▮99724▮343709▮239685▮337437▮36▮683154▮0▮No▮No
+ 1. ▮▌ 2▮8840362▮WidgetDamage▮0▮0▮640▮480▮100▮47▮237923▮334645▮14▮238084▮0▮No▮No
+ 1. ▮▌ 3▮9414458▮WidgetDamage▮0▮0▮640▮480▮78141▮28▮261542▮336339▮14▮339725▮0▮No▮No
+ 1. ▮▌ 4▮10090860▮Resize▮0▮0▮640▮480▮82▮30▮257772▮335746▮14▮257898▮0▮No▮Yes
+ 1. ▮▌ 5▮10684823▮Resize▮0▮0▮700▮500▮63▮437812▮286084▮383008▮14▮723973▮0▮No▮No
+=== End Data ===
+=== End Section ===
+=== Section: Damage ===
+=== Fields ===
+ 1. ▮▌ Record_ID▮Integer▮Not Null▮Not Empty
+ 2. ▮▌ Frame_ID▮Integer
+ 3. ▮▌ Class_Name▮String
+ 4. ▮▌ Tag▮String
+ 5. ▮▌ Tree_Position▮Integer
+=== End Fields ===
+=== Data ===
+ 1. ▮▌ 1▮2▮jgui::v001::Button▮demo::HelpButton▮3
+ 1. ▮▌ 2▮3▮jgui::v001::Button▮demo::HelpButton▮3
+ 1. ▮▌ 3▮3▮demo::HelpPanel▮demo::HelpLine▮4
+=== End Data ===
+=== End Section ===
+=== Section: Deferred ===
+=== Fields ===
+ 1. ▮▌ Record_ID▮Integer▮Not Null▮Not Empty
+ 2. ▮▌ Next_Frame_ID▮Integer
+ 3. ▮▌ Time_ns▮Integer
+ 4. ▮▌ Reason▮String
+ 5. ▮▌ Width▮Integer
+ 6. ▮▌ Height▮Integer
+=== End Fields ===
+=== Data ===
+ 1. ▮▌ 1▮5▮10684642▮Resize▮700▮500
+ 1. ▮▌ 2▮5▮10684729▮Resize▮700▮500
+=== End Data ===
+=== End Section ===
+=== End File ===

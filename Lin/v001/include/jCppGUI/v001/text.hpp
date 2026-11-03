@@ -127,6 +127,7 @@ namespace detail {
         case ErrorCode::PoolExhausted:
         case ErrorCode::WouldBlock:
         case ErrorCode::StaleFrame:
+        case ErrorCode::FileFormat:
         default:
             return false;
     }

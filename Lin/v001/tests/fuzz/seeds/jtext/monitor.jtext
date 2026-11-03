@@ -1,0 +1,80 @@
+//File:    redraw_monitor.jtext
+//Date:    2026-11-03
+//Purpose: jText Data File
+//Related: type=jCppGUI_redraw_monitor
+//
+=== jText File ===
+ 1. ▮▌ redraw_monitor.jtext
+ 2. ▮▌ 2026-11-03
+ 3. ▮▌ jCppGUI redraw monitor
+ 4. ▮▌ 0.8
+ 5. ▮▌ Sensitive
+ 8. ▮▌ true
+=== Section: Run ===
+=== Fields ===
+ 1. ▮▌ Run_ID▮Integer▮Not Null▮Not Empty
+ 2. ▮▌ Label▮String
+ 3. ▮▌ Slow_Budget_ns▮Integer
+ 4. ▮▌ Row_Limit▮Integer
+ 5. ▮▌ Frames_Seen▮Integer
+ 6. ▮▌ Frames_Dropped▮Integer
+ 7. ▮▌ Damage_Seen▮Integer
+ 8. ▮▌ Damage_Dropped▮Integer
+ 9. ▮▌ Deferred_Seen▮Integer
+10. ▮▌ Deferred_Dropped▮Integer
+11. ▮▌ Rows_Refused▮Integer
+12. ▮▌ Writes_Before_This▮Integer
+13. ▮▌ Previous_Write_ns▮Integer
+14. ▮▌ Ended▮Bool
+=== End Fields ===
+=== Data ===
+ 1. ▮▌ 1▮▮16000000▮65536▮1▮0▮0▮0▮0▮0▮0▮0▮0▮Yes
+=== End Data ===
+=== End Section ===
+=== Section: Frames ===
+=== Fields ===
+ 1. ▮▌ Frame_ID▮Integer▮Not Null▮Not Empty
+ 2. ▮▌ Start_ns▮Integer
+ 3. ▮▌ Reason▮String
+ 4. ▮▌ Left▮Integer
+ 5. ▮▌ Top▮Integer
+ 6. ▮▌ Width▮Integer
+ 7. ▮▌ Height▮Integer
+ 8. ▮▌ Layout_ns▮Integer
+ 9. ▮▌ Acquire_ns▮Integer
+10. ▮▌ Paint_ns▮Integer
+11. ▮▌ Hash_ns▮Integer
+12. ▮▌ Present_ns▮Integer
+13. ▮▌ Total_ns▮Integer
+14. ▮▌ Last_Write_ns▮Integer
+15. ▮▌ Slow▮Bool
+16. ▮▌ SamePixels▮Bool
+=== End Fields ===
+=== Data ===
+ 1. ▮▌ 1▮8750153▮FirstFrame▮0▮0▮640▮480▮79003▮463208▮197643▮338590▮76270▮816124▮0▮No▮No
+=== End Data ===
+=== End Section ===
+=== Section: Damage ===
+=== Fields ===
+ 1. ▮▌ Record_ID▮Integer▮Not Null▮Not Empty
+ 2. ▮▌ Frame_ID▮Integer
+ 3. ▮▌ Class_Name▮String
+ 4. ▮▌ Tag▮String
+ 5. ▮▌ Tree_Position▮Integer
+=== End Fields ===
+=== Data ===
+=== End Data ===
+=== End Section ===
+=== Section: Deferred ===
+=== Fields ===
+ 1. ▮▌ Record_ID▮Integer▮Not Null▮Not Empty
+ 2. ▮▌ Next_Frame_ID▮Integer
+ 3. ▮▌ Time_ns▮Integer
+ 4. ▮▌ Reason▮String
+ 5. ▮▌ Width▮Integer
+ 6. ▮▌ Height▮Integer
+=== End Fields ===
+=== Data ===
+=== End Data ===
+=== End Section ===
+=== End File ===

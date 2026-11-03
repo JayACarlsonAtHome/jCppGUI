@@ -98,6 +98,7 @@ struct Column {
     [[nodiscard]] static consteval CheckedText title() { return CheckedText{Name.view()}; }
     [[nodiscard]] static consteval Width start_width() { return std::clamp(Width{StartWidth}, grid_column_least, grid_column_most); }
     [[nodiscard]] static constexpr const Value& value_of(const Row& row) noexcept { return row.*Member; }
+    [[nodiscard]] static constexpr Value& member_of(Row& row) noexcept { return row.*Member; }
 };
 
 namespace detail {
@@ -130,6 +131,8 @@ class DataGrid {
 
 public:
     using tag = Tag;
+    using row_type = Row;
+    using column_types = std::tuple<Columns...>;
 
     constexpr DataGrid() : headers_{detail::ShapedCaption{Columns::title()}...}, widths_{Columns::start_width()...} {}
     DataGrid(const DataGrid&) = delete;

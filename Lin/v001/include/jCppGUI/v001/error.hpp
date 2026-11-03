@@ -24,6 +24,7 @@ enum class ErrorCode {
     PoolExhausted,  // a pool has no slot left to give
     WouldBlock,     // a headless wait with nothing queued, or a frame the display holds too much to allow
     StaleFrame,     // a frame that a newer acquire or a present has ended
+    FileFormat,     // a file's text breaks its format, or asks for what the reader does not do
 };
 
 struct Error {

@@ -159,12 +159,17 @@ add_library(jgui_monitor STATIC src/monitor/file_sink.cpp)
 target_include_directories(jgui_monitor PUBLIC include PRIVATE src)
 target_link_libraries(jgui_monitor PUBLIC jgui_hardening PRIVATE jgui_warnings jgui_program)
 
+# Reading a jText file from a path: only a program that does so links it. Parsing is all in the header.
+add_library(jgui_jtext STATIC src/jtext/read_file.cpp)
+target_include_directories(jgui_jtext PUBLIC include PRIVATE src)
+target_link_libraries(jgui_jtext PUBLIC jgui_hardening PRIVATE jgui_warnings)
+
 find_program(JGUI_BASH bash REQUIRED)
 
 # --- Fuzzing: this preset builds the harnesses and a tiny smoke run of each, and nothing else ---
 if(JGUI_FUZZ)
   enable_testing()
-  foreach(harness utf8 keymap font backend)
+  foreach(harness utf8 keymap font backend jtext)
     add_executable(fuzz_${harness} tests/fuzz/fuzz_${harness}.cpp)
     target_include_directories(fuzz_${harness} PRIVATE src src/wayland tests)
     target_link_libraries(fuzz_${harness} PRIVATE jgui_wayland jgui_text jgui_warnings)
@@ -221,6 +226,15 @@ jgui_test(test_messages)
 jgui_test(test_thread)
 jgui_test(test_callback_access)
 jgui_test(test_grid_helpers)
+# The jText reader. Whole files are parsed, cut and written back in static_assert, which needs a higher step budget on both compilers.
+jgui_test(test_jtext)
+target_include_directories(test_jtext PRIVATE src)
+target_link_libraries(test_jtext PRIVATE jgui_jtext)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(test_jtext PRIVATE -fconstexpr-steps=200000000)
+else()
+  target_compile_options(test_jtext PRIVATE -fconstexpr-ops-limit=400000000)
+endif()
 jgui_test(test_panels)
 # The whole grid runs in static_assert, many frames of it, which needs a higher step budget on both compilers.
 jgui_test(test_datagrid)
