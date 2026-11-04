@@ -88,9 +88,15 @@ must_catch tests/evil.cpp "positioned file I/O" 'auto n = pwrite64(fd, b, 1, 0);
 must_catch include/jCppGUI/v001/evil.hpp "Wayland or xkb header above" '#include <cursor-shape-v1-client-protocol.hpp>'
 must_catch tests/evil.cpp "the jText writer's geometry reader" 'struct jgui::detail::FileNumbers {};'
 must_catch tests/evil.cpp "the cell text's geometry reader" 'struct jgui::detail::CellNumbers {};'
-for call in 'read(fd, b, 1)' '::write(fd, b, 1)' 'recv(fd, b, 1, 0)' '::send(fd, b, 1, 0)' 'fread(b, 1, 1, f)' 'std::fwrite(b, 1, 1, f)' 'std::memcpy(a, b, 1)' 'memmove(a, b, 1)'; do
+for call in 'read(fd, b, 1)' '::write(fd, b, 1)'; do
+  must_catch tests/evil.cpp "read or write outside" "void f() { $call; }"
+done
+for call in 'recv(fd, b, 1, 0)' '::send(fd, b, 1, 0)' 'fread(b, 1, 1, f)' 'std::fwrite(b, 1, 1, f)' 'std::memcpy(a, b, 1)' 'memmove(a, b, 1)'; do
   must_catch tests/evil.cpp "byte I/O" "void f() { $call; }"
 done
+# The exception the owner approved is for read and write in src/file_io.hpp and nothing else.
+must_catch src/file_io.hpp "byte I/O" 'void f() { std::memcpy(a, b, 1); }'
+must_catch src/file_io.hpp "byte I/O" 'void f() { recv(fd, b, 1, 0); }'
 must_catch tests/evil.cpp "descriptor passing" 'void f() { sendmsg(1, nullptr, 0); }'
 must_catch tests/evil.cpp "a stream or C file" 'std::ifstream in;'
 must_catch tests/evil.cpp "a stream or C file" 'std::fstream both;'
