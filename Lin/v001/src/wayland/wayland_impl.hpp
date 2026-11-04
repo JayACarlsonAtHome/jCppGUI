@@ -46,6 +46,11 @@ static_assert(WireAccess::number(Key::Up) == XKB_KEY_Up && WireAccess::number(Ke
 static_assert(WireAccess::number(Key::Left) == XKB_KEY_Left && WireAccess::number(Key::Right) == XKB_KEY_Right);
 static_assert(WireAccess::number(Key::PageUp) == XKB_KEY_Page_Up && WireAccess::number(Key::PageDown) == XKB_KEY_Page_Down);
 static_assert(WireAccess::number(Key::Home) == XKB_KEY_Home && WireAccess::number(Key::End) == XKB_KEY_End);
+static_assert(WireAccess::number(Key::Plus) == XKB_KEY_plus && WireAccess::number(Key::Minus) == XKB_KEY_minus && WireAccess::number(Key::BackSpace) == XKB_KEY_BackSpace);
+static_assert(WireAccess::number(Key::LowerC) == XKB_KEY_c && WireAccess::number(Key::UpperC) == XKB_KEY_C && WireAccess::number(Key::LowerV) == XKB_KEY_v && WireAccess::number(Key::UpperV) == XKB_KEY_V);
+static_assert(WireAccess::number(Key::LowerA) == XKB_KEY_a && WireAccess::number(Key::UpperA) == XKB_KEY_A);
+static_assert(WireAccess::number(Key::Escape) == XKB_KEY_Escape);
+static_assert(WireAccess::number(Key::KeypadPlus) == XKB_KEY_KP_Add && WireAccess::number(Key::KeypadMinus) == XKB_KEY_KP_Subtract);
 static_assert(keymap_format_xkb_v1 == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1);
 static_assert(keymap_format_none == WL_KEYBOARD_KEYMAP_FORMAT_NO_KEYMAP);
 
@@ -280,6 +285,8 @@ struct BasicWaylandImpl {
     void on_pointer_motion(wl_pointer*, std::uint32_t, wl_fixed_t x, wl_fixed_t y) noexcept;
     void on_pointer_button(wl_pointer*, std::uint32_t serial, std::uint32_t, std::uint32_t button,
                            std::uint32_t state) noexcept;
+    // What the keyboard says is held now. Nothing, with no keyboard or no keymap yet.
+    [[nodiscard]] ModifierMask held_modifiers() const noexcept;
     void on_pointer_axis(wl_pointer*, std::uint32_t, std::uint32_t axis, wl_fixed_t value) noexcept;
     void on_pointer_frame(wl_pointer*) noexcept;
     void on_pointer_axis_source(wl_pointer*, std::uint32_t) noexcept {}
@@ -588,7 +595,22 @@ void BasicWaylandImpl<Api>::on_pointer_button(wl_pointer*, std::uint32_t serial,
                                     std::uint32_t state) noexcept {
     const ButtonState mapped =
         state == WL_POINTER_BUTTON_STATE_PRESSED ? ButtonState::Pressed : ButtonState::Released;
-    record(PointerButton{pointer_position, WireAccess::make<PointerButtonCode>(button), mapped, WireAccess::make<Serial>(serial)});
+    record(PointerButton{pointer_position, WireAccess::make<PointerButtonCode>(button), mapped, WireAccess::make<Serial>(serial), held_modifiers()});
+}
+
+template <class Api>
+ModifierMask BasicWaylandImpl<Api>::held_modifiers() const noexcept {
+    ModifierMask modifiers{};
+    if (!xkb_state_object) return modifiers;
+    xkb_state* xkb = xkb_state_object.get();
+    const auto add = [&](const char* name, ModifierMask bit) {
+        if (xkb_state_mod_name_is_active(xkb, name, XKB_STATE_MODS_EFFECTIVE) > 0) modifiers = modifiers | bit;
+    };
+    add(XKB_MOD_NAME_SHIFT, Modifier::Shift);
+    add(XKB_MOD_NAME_CTRL, Modifier::Ctrl);
+    add(XKB_MOD_NAME_ALT, Modifier::Alt);
+    add(XKB_MOD_NAME_LOGO, Modifier::Super);
+    return modifiers;
 }
 
 // Scrolling counts only while the pointer is in this window. An axis the protocol does not name is ignored.
@@ -649,17 +671,8 @@ void BasicWaylandImpl<Api>::on_key(wl_keyboard*, std::uint32_t, std::uint32_t, s
     if (!xkb_state_object) return;
     const std::optional<std::uint32_t> code = evdev_to_xkb(key);
     if (!code) return;
-    xkb_state* xkb = xkb_state_object.get();
-    const std::uint32_t keysym = xkb_state_key_get_one_sym(xkb, *code);
-    ModifierMask modifiers{};
-    const auto add = [&](const char* name, ModifierMask bit) {
-        if (xkb_state_mod_name_is_active(xkb, name, XKB_STATE_MODS_EFFECTIVE) > 0) modifiers = modifiers | bit;
-    };
-    add(XKB_MOD_NAME_SHIFT, Modifier::Shift);
-    add(XKB_MOD_NAME_CTRL, Modifier::Ctrl);
-    add(XKB_MOD_NAME_ALT, Modifier::Alt);
-    add(XKB_MOD_NAME_LOGO, Modifier::Super);
-    record(KeyEvent{WireAccess::make<Keysym>(keysym), modifiers, state == WL_KEYBOARD_KEY_STATE_PRESSED});
+    const std::uint32_t keysym = xkb_state_key_get_one_sym(xkb_state_object.get(), *code);
+    record(KeyEvent{WireAccess::make<Keysym>(keysym), held_modifiers(), state == WL_KEYBOARD_KEY_STATE_PRESSED});
 }
 
 template <class Api>

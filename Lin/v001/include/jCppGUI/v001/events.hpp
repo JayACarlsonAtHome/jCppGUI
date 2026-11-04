@@ -103,6 +103,7 @@ struct PointerButton {
     PointerButtonCode button;
     ButtonState state;
     Serial serial;
+    ModifierMask modifiers{};  // what was held when it happened
 };
 
 struct PointerLeave {};
@@ -168,6 +169,18 @@ inline constexpr ModifierMask Super{1U << 3U};
 // The keysyms the toolkit itself understands, with the values xkbcommon defines.
 namespace Key {
 inline constexpr Keysym Space{0x0020};
+inline constexpr Keysym Plus{0x002b};
+inline constexpr Keysym Minus{0x002d};
+inline constexpr Keysym UpperA{0x0041};
+inline constexpr Keysym UpperC{0x0043};
+inline constexpr Keysym UpperV{0x0056};
+inline constexpr Keysym LowerA{0x0061};
+inline constexpr Keysym LowerC{0x0063};
+inline constexpr Keysym LowerV{0x0076};
+inline constexpr Keysym BackSpace{0xff08};
+inline constexpr Keysym Escape{0xff1b};
+inline constexpr Keysym KeypadPlus{0xffab};
+inline constexpr Keysym KeypadMinus{0xffad};
 inline constexpr Keysym Return{0xff0d};
 inline constexpr Keysym Home{0xff50};
 inline constexpr Keysym Left{0xff51};
@@ -185,6 +198,7 @@ struct PointerPress {
     Point position;
     PointerButtonCode button;
     Serial serial;  // the backend's serial for this press, for a compositor move or resize
+    ModifierMask modifiers{};
 };
 
 struct PointerRelease {

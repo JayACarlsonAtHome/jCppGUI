@@ -144,7 +144,7 @@ private:
 
     constexpr void on(const PointerButton& event) {
         if (event.state == ButtonState::Pressed) {
-            send_to_tree(PointerPress{event.position, event.button, event.serial});
+            send_to_tree(PointerPress{event.position, event.button, event.serial, event.modifiers});
         } else {
             send_to_tree(PointerRelease{event.position, event.button});
         }

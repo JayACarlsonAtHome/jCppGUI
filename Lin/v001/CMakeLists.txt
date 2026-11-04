@@ -164,6 +164,11 @@ add_library(jgui_jtext STATIC src/jtext/read_file.cpp)
 target_include_directories(jgui_jtext PUBLIC include PRIVATE src)
 target_link_libraries(jgui_jtext PUBLIC jgui_hardening PRIVATE jgui_warnings)
 
+# Reading and copying on this machine: only a program that does so links it.
+add_library(jgui_files STATIC src/files/read_directory.cpp src/files/copy_job.cpp)
+target_include_directories(jgui_files PUBLIC include PRIVATE src)
+target_link_libraries(jgui_files PUBLIC jgui_hardening PRIVATE jgui_warnings)
+
 find_program(JGUI_BASH bash REQUIRED)
 
 # --- Fuzzing: this preset builds the harnesses and a tiny smoke run of each, and nothing else ---
@@ -189,6 +194,10 @@ target_link_libraries(jcppgui-demo PRIVATE jgui_wayland jgui_text jgui_program j
 # --- The viewer: shows a redraw monitor's file ---
 add_executable(jcppgui-viewer demo/viewer.cpp)
 target_link_libraries(jcppgui-viewer PRIVATE jgui_wayland jgui_text jgui_program jgui_jtext jgui_warnings)
+
+# --- The file manager: two folders side by side, each going its own way ---
+add_executable(jcppgui-files demo/files.cpp)
+target_link_libraries(jcppgui-files PRIVATE jgui_wayland jgui_text jgui_program jgui_files jgui_warnings)
 
 # --- Tests ---
 enable_testing()
@@ -257,6 +266,20 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 else()
   target_compile_options(test_viewer PRIVATE -fconstexpr-ops-limit=800000000)
 endif()
+# Sums run in static_assert, which needs a higher step budget on Clang.
+jgui_test(test_sha256)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(test_sha256 PRIVATE -fconstexpr-steps=50000000)
+endif()
+# Two panes and what reads a folder. Whole windows run in static_assert, which needs a higher step budget on both compilers.
+jgui_test(test_files)
+target_include_directories(test_files PRIVATE src)
+target_link_libraries(test_files PRIVATE jgui_files)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(test_files PRIVATE -fconstexpr-steps=200000000)
+else()
+  target_compile_options(test_files PRIVATE -fconstexpr-ops-limit=400000000)
+endif()
 # What a frame of the grid costs, printed by hand, in a release build: docs/Maturity.md has what it said. Not a test.
 jgui_test_program(measure_datagrid)
 # What reading the largest monitor file costs, and a frame of it, the same way.
@@ -271,8 +294,8 @@ target_link_libraries(test_untrusted PRIVATE jgui_wayland jgui_program)
 # The real WaylandBackend against a scripted compositor, with no screen. Each scenario is one test.
 jgui_test_program(test_fake_compositor)
 target_include_directories(test_fake_compositor PRIVATE src src/wayland)
-add_dependencies(test_fake_compositor jcppgui-viewer)
-target_link_libraries(test_fake_compositor PRIVATE jgui_wayland jgui_program jgui_monitor jgui_jtext)
+add_dependencies(test_fake_compositor jcppgui-viewer jcppgui-files)
+target_link_libraries(test_fake_compositor PRIVATE jgui_wayland jgui_program jgui_monitor jgui_jtext jgui_files)
 set(JGUI_FAKE_SCENARIOS
   happy_path keyboard_path
   configure_1x1 configure_0x0 configure_negative configure_int32_max configure_8192x1 configure_1x8192 configure_119x119 configure_flood
@@ -291,7 +314,8 @@ set(JGUI_FAKE_SCENARIOS
   grid_axis_hostile grid_axis_no_enter grid_wheel_then_pixels grid_resize_during_thumb_drag grid_pointer_gone_during_capture grid_seat_gone_during_capture grid_cursor timer_wakes_and_sleeps grid_column_button_waits grid_buttons_under_floods grid_ctrl_keys_sort
   viewer_first_frame viewer_section_switch viewer_wheel_scroll viewer_resize viewer_missing_file viewer_malformed_file viewer_refused_symlink viewer_path_not_text viewer_copy_with_no_base viewer_file_in_its_base viewer_65536_rows
   settings_demo_records settings_demo_both_flags settings_demo_no_base
-  settings_viewer_items settings_viewer_bad_row settings_viewer_missing_file settings_viewer_only_settings settings_viewer_malformed_file settings_viewer_files_in_its_base)
+  settings_viewer_items settings_viewer_bad_row settings_viewer_missing_file settings_viewer_only_settings settings_viewer_malformed_file settings_viewer_files_in_its_base
+  files_open_on_the_left files_missing_folder files_copy_and_drag files_several)
 foreach(scenario ${JGUI_FAKE_SCENARIOS})
   add_test(NAME fake_${scenario} COMMAND test_fake_compositor ${scenario})
   set_tests_properties(fake_${scenario} PROPERTIES TIMEOUT 300
@@ -304,6 +328,8 @@ set_property(TEST fake_demo_as_built fake_demo_copy_under_a_base fake_demo_copy_
 foreach(scenario viewer_first_frame viewer_section_switch viewer_wheel_scroll viewer_resize viewer_missing_file viewer_malformed_file viewer_refused_symlink viewer_path_not_text viewer_copy_with_no_base viewer_file_in_its_base viewer_65536_rows settings_viewer_items settings_viewer_bad_row settings_viewer_missing_file settings_viewer_only_settings settings_viewer_malformed_file settings_viewer_files_in_its_base)
   set_property(TEST fake_${scenario} APPEND PROPERTY ENVIRONMENT "JGUI_TEST_VIEWER=$<TARGET_FILE:jcppgui-viewer>")
 endforeach()
+# These start the real file manager itself, against the same compositor.
+set_property(TEST fake_files_open_on_the_left fake_files_missing_folder fake_files_copy_and_drag fake_files_several APPEND PROPERTY ENVIRONMENT "JGUI_TEST_FILES=$<TARGET_FILE:jcppgui-files>")
 # One C call failing at a time, through the real implementation. It goes against the compositor above.
 jgui_test(test_injection)
 target_include_directories(test_injection PRIVATE src src/wayland)

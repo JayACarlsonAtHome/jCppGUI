@@ -244,6 +244,9 @@ public:
         rows_ = std::move(rows);
         order_ = identity_order(static_cast<std::uint32_t>(rows_.size()));
         selected_position_.reset();
+        chosen_.clear();
+        anchor_row_.reset();
+        narrow_to_row_.reset();
         sort_count_ = 0;
         place_parts();
         damaged_ = true;
@@ -257,10 +260,64 @@ public:
         if (!selected_position_) return std::nullopt;
         return GridRow{order_[*selected_position_]};
     }
+    // Every selected row, in the rows' own order. selected() is the current one among them.
+    [[nodiscard]] constexpr std::span<const std::uint32_t> selected_rows() const noexcept { return chosen_; }
     // What the rows are sorted by, most important first. A key's place here is the number in its mark, less one.
     [[nodiscard]] constexpr std::span<const GridSortKey> sort_keys() const noexcept { return std::span<const GridSortKey>{sort_keys_}.first(sort_count_); }
     // The column the keys act on, from a click on its header.
     [[nodiscard]] constexpr std::optional<std::size_t> current_column() const noexcept { return current_column_; }
+    // The row under this point, as a press there would select it. Empty anywhere else.
+    [[nodiscard]] constexpr std::optional<GridRow> row_at(Point at) const noexcept {
+        if (!body_.contains(at)) return std::nullopt;
+        const auto position = item_index_at(DownAxis::distance_into(body_, at) + down_.offset(), row_height_, rows_.size());
+        if (!position) return std::nullopt;
+        return GridRow{order_[*position]};
+    }
+    // Where a column starts now, as scrolled.
+    [[nodiscard]] constexpr Left column_left(std::size_t column) const { return header_cell(column).left(); }
+
+    // Selects this row and brings it into view, or selects nothing, which a row that is not there also means. No message goes, because the caller knows.
+    constexpr void select_row(std::optional<GridRow> row) {
+        const std::optional<std::size_t> position = row && row->index < order_.size() ? position_of_index(order_, static_cast<std::uint32_t>(row->index)) : std::nullopt;
+        if (position != selected_position_ || chosen_.size() > 1) damaged_ = true;
+        selected_position_ = position;
+        chosen_.clear();
+        anchor_row_.reset();
+        if (position) {
+            chosen_.push_back(order_[*position]);
+            anchor_row_ = order_[*position];
+        }
+        narrow_to_row_.reset();
+        if (position && down_.reveal(repeated_extent(row_height_, *position), row_height_)) damaged_ = true;
+    }
+
+    // Selects these rows, with this one current and in view. Rows not there are left out, and one current that is not among them gives way to the first. No message goes.
+    constexpr void select_rows(std::vector<std::uint32_t> rows, std::optional<GridRow> current) {
+        std::erase_if(rows, [&](std::uint32_t row) { return row >= order_.size(); });
+        std::ranges::sort(rows);
+        rows.erase(std::ranges::unique(rows).begin(), rows.end());
+        if (rows.empty()) {
+            select_row(std::nullopt);
+            return;
+        }
+        const bool current_is_there = current && current->index < order_.size() && std::ranges::binary_search(rows, static_cast<std::uint32_t>(current->index));
+        const std::uint32_t row = current_is_there ? static_cast<std::uint32_t>(current->index) : rows.front();
+        select_row(GridRow{row});
+        chosen_ = std::move(rows);
+        damaged_ = true;
+    }
+
+    // Every row, with the current one staying if there is one, and otherwise the first. It does not scroll, and no message goes.
+    constexpr void select_all_rows() {
+        if (rows_.empty()) return;
+        chosen_ = identity_order(static_cast<std::uint32_t>(rows_.size()));
+        if (!selected_position_) selected_position_ = 0;
+        if (!anchor_row_) anchor_row_ = order_[*selected_position_];
+        damaged_ = true;
+    }
+
+    // What is under way counts as done with several rows, so letting go leaves them all selected.
+    constexpr void keep_selection_on_release() noexcept { narrow_to_row_.reset(); }
 
     // Sorts by these, most important first, or by the rows' own order with none. More than the limit, a column that is not there and a column twice are refused, and the sort stays as it was.
     [[nodiscard]] constexpr std::expected<void, Error> set_sort_keys(std::span<const GridSortKey> keys) {
@@ -367,13 +424,19 @@ public:
         if (header_.contains(event.position)) {
             press_header(event.position);
         } else if (body_.contains(event.position)) {
-            press_body(ui, event.position);
+            press_body(ui, event.position, event.modifiers);
         }
         return true;
     }
 
     template <class U>
     constexpr bool handle(const TreeKey&, U& ui, const PointerRelease& event) {
+        // A plain press on one of several selected rows, let go with no drag, was a click on that row.
+        if (event.button == MouseButton::Left && narrow_to_row_) {
+            const std::uint32_t row = *std::exchange(narrow_to_row_, std::nullopt);
+            if (const std::optional<std::size_t> position = position_of_index(order_, row); position) select_position(ui, *position);
+            return true;
+        }
         if (event.button != MouseButton::Left || drag_ == Drag::None) return false;
         const Drag ended = std::exchange(drag_, Drag::None);
         down_.release();
@@ -434,12 +497,19 @@ public:
         const std::optional<SelectionStep> step = selection_step_for_key(event.keysym);
         if (!step) return false;
         const std::optional<std::size_t> landed = stepped_selection(selected_position_, *step, rows_.size(), whole_units_in(down_.view(), row_height_));
-        if (landed) select_position(ui, *landed);
+        if (landed) {
+            if (event.modifiers.holds(Modifier::Shift)) {
+                extend_to_position(ui, *landed);
+            } else {
+                select_position(ui, *landed);
+            }
+        }
         return true;
     }
 
     template <class U>
     constexpr void notify(const TreeKey&, U&, const PointerLeave&) {
+        narrow_to_row_.reset();
         drag_ = Drag::None;
         down_.release();
         across_.release();
@@ -453,7 +523,7 @@ public:
 
     template <class U>
     constexpr bool handle(const TreeKey&, U&, const HoldsCapture&) {
-        return drag_ != Drag::None;
+        return drag_ != Drag::None || narrow_to_row_.has_value();
     }
 
     // Focus is compared with what was painted, because a press in this grid takes it away and gives it back.
@@ -634,16 +704,82 @@ private:
     }
 
     template <class U>
-    constexpr void press_body(U& ui, Point at) {
+    constexpr void press_body(U& ui, Point at, ModifierMask modifiers) {
         const Height into_view = DownAxis::distance_into(body_, at);
-        if (const auto position = item_index_at(into_view + down_.offset(), row_height_, rows_.size()); position) select_position(ui, *position);
+        const auto position = item_index_at(into_view + down_.offset(), row_height_, rows_.size());
+        if (!position) return;
+        if (modifiers.holds(Modifier::Shift)) {
+            extend_to_position(ui, *position);
+            return;
+        }
+        if (modifiers.holds(Modifier::Ctrl)) {
+            toggle_position(ui, *position);
+            return;
+        }
+        // On one of several selected rows it may be the start of something done to all of them, so they stay until it is let go.
+        if (chosen_.size() > 1 && row_is_chosen(order_[*position])) {
+            narrow_to_row_ = order_[*position];
+            anchor_row_ = order_[*position];
+            selected_position_ = *position;
+            damaged_ = true;
+            return;
+        }
+        select_position(ui, *position);
+    }
+
+    [[nodiscard]] constexpr bool row_is_chosen(std::uint32_t row) const { return std::ranges::binary_search(chosen_, row); }
+
+    // Every row from the last one picked to this one, in the order they show, and nothing else.
+    template <class U>
+    constexpr void extend_to_position(U& ui, std::size_t position) {
+        if (!anchor_row_) {
+            select_position(ui, position);
+            return;
+        }
+        const std::size_t anchor = position_of_index(order_, *anchor_row_).value_or(position);
+        const std::size_t first = std::min(anchor, position);
+        const std::size_t last = std::max(anchor, position);
+        chosen_.assign(order_.begin() + static_cast<std::ptrdiff_t>(first), order_.begin() + static_cast<std::ptrdiff_t>(last) + 1);
+        std::ranges::sort(chosen_);
+        selected_position_ = position;
+        static_cast<void>(down_.reveal(repeated_extent(row_height_, position), row_height_));
+        damaged_ = true;
+        send_selected(ui);
+    }
+
+    // In or out of the selection, leaving the rest. Taking out the current row makes the first one left current.
+    template <class U>
+    constexpr void toggle_position(U& ui, std::size_t position) {
+        const std::uint32_t row = order_[position];
+        const auto at = std::ranges::lower_bound(chosen_, row);
+        damaged_ = true;
+        anchor_row_ = row;
+        if (at != chosen_.end() && *at == row) {
+            chosen_.erase(at);
+            selected_position_ = chosen_.empty() ? std::nullopt : position_of_index(order_, chosen_.front());
+            if (selected_position_) send_selected(ui);
+            return;
+        }
+        chosen_.insert(at, row);
+        selected_position_ = position;
+        static_cast<void>(down_.reveal(repeated_extent(row_height_, position), row_height_));
+        send_selected(ui);
+    }
+
+    template <class U>
+    constexpr void send_selected(U& ui) {
+        if constexpr (!std::same_as<Notify, NoGridMessage>) {
+            if (selected_position_) ui.template send<Notify>(GridRow{order_[*selected_position_]});
+        }
     }
 
     // The selection moves here and shows, and the message goes last, so a receiver finds the grid settled, free to give it new rows.
     template <class U>
     constexpr void select_position(U& ui, std::size_t position) {
-        const bool changed = selected_position_ != position;
+        const bool changed = selected_position_ != position || chosen_.size() > 1;
         selected_position_ = position;
+        chosen_.assign(1, order_[position]);
+        anchor_row_ = order_[position];
         if (down_.reveal(repeated_extent(row_height_, position), row_height_)) damaged_ = true;
         if (!changed) return;
         damaged_ = true;
@@ -826,7 +962,7 @@ private:
             const std::size_t position = visible_.first + r;
             const Top top = (body_.top() + repeated_extent(row_height_, position)) - down_.offset();
             const Rect row{Point{body_.left(), top}, Size{body_.width(), row_height_}};
-            if (selected_position_ == position) body.fill_rect(row, theme::button_pressed);
+            if (row_is_chosen(order_[position])) body.fill_rect(row, theme::button_pressed);
             Left start = columns_origin();
             for (std::size_t k = 0; k < column_count; ++k) {
                 const Right end = start + shown_[k];
@@ -976,7 +1112,10 @@ private:
     Rect header_{};
     Rect body_{};
     Height row_height_{};
-    std::optional<std::size_t> selected_position_{};
+    std::optional<std::size_t> selected_position_{};  // the current row, which is always one of chosen_
+    std::vector<std::uint32_t> chosen_{};             // every selected row, in the rows' own order, so a sort leaves them alone
+    std::optional<std::uint32_t> anchor_row_{};       // where a Shift range starts
+    std::optional<std::uint32_t> narrow_to_row_{};    // a press on one of several, waiting to be let go
     std::array<GridSortKey, grid_most_sort_keys> sort_keys_{};
     std::size_t sort_count_{};
     std::optional<std::size_t> current_column_{};

@@ -38,6 +38,8 @@
 #include "jCppGUI/v001/headless_backend.hpp"
 #include "monitor_helpers.hpp"
 #include "test_access.hpp"
+#include "files_ui.hpp"
+#include "jCppGUI/v001/local_files.hpp"
 #include "viewer_helpers.hpp"
 #include "viewer_ui.hpp"
 
@@ -2592,12 +2594,306 @@ template <class Script>
     return run_scenario(script, GlobalSet{}, [&] { return run_the_real_viewer(setup, top); });
 }
 
+// --- The file manager: the real program, on real folders it was started with ---
+
+// The same window, headless, on the same folders, sent the same events.
+class FilesReference {
+public:
+    using App = std::remove_cvref_t<decltype(*jgui::make_application(jgui::HeadlessBackend{jgui::Size{}}, files::make_ui(jgui::LocalFiles{}, files::StartFolder{}, files::StartFolder{})))>;
+
+    FilesReference(const files::StartFolder& left, const files::StartFolder& right, std::int32_t width, std::int32_t height)
+        : app_{*jgui::make_application(jgui::HeadlessBackend{jgui::Size{jgui::Width{width}, jgui::Height{height}}}, files::make_ui(jgui::LocalFiles{}, left, right))} {
+        settle();
+    }
+    void settle() {
+        if (!app_.process_pending()) std::cerr << "the reference window failed\n";
+    }
+    template <class Event>
+    void deliver(const Event& event) {
+        jgui_test::backend(app_).inject(event);
+        settle();
+    }
+    void click(jgui::Point at) {
+        deliver(jgui::PointerMove{at});
+        deliver(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Pressed, jgui_test::serial(1)});
+        deliver(jgui::PointerButton{at, jgui::MouseButton::Left, jgui::ButtonState::Released, jgui_test::serial(1)});
+    }
+    template <class Tag>
+    [[nodiscard]] auto& get() {
+        return app_.ui().template get<Tag>();
+    }
+    [[nodiscard]] bool same_picture(std::span<const std::uint32_t> pixels) {
+        const jgui::HeadlessBackend& backend = jgui_test::backend(app_);
+        const std::int32_t width = jgui_test::number(backend.size().width());
+        const std::int32_t height = jgui_test::number(backend.size().height());
+        if (pixels.size() != static_cast<std::size_t>(width) * static_cast<std::size_t>(height)) return false;
+        for (std::int32_t y = 0; y < height; ++y)
+            for (std::int32_t x = 0; x < width; ++x)
+                if (pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)] != backend.pixel(jgui::Point{jgui::Left{x}, jgui::Top{y}})) return false;
+        return true;
+    }
+
+private:
+    App app_;
+};
+
+// Each row of a picture from this column on, to show one pane did not move while the other did.
+[[nodiscard]] std::vector<std::uint32_t> picture_from_column(std::span<const std::uint32_t> pixels, std::int32_t width, std::int32_t column) {
+    std::vector<std::uint32_t> kept;
+    for (std::size_t at = 0; at < pixels.size(); ++at)
+        if (static_cast<std::int32_t>(at % static_cast<std::size_t>(width)) >= column) kept.push_back(pixels[at]);
+    return kept;
+}
+
+struct FilesState {
+    std::string left{};
+    std::string right{};
+    std::optional<ObjectId> latest{};
+
+    void on_commit(Session& session, const BufferCommitted& commit) {
+        if (latest) session.release(*latest);
+        latest = commit.buffer;
+    }
+    [[nodiscard]] std::vector<std::uint32_t> picture(Session& session) const {
+        if (!latest) return {};
+        auto pixels = session.pixels_of(*latest);
+        return pixels ? std::move(*pixels) : std::vector<std::uint32_t>{};
+    }
+};
+
+// The first picture of each pane, then a click on the left's first mark, off the wire: the left opens, and the right does not change by a pixel.
+struct FilesOpenOnTheLeft {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool files_program = true;
+    static constexpr bool left_exists = true;
+    enum class Step : std::uint8_t { First, Clicked, Done };
+    FilesState state{};
+    Step step{Step::First};
+    std::vector<std::uint32_t> right_before{};
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || step == Step::Done) return;
+        FilesReference reference{jgui::starting_folder(state.left), jgui::starting_folder(state.right), viewer_width, viewer_height};
+        auto& grid = reference.get<jgui::FilePaneGrid<files::LeftPane>>();
+        const jgui::Rect body = grid.body_area();
+        const jgui::Point on_mark{jgui::left_after(grid.column_left(jgui::file_name_column) + jgui::Width{8}), jgui::top_after(body.top() + jgui::Height{3})};
+        const std::int32_t right_column = jgui_test::number(reference.get<files::RightPane>().bounds().left());
+        const std::vector<std::uint32_t> pixels = state.picture(session);
+        if (step == Step::First) {
+            if (!reference.same_picture(pixels)) session.violation("the first frame is not the window that was expected");
+            if (!text_is_at(pixels, viewer_width, label_text_at(reference.get<jgui::FilePanePath<files::LeftPane>>().bounds()), state.left, jgui::theme::background)) session.violation("no left path");
+            if (!text_is_at(pixels, viewer_width, label_text_at(reference.get<jgui::FilePanePath<files::RightPane>>().bounds()), state.right, jgui::theme::background)) session.violation("no right path");
+            if (session.title() != "jCppGUI files") session.violation("another title: " + session.title());
+            if (session.app_id() != "jcppgui.files") session.violation("another app id: " + session.app_id());
+            right_before = picture_from_column(pixels, viewer_width, right_column);
+            pointer_enter(session, jgui_test::number(on_mark.left()), jgui_test::number(on_mark.top()));
+            left_click(session, jgui_test::number(on_mark.left()), jgui_test::number(on_mark.top()));
+            step = Step::Clicked;
+            return;
+        }
+        reference.click(on_mark);
+        if (reference.get<files::LeftPane>().rows().size() != 3) session.violation("the reference did not open the folder");
+        if (!reference.same_picture(pixels)) session.violation("after the click, not the window that was expected");
+        if (picture_from_column(pixels, viewer_width, right_column) != right_before) session.violation("the right pane changed");
+        step = Step::Done;
+        session.close_window();
+    }
+};
+
+// A folder that is not there costs that pane a line, and the program goes on with the other.
+struct FilesMissingFolder {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool files_program = true;
+    static constexpr bool left_exists = false;
+    FilesState state{};
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0) return;
+        FilesReference reference{jgui::starting_folder(state.left), jgui::starting_folder(state.right), viewer_width, viewer_height};
+        const std::vector<std::uint32_t> pixels = state.picture(session);
+        if (!reference.same_picture(pixels)) session.violation("not the window that was expected");
+        if (!reference.get<files::LeftPane>().rows().empty() || reference.get<files::RightPane>().rows().empty()) session.violation("the wrong pane is empty");
+        const std::string said{reference.get<files::LeftPane>().status()};
+        if (!said.starts_with("cannot find") || !text_is_at(pixels, viewer_width, label_text_at(reference.get<jgui::FilePaneStatus<files::LeftPane>>().bounds()), said, jgui::theme::background)) session.violation("the left pane does not say why");
+        session.close_window();
+    }
+};
+
+// The whole way, off the wire and onto a real disk: a file copied across with the buttons, a drag refused because the name is taken, and a folder dragged across, which is a copy and leaves it where it was.
+struct FilesCopyAndDrag {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool files_program = true;
+    static constexpr bool left_exists = true;
+    enum class Step : std::uint8_t { First, WaitForCopy, WaitForRefusal, WaitForDraggedCopy, Done };
+    FilesState state{};
+    Step step{Step::First};
+    int waits{};
+
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || step == Step::Done) return;
+        const std::filesystem::path left{state.left};
+        const std::filesystem::path right{state.right};
+        FilesReference reference{jgui::starting_folder(state.left), jgui::starting_folder(state.right), viewer_width, viewer_height};
+        auto& left_grid = reference.get<jgui::FilePaneGrid<files::LeftPane>>();
+        auto& right_grid = reference.get<jgui::FilePaneGrid<files::RightPane>>();
+        const auto row_x = [](auto& grid) { return jgui_test::number(grid.column_left(jgui::file_name_column)) + 60; };
+        const auto row_y = [](auto& grid, std::int32_t row) { return jgui_test::number(grid.body_area().top()) + jgui_test::number(grid.row_height()) * row + 3; };
+        const auto click_button = [&](const jgui::Rect& area) { left_click(session, jgui_test::number(area.left()) + 3, jgui_test::number(area.top()) + 3); };
+        const auto drag_to = [&](std::int32_t from_row, std::int32_t to_x, std::int32_t to_y) {
+            pointer_motion(session, row_x(left_grid), row_y(left_grid, from_row));
+            pointer_button(session, wire::button_left, wire::button_pressed);
+            pointer_motion(session, to_x, to_y);
+            pointer_button(session, wire::button_left, wire::button_released);
+        };
+        const std::int32_t below_the_rows = jgui_test::number(right_grid.body_area().bottom()) - 4;
+        if (++waits > 2000) {
+            session.violation("what was asked of the disk did not happen");
+            session.close_window();
+            step = Step::Done;
+            return;
+        }
+        switch (step) {
+            case Step::First:
+                if (reference.get<files::LeftPane>().rows().size() != 2) session.violation("not the left that was expected");
+                pointer_enter(session, row_x(left_grid), row_y(left_grid, 1));
+                left_click(session, row_x(left_grid), row_y(left_grid, 1));  // plain.txt
+                click_button(reference.get<jgui::FilePaneCopyButton<files::LeftPane>>().bounds());
+                click_button(reference.get<jgui::FilePanePasteButton<files::RightPane>>().bounds());
+                step = Step::WaitForCopy;
+                waits = 0;
+                return;
+            case Step::WaitForCopy:
+                if (read_text_file((right / "plain.txt").string()) != "plain") return;
+                if (read_text_file((left / "plain.txt").string()) != "plain") session.violation("the original changed");
+                // The same name is on the right now, so this drag must be refused, with both left as they are.
+                drag_to(1, row_x(right_grid), below_the_rows);
+                step = Step::WaitForRefusal;
+                waits = 0;
+                return;
+            case Step::WaitForRefusal:
+                if (waits < 5) return;
+                if (read_text_file((left / "plain.txt").string()) != "plain" || read_text_file((right / "plain.txt").string()) != "plain") session.violation("a taken name was replaced");
+                drag_to(0, row_x(right_grid), below_the_rows);  // sub, a folder
+                step = Step::WaitForDraggedCopy;
+                waits = 0;
+                return;
+            case Step::WaitForDraggedCopy:
+                if (read_text_file((right / "sub" / "inner.txt").string()) != "inner") return;
+                if (read_text_file((left / "sub" / "inner.txt").string()) != "inner") session.violation("a drag took away the original");
+                step = Step::Done;
+                session.close_window();
+                return;
+            case Step::Done:
+            default: return;
+        }
+    }
+};
+
+// Ctrl off the wire with two clicks, the buttons, and both things on a real disk on the other side, and then Compare.
+struct FilesSeveral {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool files_program = true;
+    static constexpr bool left_exists = true;
+    enum class Step : std::uint8_t { First, WaitForBoth, Compared, Done };
+    FilesState state{};
+    Step step{Step::First};
+    int waits{};
+
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const KeyboardCreated&) { send_valid_keymap(session); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.pointer() || !session.keyboard() || step == Step::Done) return;
+        const std::filesystem::path left{state.left};
+        const std::filesystem::path right{state.right};
+        FilesReference reference{jgui::starting_folder(state.left), jgui::starting_folder(state.right), viewer_width, viewer_height};
+        auto& grid = reference.get<jgui::FilePaneGrid<files::LeftPane>>();
+        const std::int32_t row_x = jgui_test::number(grid.column_left(jgui::file_name_column)) + 60;
+        const auto row_y = [&](std::int32_t row) { return jgui_test::number(grid.body_area().top()) + jgui_test::number(grid.row_height()) * row + 3; };
+        const auto click_button = [&](const jgui::Rect& area) { left_click(session, jgui_test::number(area.left()) + 3, jgui_test::number(area.top()) + 3); };
+        if (++waits > 2000) {
+            session.violation("what was asked of the disk did not happen");
+            session.close_window();
+            step = Step::Done;
+            return;
+        }
+        switch (step) {
+            case Step::First:
+                pointer_enter(session, row_x, row_y(0));
+                session.queue(event::keyboard_enter(*session.keyboard(), session.next_serial(), *session.window_surface()));
+                left_click(session, row_x, row_y(0));  // sub
+                session.queue(event::keyboard_modifiers(*session.keyboard(), session.next_serial(), control_bit, 0, 0, 0));
+                left_click(session, row_x, row_y(1));  // plain.txt
+                session.queue(event::keyboard_modifiers(*session.keyboard(), session.next_serial(), 0, 0, 0, 0));
+                click_button(reference.get<jgui::FilePaneCopyButton<files::LeftPane>>().bounds());
+                click_button(reference.get<jgui::FilePanePasteButton<files::RightPane>>().bounds());
+                step = Step::WaitForBoth;
+                waits = 0;
+                return;
+            case Step::WaitForBoth:
+                if (read_text_file((right / "sub" / "inner.txt").string()) != "inner" || read_text_file((right / "plain.txt").string()) != "plain") return;
+                if (read_text_file((left / "sub" / "inner.txt").string()) != "inner" || read_text_file((left / "plain.txt").string()) != "plain") session.violation("an original changed");
+                click_button(reference.get<files::CompareButton>().bounds());
+                step = Step::Compared;
+                waits = 0;
+                return;
+            case Step::Compared:
+                if (waits < 5) return;
+                step = Step::Done;
+                session.close_window();
+                return;
+            case Step::Done:
+            default: return;
+        }
+    }
+};
+
+template <class Script>
+[[nodiscard]] bool run_files_scenario() {
+    const char* built = std::getenv("JGUI_TEST_FILES");
+    if (built == nullptr) {
+        std::cerr << "JGUI_TEST_FILES must be set\n";
+        return false;
+    }
+    const std::filesystem::path program{built};
+    const jgui_test::TemporaryDirectory temporary;
+    const std::filesystem::path top = std::filesystem::canonical(temporary.path());
+    const std::filesystem::path left = top / "left";
+    const std::filesystem::path right = top / "right";
+    std::filesystem::create_directories(right);
+    if (Script::left_exists) {
+        std::filesystem::create_directories(left / "sub");
+        put_file(left / "sub" / "inner.txt", "inner");
+        put_file(left / "plain.txt", "plain");
+    }
+    put_file(right / "only.txt", "only");
+    Script script{};
+    script.state.left = left.string();
+    script.state.right = right.string();
+    return run_scenario(script, GlobalSet{}, [&] {
+        const std::filesystem::path errors = top / "errors.txt";
+        if (jgui_test::run_program(program, "jcppgui-files", top, {"one", "two", "three"}, errors) != 2) {
+            std::cerr << "too many arguments did not end in the usage message\n";
+            return 1;
+        }
+        const int status = jgui_test::run_program(program, "jcppgui-files", top, {left.string(), right.string()}, errors);
+        std::cout << "the program ended with " << status << " and said: " << read_text_file(errors.string()) << '\n';
+        return status;
+    });
+}
+
 struct MonitorVersusNone {};
 
 template <class Script>
 [[nodiscard]] bool run_one() {
     if constexpr (std::same_as<Script, MonitorVersusNone>) {
         return run_monitor_versus_none();
+    } else if constexpr (requires { requires Script::files_program; }) {
+        return run_files_scenario<Script>();
     } else if constexpr (requires { Script::settings_run; }) {
         return run_scenario(Script{}, GlobalSet{}, [] { return run_the_real_demo_recording_settings<Script::settings_run>(); });
     } else if constexpr (requires { Script::viewer_file; }) {
@@ -2720,6 +3016,10 @@ constexpr auto scenarios = std::tuple{
     Named<ViewerSettings<ViewerFile::OnlySettings>>{"settings_viewer_only_settings"},
     Named<ViewerSettings<ViewerFile::SettingsMalformed>>{"settings_viewer_malformed_file"},
     Named<ViewerSettings<ViewerFile::BothInBase>>{"settings_viewer_files_in_its_base"},
+    Named<FilesOpenOnTheLeft>{"files_open_on_the_left"},
+    Named<FilesMissingFolder>{"files_missing_folder"},
+    Named<FilesCopyAndDrag>{"files_copy_and_drag"},
+    Named<FilesSeveral>{"files_several"},
 };
 
 }  // namespace
