@@ -1,7 +1,7 @@
 // File: include/jCppGUI/v001/file_transfers.hpp
 // Purpose: FileTransfers<Tag, Source>: what goes between two panes. A line of its own, what was last copied, one thing or several, a copy under way, and a drag. A copy goes a step on each turn of the
-//          loop, and asks for the next turn at once, so the window stays alive and Escape can stop it, with no thread. Nothing here replaces or deletes anything: the source refuses
-//          a name that is taken. jgui.hpp does not include it. It must come before the panes in the tree: it is what turns a press into a drag, and each pane must then see that on the
+//          loop, and asks for the next turn at once, so the window stays alive and Escape can stop it, with no thread. A copy replaces nothing: the source refuses a name that is taken. Deleting
+//          moves to the trash, is counted first, and goes ahead only on confirm_delete. Only one of these goes at a time. jgui.hpp does not include it. It must come before the panes in the tree: it is what turns a press into a drag, and each pane must then see that on the
 //          same motion, because a flood of motion can arrive as one event.
 #pragma once
 
@@ -19,6 +19,7 @@
 
 #include "file_listing.hpp"
 #include "label.hpp"
+#include "line_diff.hpp"
 #include "timer.hpp"
 #include "widget.hpp"
 
@@ -43,6 +44,25 @@ namespace detail {
     return CopyProgress{a.files + b.files, a.folders + b.folders, a.links + b.links, a.bytes + b.bytes, a.bytes_checked + b.bytes_checked, a.not_copied + b.not_copied};
 }
 
+[[nodiscard]] constexpr MatchProgress added_up(const MatchProgress& a, const MatchProgress& b) noexcept {
+    return MatchProgress{a.files + b.files, a.folders + b.folders, a.links + b.links, a.bytes + b.bytes, a.differences + b.differences};
+}
+
+[[nodiscard]] constexpr DeleteCount added_up(const DeleteCount& a, const DeleteCount& b) noexcept { return DeleteCount{a.files + b.files, a.folders + b.folders, a.bytes + b.bytes}; }
+
+[[nodiscard]] constexpr std::string delete_progress_text(const DeleteCount& done) {
+    return count_with_plural(done.files, "file") + ", " + count_with_plural(done.folders, "folder") + ", " + CellFormat<FileBytes>::text(FileBytes{true, done.bytes}) + " bytes";
+}
+
+[[nodiscard]] constexpr std::string match_progress_text(const MatchProgress& done) {
+    std::string text = count_with_plural(done.files, "file");
+    text.append(" matched by SHA-256");
+    if (done.links != 0) text.append(", ").append(count_with_plural(done.links, "link"));
+    if (done.folders != 0) text.append(", ").append(count_with_plural(done.folders, "folder")).append(" looked through");
+    text.append(", ").append(CellFormat<FileBytes>::text(FileBytes{true, done.bytes})).append(" bytes read from each side");
+    return text;
+}
+
 [[nodiscard]] constexpr std::string progress_text(const CopyProgress& done) {
     std::string text = count_with_plural(done.files, "file");
     if (done.folders != 0) text.append(", ").append(count_with_plural(done.folders, "folder"));
@@ -54,6 +74,28 @@ namespace detail {
 }
 
 }  // namespace detail
+
+// How matching a selection came out, for whatever shows it.
+struct MatchReport {
+    std::vector<MatchFinding> findings{};  // at most most_match_findings
+    MatchProgress checked{};
+    std::size_t pairs_done{};
+    std::size_t pairs_total{};
+    bool stopped{};
+};
+
+// What a person must say yes to before anything is deleted.
+struct DeleteQuestion {
+    std::vector<std::string> paths{};
+    DeleteCount count{};
+};
+
+// How a diff came out, for whatever shows it.
+struct DiffReport {
+    std::string first{};
+    std::string second{};
+    DiffOutcome outcome{};
+};
 
 template <class Tag, FileSource Source>
 class FileTransfers {
@@ -80,8 +122,104 @@ public:
     // Counts up each time something on a disk may have changed. A pane looks again when this moves.
     [[nodiscard]] constexpr std::uint64_t changes() const noexcept { return changes_; }
 
+    [[nodiscard]] constexpr bool matching() const noexcept { return matching_; }
+
     // Says something from elsewhere on this line.
     constexpr void tell(std::string_view text) { say(text); }
+
+    [[nodiscard]] constexpr bool counting() const noexcept { return count_job_.has_value(); }
+    [[nodiscard]] constexpr bool awaiting_delete_answer() const noexcept { return awaiting_answer_; }
+    [[nodiscard]] constexpr bool deleting() const noexcept { return trashing_; }
+    [[nodiscard]] constexpr bool diffing() const noexcept { return differ_.has_value(); }
+
+    // Counts what deleting these would remove. Nothing is removed until confirm_delete, and nothing can be if the count does not finish.
+    constexpr void start_deleting(std::vector<std::string> paths) {
+        if (say_if_busy()) return;
+        for (const std::string& path : paths) {
+            if (!file_path_can_show(path) || path == "/") {
+                say("Nothing was deleted: that path cannot be deleted");
+                return;
+            }
+        }
+        if (paths.empty()) {
+            say("Select something to delete first");
+            return;
+        }
+        delete_paths_ = std::move(paths);
+        delete_next_ = 0;
+        delete_counted_ = DeleteCount{};
+        due_line_.reset();
+        say("Counting what would be deleted. Escape stops it, and nothing has been deleted.");
+        start_next_count();
+    }
+
+    // Once, when the count has finished, for whatever asks the person.
+    [[nodiscard]] constexpr std::optional<DeleteQuestion> take_delete_question() { return std::exchange(delete_question_, std::nullopt); }
+
+    constexpr void cancel_delete() {
+        if (!awaiting_answer_) return;
+        awaiting_answer_ = false;
+        delete_paths_.clear();
+        say("Nothing was deleted");
+    }
+
+    // The one way anything already there comes to leave where it is. It goes to the trash, a thing a turn.
+    constexpr void confirm_delete() {
+        if (!awaiting_answer_) return;
+        awaiting_answer_ = false;
+        delete_next_ = 0;
+        trashing_ = true;
+        say("Moving to the trash. Escape stops it.");
+    }
+
+    // Reads two files and starts finding what differs. They are read at once, each at most most_diff_file_bytes, and the search goes a step on each turn.
+    constexpr void start_diff(const std::string& first, const std::string& second) {
+        if (say_if_busy()) return;
+        auto first_text = source_.read_text(first);
+        if (!first_text) {
+            say("Nothing to diff: " + first_text.error().message);
+            return;
+        }
+        auto second_text = source_.read_text(second);
+        if (!second_text) {
+            say("Nothing to diff: " + second_text.error().message);
+            return;
+        }
+        auto started = LineDiffer::start(std::move(*first_text), std::move(*second_text));
+        if (!started) {
+            say("Nothing to diff: " + started.error().message);
+            return;
+        }
+        differ_.emplace(std::move(*started));
+        diff_first_ = first;
+        diff_second_ = second;
+        say("Finding what differs. Escape stops it.");
+    }
+
+    // How the last diff came out, once. Empty until it has ended.
+    [[nodiscard]] constexpr std::optional<DiffReport> take_diff_report() { return std::exchange(diff_done_, std::nullopt); }
+
+    // Matches these one after another. It only reads, but a copy going on would change what it reads, so the two do not run together.
+    constexpr void start_matching(MatchPlan plan) {
+        if (say_if_busy()) return;
+        if (!plan.refused.empty()) {
+            say(plan.refused);
+            return;
+        }
+        match_pairs_ = std::move(plan.pairs);
+        match_next_ = 0;
+        match_progress_line_.reset();
+        matching_ = true;
+        match_report_ = MatchReport{};
+        match_report_.pairs_total = match_pairs_.size();
+        match_report_.checked.differences = plan.unpaired.size();
+        match_report_.findings = std::move(plan.unpaired);
+        say("Matching " + detail::count_with_plural(match_pairs_.size(), "pair") + ". Escape stops it.");
+        start_next_match();
+    }
+
+    // How the last match came out, once. Empty until it has ended.
+    [[nodiscard]] constexpr std::optional<MatchReport> take_match_report() { return std::exchange(match_done_, std::nullopt); }
 
     constexpr void copy(std::vector<std::string> paths) {
         copied_ = std::move(paths);
@@ -161,6 +299,25 @@ public:
             return true;
         }
         armed_from_.reset();
+        if (matching_) {
+            end_match(true);
+            return true;
+        }
+        if (count_job_) {
+            count_job_.reset();
+            delete_paths_.clear();
+            say("Counting was stopped, and nothing was deleted");
+            return true;
+        }
+        if (trashing_) {
+            end_delete("Stopped: ");
+            return true;
+        }
+        if (differ_) {
+            differ_.reset();
+            say("The diff was stopped");
+            return true;
+        }
         if (job_) {
             end_job(pending_.size() < 2 ? "Stopped: what was copied so far is in " + job_into_ + ". " : "Stopped: " + how_many_done() + "What was copied so far is in " + job_into_ + ". ");
             return true;
@@ -188,6 +345,22 @@ public:
     template <class U>
     constexpr void notify(const TreeKey& key, U& ui, const TimersDue& timers) {
         detail::notify_all(children_, key, ui, timers);
+        if (matching_) {
+            step_match(ui, timers);
+            return;
+        }
+        if (count_job_) {
+            step_count(ui, timers);
+            return;
+        }
+        if (trashing_) {
+            step_trash(ui, timers);
+            return;
+        }
+        if (differ_) {
+            step_diff(ui, timers);
+            return;
+        }
         if (!job_) return;
         auto stepped = job_->step();
         if (!stepped) {
@@ -215,10 +388,7 @@ private:
     // What can be refused from the paths alone is refused before anything is made. A name taken in the folder is found by the source when that one's turn comes, and it stops there,
     // with what went before still there.
     constexpr void start_copying(std::vector<std::string> from, const std::string& into) {
-        if (job_) {
-            say("A copy is still going. Escape stops it.");
-            return;
-        }
+        if (say_if_busy()) return;
         for (const std::string& path : from) {
             if (auto checked = check_transfer(path, into); !checked) {
                 say(checked.error().message);
@@ -246,6 +416,160 @@ private:
         }
         job_.emplace(std::move(*started));
         say("Copying " + job_name_ + ". Escape stops it.");
+    }
+
+    // Only one thing at a time: each would change or be misled by what another reads.
+    [[nodiscard]] constexpr bool say_if_busy() {
+        if (job_) {
+            say("A copy is still going. Escape stops it.");
+        } else if (matching_) {
+            say("A match is still going. Escape stops it.");
+        } else if (count_job_ || trashing_) {
+            say("A delete is still going. Escape stops it.");
+        } else if (differ_) {
+            say("A diff is still going. Escape stops it.");
+        } else {
+            return false;
+        }
+        return true;
+    }
+
+    constexpr void start_next_count() {
+        auto started = source_.start_count(delete_paths_[delete_next_]);
+        if (!started) {
+            delete_paths_.clear();
+            say("Nothing was deleted: " + started.error().message);
+            return;
+        }
+        count_job_.emplace(std::move(*started));
+    }
+
+    template <class U>
+    constexpr void step_count(U& ui, const TimersDue& timers) {
+        auto stepped = count_job_->step();
+        if (!stepped) {
+            count_job_.reset();
+            delete_paths_.clear();
+            say("Nothing was deleted: " + stepped.error().message);
+            return;
+        }
+        if (!*stepped) {
+            if (!due_line_ || timers.now >= *due_line_) {
+                due_line_ = timers.now.after(file_progress_interval);
+                say("Counting what would be deleted: " + detail::count_with_plural(delete_counted_.files + count_job_->counted().files, "file") + " so far. Escape stops it, and nothing has been deleted.");
+            }
+            ui.wake_at(timers.now);
+            return;
+        }
+        delete_counted_ = detail::added_up(delete_counted_, count_job_->counted());
+        count_job_.reset();
+        ++delete_next_;
+        if (delete_next_ < delete_paths_.size()) {
+            start_next_count();
+            if (count_job_) ui.wake_at(timers.now);
+            return;
+        }
+        awaiting_answer_ = true;
+        delete_question_ = DeleteQuestion{delete_paths_, delete_counted_};
+        say("Counted. Nothing has been deleted yet.");
+    }
+
+    // One thing a turn, so Escape can stop it between them.
+    template <class U>
+    constexpr void step_trash(U& ui, const TimersDue& timers) {
+        auto moved = source_.move_to_trash(delete_paths_[delete_next_]);
+        if (!moved) {
+            end_delete("Stopped: " + moved.error().message + ". ");
+            return;
+        }
+        ++delete_next_;
+        if (delete_next_ == delete_paths_.size()) {
+            end_delete("");
+            return;
+        }
+        ui.wake_at(timers.now);
+    }
+
+    // first is why it stopped, or empty when all of it went. Each thing goes whole or not at all, so what is left is plain.
+    constexpr void end_delete(std::string first) {
+        const std::size_t total = delete_paths_.size();
+        const std::size_t moved = delete_next_;
+        trashing_ = false;
+        delete_paths_.clear();
+        ++changes_;
+        say(first.empty() ? "Moved to the trash: " + detail::delete_progress_text(delete_counted_) : first + "Moved " + decimal_text(moved, false) + " of " + decimal_text(total, false) + " selected to the trash");
+    }
+
+    template <class U>
+    constexpr void step_diff(U& ui, const TimersDue& timers) {
+        if (!differ_->step()) {
+            ui.wake_at(timers.now);
+            return;
+        }
+        diff_done_ = DiffReport{std::move(diff_first_), std::move(diff_second_), differ_->outcome()};
+        differ_.reset();
+        say("The diff is done");
+    }
+
+    constexpr void note_match(std::string where, std::string why) {
+        ++match_report_.checked.differences;
+        if (match_report_.findings.size() < most_match_findings) match_report_.findings.push_back(MatchFinding{std::move(where), std::move(why)});
+    }
+
+    // What the job going now has found goes into the report, and it is done with.
+    constexpr void close_match_job() {
+        if (!match_job_) return;
+        const MatchProgress done = match_job_->progress();
+        match_report_.checked = detail::added_up(match_report_.checked, done);
+        for (const MatchFinding& finding : match_job_->findings()) {
+            if (match_report_.findings.size() == most_match_findings) break;
+            match_report_.findings.push_back(finding);
+        }
+        match_job_.reset();
+    }
+
+    // On to the next that can be started. One that cannot is a finding, and the rest still go.
+    constexpr void start_next_match() {
+        while (match_next_ < match_pairs_.size()) {
+            auto started = source_.start_match(match_pairs_[match_next_].first, match_pairs_[match_next_].second);
+            if (started) {
+                match_job_.emplace(std::move(*started));
+                return;
+            }
+            note_match(match_pairs_[match_next_].first, started.error().message);
+            ++match_next_;
+        }
+        end_match(false);
+    }
+
+    template <class U>
+    constexpr void step_match(U& ui, const TimersDue& timers) {
+        if (!match_job_) return;
+        auto stepped = match_job_->step();
+        if (!stepped || *stepped) {
+            if (!stepped) note_match(match_pairs_[match_next_].first, stepped.error().message);
+            close_match_job();
+            ++match_next_;
+            start_next_match();
+            if (matching_) ui.wake_at(timers.now);
+            return;
+        }
+        if (!match_progress_line_ || timers.now >= *match_progress_line_) {
+            match_progress_line_ = timers.now.after(file_progress_interval);
+            say("Matching " + decimal_text(match_next_ + 1, false) + " of " + decimal_text(match_pairs_.size(), false) + ": " + detail::match_progress_text(detail::added_up(match_report_.checked, match_job_->progress())) + ". Escape stops it.");
+        }
+        ui.wake_at(timers.now);
+    }
+
+    constexpr void end_match(bool stopped) {
+        close_match_job();
+        match_report_.pairs_done = match_next_;
+        match_report_.stopped = stopped;
+        matching_ = false;
+        match_pairs_.clear();
+        say(stopped ? "Matching was stopped" : "Matching is done");
+        match_done_ = std::move(match_report_);
+        match_report_ = MatchReport{};
     }
 
     // A last name here was shown in a row, or came from a path that could be, so it can show.
@@ -322,6 +646,24 @@ private:
     std::optional<std::string> drag_into_{};
     Rect drag_pane_{};
     std::uint64_t changes_{};
+    std::vector<MatchPair> match_pairs_{};
+    std::size_t match_next_{};
+    std::optional<typename Source::MatchJob> match_job_{};
+    std::optional<MonotonicTime> match_progress_line_{};
+    MatchReport match_report_{};
+    std::optional<MatchReport> match_done_{};
+    bool matching_{};
+    std::vector<std::string> delete_paths_{};
+    std::size_t delete_next_{};
+    DeleteCount delete_counted_{};
+    std::optional<typename Source::CountJob> count_job_{};
+    bool trashing_{};
+    std::optional<DeleteQuestion> delete_question_{};
+    bool awaiting_answer_{};
+    std::optional<LineDiffer> differ_{};
+    std::string diff_first_{};
+    std::string diff_second_{};
+    std::optional<DiffReport> diff_done_{};
 };
 
 template <class Tag, class Source>

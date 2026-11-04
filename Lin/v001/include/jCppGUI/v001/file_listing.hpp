@@ -214,13 +214,56 @@ concept FileCopyJob = std::movable<J> && requires(J& job, const J& constant) {
     { constant.progress() } -> std::same_as<CopyProgress>;
 };
 
+// One thing that did not match, or that could not be looked at, which is not a match either.
+struct MatchFinding {
+    std::string where{};
+    std::string why{};
+};
+
+// How far matching has got. What did not match is counted in differences and in nothing else.
+struct MatchProgress {
+    std::uint64_t files{};    // read from both sides, with the same SHA-256
+    std::uint64_t folders{};  // looked through, whatever was found inside
+    std::uint64_t links{};    // saying the same thing
+    std::uint64_t bytes{};    // read from each side
+    std::uint64_t differences{};
+};
+
+inline constexpr std::size_t most_match_findings = 10'000;  // listed, and the rest only counted, so a pair of very different trees cannot fill the memory
+
+// Matching two things, done a little at a time. It only reads. A difference does not end it: it goes on to the next thing, so all of them can be listed.
+template <class J>
+concept FileMatchJob = std::movable<J> && requires(J& job, const J& constant) {
+    { job.step() } -> std::same_as<std::expected<bool, Error>>;
+    { constant.progress() } -> std::same_as<MatchProgress>;
+    { constant.findings() } -> std::same_as<std::span<const MatchFinding>>;
+};
+
+// What deleting something comes to. Files here are everything that is not a folder, so links, pipes and devices too. Bytes are those of regular files.
+struct DeleteCount {
+    std::uint64_t files{};
+    std::uint64_t folders{};
+    std::uint64_t bytes{};
+};
+
+// Finding out what deleting something would remove, a little at a time. It changes nothing. Anything it cannot look at, or another mounted disk inside, is an Error, so nothing is deleted on a count that may be short.
+template <class J>
+concept FileCountJob = std::movable<J> && requires(J& job, const J& constant) {
+    { job.step() } -> std::same_as<std::expected<bool, Error>>;
+    { constant.counted() } -> std::same_as<DeleteCount>;
+};
+
 // Where files come from and go to. Each pane holds one, of its own type, so a source that reaches another machine is a type of its own and nothing is erased.
-// The one way of changing anything is a copy, which leaves the original alone and may not replace what is already there: a name that is taken is refused.
-// Nothing here moves or deletes. A person deletes an original by hand, after the copy has said it matched.
+// A copy leaves the original alone and may not replace what is already there: a name that is taken is refused. Nothing here removes anything for good. move_to_trash is the one way something leaves where it
+// is, and only FileTransfers calls it, after a person has been told the count and has said yes.
 template <class S>
-concept FileSource = FileCopyJob<typename S::CopyJob> && requires(const S& source, const std::string& path) {
+concept FileSource = FileCopyJob<typename S::CopyJob> && FileMatchJob<typename S::MatchJob> && FileCountJob<typename S::CountJob> && requires(const S& source, const std::string& path) {
     { source.read(path) } -> std::same_as<std::expected<DirectoryListing, Error>>;
     { source.start_copy(path, path) } -> std::same_as<std::expected<typename S::CopyJob, Error>>;
+    { source.start_match(path, path) } -> std::same_as<std::expected<typename S::MatchJob, Error>>;
+    { source.start_count(path) } -> std::same_as<std::expected<typename S::CountJob, Error>>;
+    { source.move_to_trash(path) } -> std::same_as<std::expected<void, Error>>;
+    { source.read_text(path) } -> std::same_as<std::expected<std::string, Error>>;
 };
 
 inline constexpr std::size_t most_file_path_bytes = 4096;  // the longest path Linux takes in one call
@@ -290,6 +333,123 @@ inline constexpr std::size_t most_file_name_bytes = 255;   // the longest name L
     if (path_is_inside(into, from)) return make_error(ErrorCode::System, "A folder cannot go inside itself");
     if (child_of_path(into, last_name_of(from)).size() > most_file_path_bytes) return make_error(ErrorCode::SizeLimit, "That path would be too long");
     return {};
+}
+
+// Two things to match, one at a time.
+struct MatchPair {
+    std::string first{};
+    std::string second{};
+};
+
+// What a selection comes to. Something with nothing to match it is already a finding. A refusal says why nothing can start.
+struct MatchPlan {
+    std::vector<MatchPair> pairs{};
+    std::vector<MatchFinding> unpaired{};
+    std::string refused{};
+};
+
+namespace detail {
+// The first name that two of these share, or empty.
+[[nodiscard]] constexpr std::string_view repeated_last_name(std::span<const std::string> paths) noexcept {
+    for (std::size_t i = 0; i < paths.size(); ++i)
+        for (std::size_t j = i + 1; j < paths.size(); ++j)
+            if (last_name_of(paths[i]) == last_name_of(paths[j])) return last_name_of(paths[i]);
+    return {};
+}
+}  // namespace detail
+
+// One selected on each side: those two, whatever they are called. Several across the two sides: by name. All on one side: each against the first, to say whether they are all the same.
+[[nodiscard]] constexpr MatchPlan plan_matches(std::span<const std::string> left, std::span<const std::string> right) {
+    MatchPlan plan;
+    if (left.size() == 1 && right.size() == 1) {
+        plan.pairs.push_back(MatchPair{left.front(), right.front()});
+        return plan;
+    }
+    if (left.empty() || right.empty()) {
+        const std::span<const std::string> all = left.empty() ? right : left;
+        for (std::size_t i = 1; i < all.size(); ++i) plan.pairs.push_back(MatchPair{all.front(), all[i]});
+        return plan;
+    }
+    for (const std::span<const std::string> side : {left, right}) {
+        if (const std::string_view name = detail::repeated_last_name(side); !name.empty()) {
+            plan.refused = "Nothing was matched: two selected on one side have the same name, " + std::string{name};
+            return plan;
+        }
+    }
+    const auto named = [](std::span<const std::string> side, std::string_view name) { return std::ranges::any_of(side, [&](const std::string& path) { return last_name_of(path) == name; }); };
+    for (const std::string& path : left) {
+        const auto partner = std::ranges::find_if(right, [&](const std::string& other) { return last_name_of(other) == last_name_of(path); });
+        if (partner != right.end()) {
+            plan.pairs.push_back(MatchPair{path, *partner});
+        } else {
+            plan.unpaired.push_back(MatchFinding{std::string{last_name_of(path)}, "Nothing selected on the right has this name"});
+        }
+    }
+    for (const std::string& path : right)
+        if (!named(left, last_name_of(path))) plan.unpaired.push_back(MatchFinding{std::string{last_name_of(path)}, "Nothing selected on the left has this name"});
+    return plan;
+}
+
+// --- The freedesktop.org trash ---
+
+// When something went to the trash, as the local clock said.
+struct TrashDate {
+    std::int64_t year{};
+    std::int64_t month{};
+    std::int64_t day{};
+    std::int64_t hour{};
+    std::int64_t minute{};
+    std::int64_t second{};
+};
+
+// A path as a trash's info file holds it: every byte but the unreserved ones and the slashes as %XX.
+[[nodiscard]] constexpr std::string trash_escaped_path(std::string_view path) {
+    constexpr std::string_view digits = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(path.size());
+    for (const char c : path) {
+        const bool plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' || c == '/';
+        if (plain) {
+            out.push_back(c);
+        } else {
+            const auto byte = static_cast<unsigned char>(c);
+            out.push_back('%');
+            out.push_back(digits[byte >> 4U]);
+            out.push_back(digits[byte & 0x0FU]);
+        }
+    }
+    return out;
+}
+
+// What the info file says, from which a desktop's trash can put the thing back.
+[[nodiscard]] constexpr std::string trash_info_text(std::string_view path, const TrashDate& date) {
+    std::string out = "[Trash Info]\nPath=" + trash_escaped_path(path) + "\nDeletionDate=" + decimal_text(static_cast<std::uint64_t>(date.year), false);
+    out.append("-").append(detail::two_digits(date.month)).append("-").append(detail::two_digits(date.day)).append("T");
+    out.append(detail::two_digits(date.hour)).append(":").append(detail::two_digits(date.minute)).append(":").append(detail::two_digits(date.second)).append("\n");
+    return out;
+}
+
+inline constexpr std::string_view trash_info_suffix = ".trashinfo";
+
+// The name to try in the trash, for each attempt: its own, then with .1, .2 and so on after it. It is cut to leave room for those and for the info file's suffix, on a whole character.
+[[nodiscard]] constexpr std::string trash_name_to_try(std::string_view name, std::uint32_t attempt) {
+    const std::string number = attempt == 0 ? std::string{} : "." + decimal_text(attempt, false);
+    const std::size_t room = most_file_name_bytes - trash_info_suffix.size() - number.size();
+    return std::string{utf8_prefix(name, std::min(room, name.size()))} + number;
+}
+
+// True for a trash itself and all in it, by the text alone: a part named as a disk's trash is, or anything inside the home trash.
+[[nodiscard]] constexpr bool path_is_in_a_trash(std::string_view path, std::string_view home_trash) noexcept {
+    if (path_is_inside(path, home_trash)) return true;
+    std::string_view rest = path;
+    while (!rest.empty()) {
+        const std::size_t slash = rest.find('/');
+        const std::string_view part = rest.substr(0, slash);
+        if (part == ".Trash" || part.starts_with(".Trash-")) return true;
+        if (slash == std::string_view::npos) return false;
+        rest = rest.substr(slash + 1);
+    }
+    return false;
 }
 
 // Negative when a comes first, ignoring the case of A to Z, with the bytes themselves to settle a tie, so no two different names tie.

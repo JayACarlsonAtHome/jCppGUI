@@ -1,5 +1,5 @@
 # File: tests/fuzz/run.sh
-# Purpose: Runs one fuzz harness from the clang-fuzz preset: bash tests/fuzz/run.sh <utf8|keymap|font|backend|jtext> <seconds|smoke>.
+# Purpose: Runs one fuzz harness from the clang-fuzz preset: bash tests/fuzz/run.sh <utf8|keymap|font|backend|jtext|line_diff> <seconds|smoke>.
 #          The corpus and any crash go under the build directory. The font seed is the system's default
 #          sans-serif, found by fc-match and copied at run time, so no font is in the repository.
 #
@@ -20,7 +20,7 @@ WORK="$BUILD/fuzz-work/$HARNESS"
 mkdir -p "$WORK/corpus" "$WORK/seeds" "$WORK/crashes" "$WORK/smoke"
 
 case "$HARNESS" in
-  utf8 | backend) ;;
+  utf8 | backend | line_diff) ;;
   keymap) cp "$TESTS_FUZZ/seeds/keymap/minimal.xkb" "$WORK/seeds/" ;;
   jtext) cp "$TESTS_FUZZ"/seeds/jtext/* "$WORK/seeds/" ;;
   font)
@@ -28,13 +28,14 @@ case "$HARNESS" in
     [ -f "$FONT" ] || { echo "fc-match found no default font" >&2; exit 1; }
     cp "$FONT" "$WORK/seeds/seed.font"
     chmod u+w "$WORK/seeds/seed.font" ;;
-  *) echo "usage: bash tests/fuzz/run.sh <utf8|keymap|font|backend|jtext> <seconds|smoke>" >&2; exit 2 ;;
+  *) echo "usage: bash tests/fuzz/run.sh <utf8|keymap|font|backend|jtext|line_diff> <seconds|smoke>" >&2; exit 2 ;;
 esac
 
 LIMITS="-max_len=33554432 -rss_limit_mb=4096 -timeout=60 -reduce_inputs=0 -keep_seed=1 -len_control=0"
 ARTIFACTS="-artifact_prefix=$WORK/crashes/"
 # libwayland logs each message it refuses to standard error, which would be most of the output of this harness.
 [ "$HARNESS" = backend ] && LIMITS="$LIMITS -close_fd_mask=2"
+[ "$HARNESS" = line_diff ] && LIMITS="-max_len=65536 -rss_limit_mb=4096 -timeout=60"
 [ "$HARNESS" = jtext ] && LIMITS="-max_len=65536 -rss_limit_mb=4096 -timeout=60 -dict=$TESTS_FUZZ/seeds/jtext.dict"
 if [ "$HOW_LONG" = smoke ]; then
   exec "$BUILD/fuzz_$HARNESS" $LIMITS "$ARTIFACTS" -runs=16 "$WORK/smoke" "$WORK/seeds"

@@ -2793,15 +2793,25 @@ struct FilesCopyAndDrag {
     }
 };
 
-// Ctrl off the wire with two clicks, the buttons, and both things on a real disk on the other side, and then Compare.
+// Ctrl off the wire with two clicks, the buttons, and both things on a real disk on the other side. Then Compare, with those two still selected: a folder against a file, which do not match,
+// so the popup covers the middle of the window, and Return off the wire takes it away again with what was under it as it was.
 struct FilesSeveral {
     static constexpr ClientEnd end = ends_clean;
     static constexpr bool files_program = true;
     static constexpr bool left_exists = true;
-    enum class Step : std::uint8_t { First, WaitForBoth, Compared, Done };
+    enum class Step : std::uint8_t { First, WaitForBoth, Settling, Compared, Escaped, Done };
     FilesState state{};
     Step step{Step::First};
     int waits{};
+    std::vector<std::uint32_t> lower_half_before{};
+
+    // The lower half of the window: below the line that says what is going on, and where the popup shows.
+    [[nodiscard]] std::vector<std::uint32_t> lower_half(Session& session) const {
+        std::vector<std::uint32_t> whole = state.picture(session);
+        if (whole.empty()) return whole;
+        whole.erase(whole.begin(), whole.begin() + static_cast<std::ptrdiff_t>(whole.size() / 2));
+        return whole;
+    }
 
     void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
     void on(Session& session, const KeyboardCreated&) { send_valid_keymap(session); }
@@ -2837,15 +2847,138 @@ struct FilesSeveral {
             case Step::WaitForBoth:
                 if (read_text_file((right / "sub" / "inner.txt").string()) != "inner" || read_text_file((right / "plain.txt").string()) != "plain") return;
                 if (read_text_file((left / "sub" / "inner.txt").string()) != "inner" || read_text_file((left / "plain.txt").string()) != "plain") session.violation("an original changed");
+                step = Step::Settling;
+                waits = 0;
+                return;
+            case Step::Settling:
+                if (waits < 20) return;
+                lower_half_before = lower_half(session);
                 click_button(reference.get<files::CompareButton>().bounds());
                 step = Step::Compared;
                 waits = 0;
                 return;
             case Step::Compared:
-                if (waits < 5) return;
+                if (lower_half(session) == lower_half_before) {
+                    if (waits > 200) {
+                        session.violation("the popup did not show");
+                        session.close_window();
+                        step = Step::Done;
+                    }
+                    return;
+                }
+                session.queue(event::keyboard_key(*session.keyboard(), session.next_serial(), 0, key_return, 1));
+                session.queue(event::keyboard_key(*session.keyboard(), session.next_serial(), 0, key_return, 0));
+                step = Step::Escaped;
+                waits = 0;
+                return;
+            case Step::Escaped:
+                if (lower_half(session) != lower_half_before) {
+                    if (waits > 200) {
+                        session.violation("Return did not take the popup away");
+                        session.close_window();
+                        step = Step::Done;
+                    }
+                    return;
+                }
                 step = Step::Done;
                 session.close_window();
                 return;
+            case Step::Done:
+            default: return;
+        }
+    }
+};
+
+// Delete, off the wire: Return says no and the file stays, and only a click on the popup's own button moves it, to the trash the program finds for itself, leaving what was not selected.
+struct FilesDelete {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool files_program = true;
+    static constexpr bool left_exists = true;
+    enum class Step : std::uint8_t { First, Asked, Refused, AskedAgain, Confirmed, Done };
+    FilesState state{};
+    Step step{Step::First};
+    int waits{};
+    std::vector<std::uint32_t> before{};
+
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const KeyboardCreated&) { send_valid_keymap(session); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void fail(Session& session, const std::string& why) {
+        session.violation(why);
+        session.close_window();
+        step = Step::Done;
+    }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.pointer() || !session.keyboard() || step == Step::Done) return;
+        const std::filesystem::path left{state.left};
+        FilesReference reference{jgui::starting_folder(state.left), jgui::starting_folder(state.right), viewer_width, viewer_height};
+        auto& grid = reference.get<jgui::FilePaneGrid<files::LeftPane>>();
+        const auto click_button = [&](const jgui::Rect& area) { left_click(session, jgui_test::number(area.left()) + 3, jgui_test::number(area.top()) + 3); };
+        ++waits;
+        switch (step) {
+            case Step::First: {
+                const std::int32_t x = jgui_test::number(grid.column_left(jgui::file_name_column)) + 60;
+                const std::int32_t y = jgui_test::number(grid.body_area().top()) + jgui_test::number(grid.row_height()) + 3;
+                pointer_enter(session, x, y);
+                session.queue(event::keyboard_enter(*session.keyboard(), session.next_serial(), *session.window_surface()));
+                left_click(session, x, y);  // plain.txt, with sub above it
+                step = Step::Asked;
+                waits = 0;
+                return;
+            }
+            case Step::Asked:
+                if (waits < 20) return;
+                before = state.picture(session);
+                click_button(reference.get<jgui::FilePaneDeleteButton<files::LeftPane>>().bounds());
+                step = Step::Refused;
+                waits = 0;
+                return;
+            case Step::Refused:
+                if (state.picture(session) == before) {
+                    if (waits > 200) fail(session, "the question did not show");
+                    return;
+                }
+                if (waits < 20) return;
+                if (read_text_file((left / "plain.txt").string()) != "plain") fail(session, "it went before anyone said yes");
+                session.queue(event::keyboard_key(*session.keyboard(), session.next_serial(), 0, key_return, 1));
+                session.queue(event::keyboard_key(*session.keyboard(), session.next_serial(), 0, key_return, 0));
+                step = Step::AskedAgain;
+                waits = 0;
+                return;
+            case Step::AskedAgain: {
+                if (waits < 20) return;
+                if (read_text_file((left / "plain.txt").string()) != "plain") {
+                    fail(session, "Return deleted it");
+                    return;
+                }
+                click_button(reference.get<jgui::FilePaneDeleteButton<files::LeftPane>>().bounds());
+                step = Step::Confirmed;
+                waits = 0;
+                return;
+            }
+            case Step::Confirmed: {
+                if (waits == 20) {
+                    if (read_text_file((left / "plain.txt").string()) != "plain") {
+                        fail(session, "a second question deleted it");
+                        return;
+                    }
+                    // The popup is placed by size alone, so the reference shows where its button is.
+                    reference.get<files::DeletePopup>().open_with(jgui::DeleteQuestion{{(left / "plain.txt").string()}, jgui::DeleteCount{1, 0, 5}});
+                    reference.settle();
+                    click_button(reference.get<jgui::FileDeletePopupConfirm<files::DeletePopup>>().bounds());
+                    return;
+                }
+                if (waits < 20) return;
+                if (std::filesystem::exists(left / "plain.txt")) {
+                    if (waits > 400) fail(session, "the button did not delete it");
+                    return;
+                }
+                if (read_text_file((left / "sub" / "inner.txt").string()) != "inner") session.violation("something else went too");
+                if (read_text_file((left.parent_path() / "data" / "Trash" / "files" / "plain.txt").string()) != "plain") session.violation("it is not in the trash");
+                step = Step::Done;
+                session.close_window();
+                return;
+            }
             case Step::Done:
             default: return;
         }
@@ -2871,6 +3004,8 @@ template <class Script>
         put_file(left / "plain.txt", "plain");
     }
     put_file(right / "only.txt", "only");
+    // The program under test never reaches the person's real trash.
+    if (::setenv("XDG_DATA_HOME", (top / "data").c_str(), 1) != 0) return false;
     Script script{};
     script.state.left = left.string();
     script.state.right = right.string();
@@ -3020,6 +3155,7 @@ constexpr auto scenarios = std::tuple{
     Named<FilesMissingFolder>{"files_missing_folder"},
     Named<FilesCopyAndDrag>{"files_copy_and_drag"},
     Named<FilesSeveral>{"files_several"},
+    Named<FilesDelete>{"files_delete"},
 };
 
 }  // namespace

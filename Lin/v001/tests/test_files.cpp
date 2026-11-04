@@ -81,11 +81,13 @@ static_assert(folders_come_first());
 struct FakeDisk {
     std::vector<std::string> gone{};  // taken away by something else, because nothing here can
     std::vector<std::string> arrived{};
+    std::vector<std::string> matched{};
     int steps_to_copy{3};
     int steps_taken{};
     int jobs_ended{};
     bool step_fails{};
     bool start_fails{};
+    bool delete_fails{};
 };
 
 struct FakeJob {
@@ -102,9 +104,60 @@ struct FakeJob {
     [[nodiscard]] constexpr CopyProgress progress() const noexcept { return CopyProgress{.files = 1, .bytes = 1000, .bytes_checked = 1000}; }
 };
 
+// Two steps, and a path with "bad" in it does not match.
+struct FakeMatchJob {
+    FakeDisk* disk{};
+    std::string first{};
+    std::string second{};
+    int left{2};
+    std::vector<MatchFinding> found{};
+    [[nodiscard]] constexpr std::expected<bool, Error> step() {
+        if (disk != nullptr) disk->matched.push_back(first + " " + second);
+        if (--left > 0) return false;
+        if (first.contains("bad") || second.contains("bad")) found.push_back(MatchFinding{std::string{last_name_of(first)}, "The contents differ by SHA-256"});
+        return true;
+    }
+    [[nodiscard]] constexpr MatchProgress progress() const noexcept {
+        return found.empty() ? MatchProgress{.files = 1, .bytes = 10} : MatchProgress{.differences = 1};
+    }
+    [[nodiscard]] constexpr std::span<const MatchFinding> findings() const noexcept { return found; }
+};
+
+// Two steps, and it finds one file for each thing and one folder for each thing with no dot in its name. A path with "locked" in it cannot be counted.
+struct FakeCountJob {
+    std::string path{};
+    int left{2};
+    [[nodiscard]] constexpr std::expected<bool, Error> step() {
+        if (path.contains("locked")) return make_error(ErrorCode::System, "cannot open it");
+        return --left <= 0;
+    }
+    [[nodiscard]] constexpr DeleteCount counted() const noexcept { return DeleteCount{1, path.contains('.') ? 0U : 1U, 10}; }
+};
+
 struct FakeFiles {
     using CopyJob = FakeJob;
+    using MatchJob = FakeMatchJob;
+    using CountJob = FakeCountJob;
     FakeDisk* disk{};
+
+    [[nodiscard]] constexpr std::expected<FakeCountJob, Error> start_count(const std::string& path) const { return FakeCountJob{path}; }
+    [[nodiscard]] constexpr std::expected<void, Error> move_to_trash(const std::string& path) const {
+        if (disk->delete_fails) return make_error(ErrorCode::System, "cannot delete it");
+        disk->gone.push_back(path);
+        return {};
+    }
+    [[nodiscard]] constexpr std::expected<std::string, Error> read_text(const std::string& path) const {
+        if (path.ends_with("f1")) return std::string{"one\ntwo\nthree\n"};
+        if (path.ends_with("f2")) return std::string{"one\nTWO\nthree\nfour\n"};
+        if (path.ends_with("f3")) return std::string{"one\ntwo\nthree\n"};
+        if (path.ends_with("note.txt")) return std::string{"a\0b", 3};
+        return make_error(ErrorCode::System, last_name_of(path).empty() ? std::string{"no name"} : std::string{last_name_of(path)} + " is not a file");
+    }
+
+    [[nodiscard]] constexpr std::expected<FakeMatchJob, Error> start_match(const std::string& first, const std::string& second) const {
+        if (first.contains("locked")) return make_error(ErrorCode::System, "cannot open it");
+        return FakeMatchJob{disk, first, second};
+    }
 
     [[nodiscard]] static constexpr FileEntry folder(std::string_view name) { return FileEntry{std::string{name}, FileKind::Folder, {}, FileTime{true, 0}}; }
     [[nodiscard]] static constexpr FileEntry file(std::string_view name, std::uint64_t size) { return FileEntry{std::string{name}, FileKind::File, FileBytes{true, size}, FileTime{true, 0}}; }
@@ -960,7 +1013,7 @@ static_assert(what_is_only_here());
     if (matches(left) != std::vector<FileMatch>(3, FileMatch::NotCompared)) return false;
     click_on<decltype(tree), files::CompareButton>(tree);
     if (matches(left) != std::vector<FileMatch>(3, FileMatch::OnlyHere) || matches(right) != std::vector<FileMatch>{FileMatch::OnlyHere}) return false;
-    if (transfers_of(tree).line() != "Compared what shows: 3 only on the left, 1 only on the right, 0 different, 0 same size and time. Contents were not read, and a closed folder was not looked inside.") return false;
+    if (transfers_of(tree).line() != "Compared what shows: 3 only on the left, 1 only on the right, 0 different, 0 same size and time. Contents were not read. To match by contents, select two or more first.") return false;
     if (!disk.arrived.empty() || disk.steps_taken != 0) return false;
     // The same folder on both sides, one with a folder open: its rows are not compared, and the selection stays.
     right.open("/top");
@@ -995,6 +1048,400 @@ static_assert(comparing_needs_both_sides());
     return std::ranges::all_of(tree.template get<Left_>().rows(), [](const FileRow& row) { return row.match == FileMatch::InBoth; });
 }
 static_assert(comparing_at_the_root());
+
+// --- Matching what is selected ---
+[[nodiscard]] constexpr bool selections_become_pairs() {
+    using Paths = std::vector<std::string>;
+    // One on each side: those two, whatever they are called.
+    MatchPlan plan = plan_matches(Paths{"/a/x"}, Paths{"/b/y"});
+    if (plan.pairs.size() != 1 || plan.pairs[0].first != "/a/x" || plan.pairs[0].second != "/b/y" || !plan.unpaired.empty()) return false;
+    // All on one side: each against the first.
+    plan = plan_matches(Paths{"/a/x", "/a/y", "/a/z"}, Paths{});
+    if (plan.pairs.size() != 2 || plan.pairs[0].second != "/a/y" || plan.pairs[1].first != "/a/x" || plan.pairs[1].second != "/a/z") return false;
+    plan = plan_matches(Paths{}, Paths{"/b/x", "/b/y"});
+    if (plan.pairs.size() != 1 || plan.pairs[0].first != "/b/x") return false;
+    // Several across the sides: by name, and one with no partner is already a finding.
+    plan = plan_matches(Paths{"/a/x", "/a/only_left"}, Paths{"/b/deep/x", "/b/only_right"});
+    if (plan.pairs.size() != 1 || plan.pairs[0].second != "/b/deep/x" || plan.unpaired.size() != 2) return false;
+    if (plan.unpaired[0].where != "only_left" || plan.unpaired[1].where != "only_right") return false;
+    // Two of a name on a side could go with either, so nothing starts.
+    plan = plan_matches(Paths{"/a/x", "/a/d/x"}, Paths{"/b/x"});
+    return plan.pairs.empty() && plan.refused == "Nothing was matched: two selected on one side have the same name, x";
+}
+static_assert(selections_become_pairs());
+
+template <class Tree>
+[[nodiscard]] constexpr auto& popup_of(Tree& tree) { return tree.template get<files::MatchPopup>(); }
+
+template <class Tree>
+constexpr void until_matched(Tree& tree) {
+    for (int i = 0; i < 50 && (transfers_of(tree).matching() || i == 0); ++i) turn(tree);
+    turn(tree);
+}
+
+// Selected on each side, the button matches them, and the popup says they all match. Until it is closed nothing below it hears anything.
+[[nodiscard]] constexpr bool the_selected_are_matched() {
+    FakeDisk disk;
+    auto tree = ui_on(disk, std::string{"/top"}, std::string{"/other"});
+    static_cast<void>(lay_out(tree));
+    auto& left_grid = tree.template get<FilePaneGrid<Left_>>();
+    auto& right_grid = tree.template get<FilePaneGrid<Right_>>();
+    left_grid.select_rows(std::vector<std::uint32_t>{2}, GridRow{2});    // note.txt
+    right_grid.select_rows(std::vector<std::uint32_t>{0}, GridRow{0});  // g1, under another name
+    click_on<decltype(tree), files::CompareButton>(tree);
+    if (!transfers_of(tree).matching() || popup_of(tree).is_open()) return false;
+    until_matched(tree);
+    if (transfers_of(tree).matching() || !popup_of(tree).is_open()) return false;
+    if (disk.matched.empty() || disk.matched.front() != "/top/note.txt /other/g1") return false;
+    if (popup_of(tree).heading() != "They all match" || !popup_of(tree).findings().empty()) return false;
+    if (!popup_of(tree).detail_text().contains("1 file matched by SHA-256") || !popup_of(tree).detail_text().contains("not compared")) return false;
+    // A press below goes nowhere: it would have selected a row, and now it does not.
+    const auto before = left_grid.selected_rows().size();
+    press(tree, row_point(left_grid, 0, past_a_top_mark));
+    if (left_grid.selected_rows().size() != before || left_grid.selected()->index != 2 || !popup_of(tree).is_open()) return false;
+    // Nor do keys.
+    jgui_test::dispatch(tree, KeyEvent{Key::LowerA, Modifier::Ctrl, true});
+    if (left_grid.selected_rows().size() != before) return false;
+    // OK closes it, and the panes hear again. Nothing was marked or copied.
+    click_on<decltype(tree), FileMatchPopupButton<files::MatchPopup>>(tree);
+    if (popup_of(tree).is_open() || !disk.arrived.empty() || tree.template get<Left_>().rows()[2].match != FileMatch::NotCompared) return false;
+    press(tree, row_point(left_grid, 0, past_a_top_mark));
+    return left_grid.selected()->index == 0;
+}
+static_assert(the_selected_are_matched());
+
+// What does not match is listed, the others still go, and it is never called a match.
+[[nodiscard]] constexpr bool what_does_not_match_is_listed() {
+    FakeDisk disk;
+    auto tree = ui_on(disk, std::string{"/"}, std::string{"/other"});
+    static_cast<void>(lay_out(tree));
+    auto& left_grid = tree.template get<FilePaneGrid<Left_>>();
+    left_grid.select_rows(std::vector<std::uint32_t>{0, 1, 2}, GridRow{0});  // locked, other, top: all on one side, so against the first, which cannot be opened
+    click_on<decltype(tree), files::CompareButton>(tree);
+    until_matched(tree);
+    if (!popup_of(tree).is_open() || popup_of(tree).heading() != "2 things do not match") return false;
+    if (popup_of(tree).findings().size() != 2 || popup_of(tree).findings()[0].why != "cannot open it") return false;
+    // Escape closes it, and comparing again with fewer than two selected goes back to what shows.
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    if (popup_of(tree).is_open()) return false;
+    left_grid.select_rows(std::vector<std::uint32_t>{1}, GridRow{1});
+    click_on<decltype(tree), files::CompareButton>(tree);
+    return !transfers_of(tree).matching() && transfers_of(tree).line().starts_with("Compared what shows");
+}
+static_assert(what_does_not_match_is_listed());
+
+// Stopped part way, it does not say they match, a copy and a match do not run together, and a refusal starts nothing.
+[[nodiscard]] constexpr bool a_match_can_be_stopped() {
+    FakeDisk disk;
+    auto tree = ui_on(disk, std::string{"/top"}, std::string{"/top"});
+    static_cast<void>(lay_out(tree));
+    auto& left_grid = tree.template get<FilePaneGrid<Left_>>();
+    left_grid.select_rows(std::vector<std::uint32_t>{0, 1}, GridRow{0});
+    click_on<decltype(tree), files::CompareButton>(tree);
+    if (!transfers_of(tree).matching()) return false;
+    click_on<decltype(tree), FilePaneCopyButton<Left_>>(tree);
+    click_on<decltype(tree), FilePanePasteButton<Right_>>(tree);
+    if (transfers_of(tree).copying() || transfers_of(tree).line() != "A match is still going. Escape stops it.") return false;
+    turn(tree);
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    if (transfers_of(tree).matching()) return false;
+    turn(tree);
+    if (!popup_of(tree).is_open() || popup_of(tree).heading().contains("They all match") || !popup_of(tree).heading().starts_with("Stopped before the end")) return false;
+    jgui_test::dispatch(tree, KeyEvent{Key::Return, {}, true});
+    if (popup_of(tree).is_open()) return false;
+    transfers_of(tree).start_matching(MatchPlan{.refused = "No"});
+    return !transfers_of(tree).matching() && transfers_of(tree).line() == "No";
+}
+static_assert(a_match_can_be_stopped());
+
+
+// --- Deleting, on the made-up disk ---
+
+template <class Tree>
+[[nodiscard]] constexpr auto& delete_popup_of(Tree& tree) { return tree.template get<files::DeletePopup>(); }
+
+template <class Tree>
+constexpr void until_asked(Tree& tree) {
+    for (int i = 0; i < 20 && !delete_popup_of(tree).is_open() && transfers_of(tree).counting(); ++i) turn(tree);
+}
+
+template <class Tree>
+constexpr void until_deleted(Tree& tree) {
+    for (int i = 0; i < 20 && transfers_of(tree).deleting(); ++i) turn(tree);
+    turn(tree);
+}
+
+// Nothing goes until the popup's own button is clicked: not on the count, not on Return, not on Escape, and not on Cancel.
+[[nodiscard]] constexpr bool only_the_button_deletes() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    auto& grid = tree.template get<GridOf<Left_>>();
+    grid.select_row(GridRow{2});  // note.txt
+    const auto ask = [&] {
+        click_on<decltype(tree), FilePaneDeleteButton<Left_>>(tree);
+        until_asked(tree);
+    };
+    ask();
+    if (!delete_popup_of(tree).is_open() || delete_popup_of(tree).heading() != "Are you sure?" || delete_popup_of(tree).count_text() != "File count to be deleted: 1") return false;
+    if (!delete_popup_of(tree).what_text().contains("from note.txt in /top") || !disk.gone.empty() || !transfers_of(tree).awaiting_delete_answer()) return false;
+    for (const Keysym key : {Key::Return, Key::Escape}) {
+        jgui_test::dispatch(tree, KeyEvent{key, {}, true});
+        if (delete_popup_of(tree).is_open() || !disk.gone.empty() || transfers_of(tree).line() != "Nothing was deleted") return false;
+        ask();
+    }
+    // A letter does nothing at all: it reaches nothing behind the popup, and the popup stays.
+    jgui_test::dispatch(tree, KeyEvent{Key::LowerA, {}, true});
+    if (!delete_popup_of(tree).is_open() || !disk.gone.empty()) return false;
+    static_cast<void>(lay_out(tree));
+    click_on<decltype(tree), FileDeletePopupCancel<files::DeletePopup>>(tree);
+    if (delete_popup_of(tree).is_open() || !disk.gone.empty() || transfers_of(tree).awaiting_delete_answer()) return false;
+    ask();
+    static_cast<void>(lay_out(tree));
+    click_on<decltype(tree), FileDeletePopupConfirm<files::DeletePopup>>(tree);
+    if (delete_popup_of(tree).is_open() || !transfers_of(tree).deleting() || !disk.gone.empty()) return false;
+    until_deleted(tree);
+    if (disk.gone != std::vector<std::string>{"/top/note.txt"} || transfers_of(tree).line() != "Moved to the trash: 1 file, 0 folders, 10 bytes") return false;
+    // Both sides show the same folder, and both have looked again.
+    return same_names(names_of(tree.template get<Left_>()), {"one", "two"}) && same_names(names_of(tree.template get<Right_>()), {"one", "two"});
+}
+static_assert(only_the_button_deletes());
+
+// A pane's Delete takes only its own side's selection, however much is selected on the other.
+[[nodiscard]] constexpr bool only_this_side_is_deleted() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    click_on<decltype(tree), FilePaneDeleteButton<Left_>>(tree);
+    if (delete_popup_of(tree).is_open() || transfers_of(tree).counting() || tree.template get<Left_>().status() != "Select something to delete first") return false;
+    tree.template get<GridOf<Right_>>().select_rows(std::vector<std::uint32_t>{0, 1}, GridRow{0});
+    tree.template get<GridOf<Left_>>().select_row(GridRow{2});
+    click_on<decltype(tree), FilePaneDeleteButton<Left_>>(tree);
+    until_asked(tree);
+    if (delete_popup_of(tree).count_text() != "File count to be deleted: 1") return false;
+    static_cast<void>(lay_out(tree));
+    click_on<decltype(tree), FileDeletePopupConfirm<files::DeletePopup>>(tree);
+    until_deleted(tree);
+    if (disk.gone != std::vector<std::string>{"/top/note.txt"}) return false;
+    // Several on a side are all counted together, with folders on their own.
+    click_on<decltype(tree), FilePaneDeleteButton<Right_>>(tree);
+    until_asked(tree);
+    return delete_popup_of(tree).count_text() == "File count to be deleted: 2" && delete_popup_of(tree).what_text().starts_with("Also 2 folders, and 20 bytes, from 2 selected things in /top");
+}
+static_assert(only_this_side_is_deleted());
+
+// A count that cannot finish deletes nothing and asks nothing, and stopping a count is the same.
+[[nodiscard]] constexpr bool a_count_that_fails_deletes_nothing() {
+    FakeDisk disk;
+    auto tree = ui_on(disk, std::string{"/"}, std::string{"/top"});
+    if (!lay_out(tree)) return false;
+    tree.template get<GridOf<Left_>>().select_rows(std::vector<std::uint32_t>{0, 1}, GridRow{0});  // locked, other
+    click_on<decltype(tree), FilePaneDeleteButton<Left_>>(tree);
+    for (int i = 0; i < 5; ++i) turn(tree);
+    if (delete_popup_of(tree).is_open() || transfers_of(tree).counting() || transfers_of(tree).line() != "Nothing was deleted: cannot open it" || !disk.gone.empty()) return false;
+    tree.template get<GridOf<Left_>>().select_row(GridRow{1});
+    click_on<decltype(tree), FilePaneDeleteButton<Left_>>(tree);
+    if (!transfers_of(tree).counting()) return false;
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    for (int i = 0; i < 5; ++i) turn(tree);
+    return !delete_popup_of(tree).is_open() && !transfers_of(tree).counting() && transfers_of(tree).line() == "Counting was stopped, and nothing was deleted" && disk.gone.empty();
+}
+static_assert(a_count_that_fails_deletes_nothing());
+
+// Stopped or failing part way, the line says how many went, and what is selected after that stays.
+[[nodiscard]] constexpr bool a_delete_can_stop_part_way() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    auto& grid = tree.template get<GridOf<Left_>>();
+    const auto say_yes = [&] {
+        click_on<decltype(tree), FilePaneDeleteButton<Left_>>(tree);
+        until_asked(tree);
+        static_cast<void>(lay_out(tree));
+        click_on<decltype(tree), FileDeletePopupConfirm<files::DeletePopup>>(tree);
+    };
+    grid.select_rows(std::vector<std::uint32_t>{0, 1}, GridRow{0});
+    say_yes();
+    turn(tree);
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    if (transfers_of(tree).deleting() || transfers_of(tree).line() != "Stopped: Moved 1 of 2 selected to the trash" || disk.gone != std::vector<std::string>{"/top/one"}) return false;
+    turn(tree);
+    grid.select_row(GridRow{0});  // two
+    disk.delete_fails = true;
+    say_yes();
+    turn(tree);
+    if (transfers_of(tree).deleting() || transfers_of(tree).line() != "Stopped: cannot delete it. Moved 0 of 1 selected to the trash" || disk.gone.size() != 1) return false;
+    disk.delete_fails = false;
+    turn(tree);
+    // While one thing goes on, nothing else starts. One selected on each side, so Diff and Compare both get as far as asking.
+    grid.select_row(GridRow{0});
+    tree.template get<GridOf<Right_>>().select_row(GridRow{1});
+    say_yes();
+    click_on<decltype(tree), files::DiffButton>(tree);
+    click_on<decltype(tree), files::CompareButton>(tree);
+    if (transfers_of(tree).matching() || transfers_of(tree).diffing() || transfers_of(tree).line() != "A delete is still going. Escape stops it.") return false;
+    transfers_of(tree).copy({"/top/note.txt"});
+    transfers_of(tree).paste_into("/other");
+    if (transfers_of(tree).copying() || transfers_of(tree).line() != "A delete is still going. Escape stops it.") return false;
+    until_deleted(tree);
+    return disk.gone == std::vector<std::string>{"/top/one", "/top/two"} && transfers_of(tree).line() == "Moved to the trash: 1 file, 1 folder, 10 bytes";
+}
+static_assert(a_delete_can_stop_part_way());
+
+// --- What a trash is told ---
+
+static_assert(trash_escaped_path("/a b/c%d/\xC3\xA9.txt") == "/a%20b/c%25d/%C3%A9.txt");
+static_assert(trash_escaped_path("/A-z_0.9~/x") == "/A-z_0.9~/x");
+static_assert(trash_info_text("/a b", TrashDate{2026, 11, 4, 9, 5, 7}) == "[Trash Info]\nPath=/a%20b\nDeletionDate=2026-11-04T09:05:07\n");
+static_assert(trash_name_to_try("a.txt", 0) == "a.txt" && trash_name_to_try("a.txt", 2) == "a.txt.2");
+static_assert(trash_name_to_try(std::string(255, 'x'), 0).size() + trash_info_suffix.size() == 255, "room for the info file's name");
+static_assert(trash_name_to_try(std::string(255, 'x'), 12).size() + trash_info_suffix.size() == 255, "and for a number");
+static_assert(valid_utf8(trash_name_to_try(std::string(244, 'x') + "\xC3\xA9\xC3\xA9\xC3\xA9", 0)), "cut on a whole character");
+static_assert(path_is_in_a_trash("/h/.local/share/Trash/files/a", "/h/.local/share/Trash") && path_is_in_a_trash("/h/.local/share/Trash", "/h/.local/share/Trash"));
+static_assert(path_is_in_a_trash("/disk/d/.Trash-1000/files/a", "/h/T") && path_is_in_a_trash("/disk/d/.Trash", "/h/T"));
+static_assert(!path_is_in_a_trash("/disk/d/.Trashy/a", "/h/T") && !path_is_in_a_trash("/h/.local/share/Trash2", "/h/.local/share/Trash") && !path_is_in_a_trash("/disk/d/a", "/h/T"));
+
+// --- Diffing lines ---
+
+static_assert(shown_line("plain\n") == "plain");
+static_assert(shown_line("no end") == "no end (no newline at the end)");
+static_assert(shown_line("a\tb\n") == "a    b");
+static_assert(shown_line("a\r\n") == "a\xE2\x90\x8D", "a carriage return shows");
+static_assert(shown_line("a\x1B[31mb\n") == "a\xEF\xBF\xBD[31mb", "a terminal escape does not reach the screen as one");
+static_assert(shown_line("a\xC2\x85z\n") == "a\xEF\xBF\xBDz", "a C1 control");
+static_assert(shown_line("x\xE2\x80\xAEy\n") == "x\xEF\xBF\xBDy", "a right-to-left override cannot make text show other than it is");
+static_assert(shown_line("x\xE2\x81\xA6y\n") == "x\xEF\xBF\xBDy", "nor an isolate");
+static_assert(shown_line("x\xE2\x80\xA8y\n") == "x\xEF\xBF\xBDy", "nor a line separator");
+static_assert(shown_line("\xC3\xA9t\xC3\xA9\n") == "\xC3\xA9t\xC3\xA9", "real letters stay");
+static_assert(shown_line("\xE2\x82\xAC\n") == "\xE2\x82\xAC", "and a euro sign");
+static_assert(shown_line("bad\xFF\n") == "(a line that is not UTF-8, 4 bytes)");
+static_assert(shown_line(std::string(5000, 'x') + "\n").size() <= max_caption_bytes);
+static_assert(valid_utf8(shown_line(std::string(5000, '\t') + "\xC3\xA9\n")));
+
+[[nodiscard]] constexpr DiffOutcome diff_of(std::string first, std::string second) {
+    auto differ = LineDiffer::start(std::move(first), std::move(second));
+    if (!differ) return DiffOutcome{.too_different = true};
+    while (!differ->step()) {}
+    return differ->outcome();
+}
+
+static_assert(diff_of("", "").rows.empty() && diff_of("a\nb\n", "a\nb\n").rows.empty(), "nothing differs, and nothing is listed");
+
+[[nodiscard]] constexpr bool one_line_changed() {
+    const DiffOutcome out = diff_of("one\ntwo\nthree\n", "one\nTWO\nthree\n");
+    if (out.left_only != 1 || out.right_only != 1 || out.rows.size() != 4) return false;
+    if (out.rows[0].text != "one" || out.rows[0].left != FileBytes{true, 1} || out.rows[0].right != FileBytes{true, 1} || !out.rows[0].only_in.empty()) return false;
+    if (out.rows[1].text != "two" || out.rows[1].only_in != "Left" || out.rows[1].left != FileBytes{true, 2} || out.rows[1].right.known) return false;
+    if (out.rows[2].text != "TWO" || out.rows[2].only_in != "Right" || out.rows[2].left.known || out.rows[2].right != FileBytes{true, 2}) return false;
+    return out.rows[3].text == "three" && out.rows[3].left == FileBytes{true, 3} && out.rows[3].right == FileBytes{true, 3};
+}
+static_assert(one_line_changed());
+
+static_assert(diff_of("", "a\n").right_only == 1 && diff_of("a\n", "").left_only == 1, "one side empty");
+static_assert(diff_of("a\n", "a").left_only == 1 && diff_of("a\n", "a").right_only == 1, "a last newline is a difference: the two files are not the same");
+static_assert(diff_of("a\r\n", "a\n").left_only == 1, "and so is a line ending");
+static_assert(diff_of("x\ny\nz\n", "a\nb\n").left_only == 3 && diff_of("x\ny\nz\n", "a\nb\n").right_only == 2, "nothing in common");
+
+// Lines the same that are far from a change are counted and not listed.
+[[nodiscard]] constexpr bool far_lines_are_left_out() {
+    std::string first;
+    for (int i = 0; i < 30; ++i) first += "line " + decimal_text(static_cast<std::uint64_t>(i), false) + "\n";
+    std::string second = first;
+    second.replace(second.find("line 15"), 7, "CHANGED");
+    const DiffOutcome out = diff_of(first, second);
+    if (out.rows.size() != 1 + 3 + 2 + 3 + 1) return false;
+    return out.rows.front().text == "... 12 lines the same ..." && !out.rows.front().left.known && out.rows[1].left == FileBytes{true, 13} && out.rows.back().text == "... 11 lines the same ...";
+}
+static_assert(far_lines_are_left_out());
+
+// What may not be diffed is refused rather than half done.
+static_assert(!LineDiffer::start(std::string{"a\0b", 3}, "a"));
+static_assert(!LineDiffer::start("a", std::string{"a\0b", 3}));
+
+// Too many changes ends the search and says so, and lists nothing as though it were all.
+[[nodiscard]] constexpr bool the_search_has_a_limit() {
+    std::string first;
+    std::string second;
+    for (std::int32_t i = 0; i <= most_diff_changes / 2; ++i) {
+        first += "a" + decimal_text(static_cast<std::uint64_t>(i), false) + "\n";
+        second += "b" + decimal_text(static_cast<std::uint64_t>(i), false) + "\n";
+    }
+    auto differ = LineDiffer::start(first, second);
+    if (!differ) return false;
+    for (std::int32_t round = 0; round <= most_diff_changes + 2; ++round)
+        if (differ->step()) break;
+    const DiffOutcome out = differ->outcome();
+    return differ->ended() && out.too_different && out.rows.empty();
+}
+
+// --- The Diff button, on the made-up disk ---
+
+template <class Tree>
+[[nodiscard]] constexpr auto& diff_popup_of(Tree& tree) { return tree.template get<files::DiffPopup>(); }
+
+template <class Tree>
+constexpr void until_diffed(Tree& tree) {
+    for (int i = 0; i < 40 && transfers_of(tree).diffing(); ++i) turn(tree);
+}
+
+[[nodiscard]] constexpr bool the_button_diffs_two_files() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    auto& left = tree.template get<Left_>();
+    auto& right = tree.template get<Right_>();
+    click_on<decltype(tree), files::DiffButton>(tree);
+    if (transfers_of(tree).diffing() || transfers_of(tree).line() != "Select exactly two files to diff") return false;
+    left.toggle(0);  // one: inner, f1
+    right.toggle(0);
+    left.toggle(1);  // inner: f2
+    if (!same_names(names_of(left), {"one", "inner", "f2", "f1", "two", "note.txt"})) return false;
+    tree.template get<GridOf<Left_>>().select_row(GridRow{3});  // f1
+    tree.template get<GridOf<Right_>>().select_row(GridRow{2});  // f1 on that side
+    click_on<decltype(tree), files::DiffButton>(tree);
+    if (!transfers_of(tree).diffing()) return false;
+    until_diffed(tree);
+    turn(tree);
+    if (!diff_popup_of(tree).is_open() || diff_popup_of(tree).heading() != "No lines differ" || !diff_popup_of(tree).rows().empty()) return false;
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    if (diff_popup_of(tree).is_open()) return false;
+    // Two on one side, the first being the left of the diff.
+    tree.template get<GridOf<Right_>>().select_row(std::nullopt);
+    tree.template get<GridOf<Left_>>().select_rows(std::vector<std::uint32_t>{2, 3}, GridRow{2});  // f2, f1
+    click_on<decltype(tree), files::DiffButton>(tree);
+    until_diffed(tree);
+    turn(tree);
+    if (!diff_popup_of(tree).is_open() || !diff_popup_of(tree).heading().starts_with("2 lines only on the left, 1 line only on the right") || diff_popup_of(tree).rows().empty()) return false;
+    if (diff_popup_of(tree).detail_text() != "Left: /top/one/inner/f2" || diff_popup_of(tree).right_text() != "Right: /top/one/f1") return false;
+    // The popup's OK closes it, and nothing was changed on the disk.
+    static_cast<void>(lay_out(tree));
+    click_on<decltype(tree), FileDiffPopupButton<files::DiffPopup>>(tree);
+    return !diff_popup_of(tree).is_open() && disk.gone.empty() && disk.arrived.empty();
+}
+static_assert(the_button_diffs_two_files());
+
+[[nodiscard]] constexpr bool what_cannot_be_diffed_says_why() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    tree.template get<GridOf<Left_>>().select_rows(std::vector<std::uint32_t>{0, 1}, GridRow{0});  // two folders
+    click_on<decltype(tree), files::DiffButton>(tree);
+    if (transfers_of(tree).diffing() || transfers_of(tree).line() != "Nothing to diff: one is not a file") return false;
+    tree.template get<GridOf<Left_>>().select_rows(std::vector<std::uint32_t>{0, 1, 2}, GridRow{0});
+    click_on<decltype(tree), files::DiffButton>(tree);
+    if (transfers_of(tree).line() != "Select exactly two files to diff") return false;
+    // Not text, and stopping one.
+    auto& pane = tree.template get<Left_>();
+    pane.toggle(0);
+    tree.template get<GridOf<Left_>>().select_rows(std::vector<std::uint32_t>{2, 4}, GridRow{2});  // f1, note.txt
+    click_on<decltype(tree), files::DiffButton>(tree);
+    if (!transfers_of(tree).line().contains("not both text") || transfers_of(tree).diffing()) return false;
+    transfers_of(tree).start_diff("/top/one/f1", "/top/one/inner/f2");
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    turn(tree);
+    return !transfers_of(tree).diffing() && !diff_popup_of(tree).is_open() && transfers_of(tree).line() == "The diff was stopped";
+}
+static_assert(what_cannot_be_diffed_says_why());
 
 // Looking again keeps what was open and what was selected, wherever they went, and what has gone is gone.
 [[nodiscard]] constexpr bool looking_again_keeps_the_tree() {
@@ -1327,6 +1774,15 @@ void checks_what_it_copied() {
 }
 
 // The whole way, through a real window's tree: a real paste that leaves the original, and says it matched.
+template <class Tree>
+void files_compare(Tree& tree) {
+    static_cast<void>(lay_out(tree, Rect{Point{}, Size{Width{1400}, Height{400}}}));
+    const Rect area = tree.template get<files::CompareButton>().bounds();
+    const Point at{left_after(area.left() + Width{1}), top_after(area.top() + Height{1})};
+    jgui_test::dispatch(tree, PointerPress{at, MouseButton::Left, jgui_test::serial(1)});
+    jgui_test::dispatch(tree, PointerRelease{at, MouseButton::Left});
+}
+
 void copies_through_a_real_tree() {
     const jgui_test::TemporaryDirectory directory;
     const std::filesystem::path top = std::filesystem::canonical(directory.path());
@@ -1342,6 +1798,423 @@ void copies_through_a_real_tree() {
     check(!transfers.copying() && whole_text_of(top / "b" / "file.txt") == "other", "a paste through the tree");
     check(whole_text_of(top / "a" / "file.txt") == "other", "and the original stays");
     check(transfers.line().starts_with("Copied file.txt to ") && transfers.line().find("every file matched by SHA-256") != std::string_view::npos, "and the line says it matched");
+
+    // Then the button, with one selected on each side: from the rows through the real disk to the popup.
+    auto& popup = tree.template get<files::MatchPopup>();
+    tree.template get<files::RightPane>().reload();
+    tree.template get<FilePaneGrid<files::LeftPane>>().select_rows({0}, GridRow{0});
+    tree.template get<FilePaneGrid<files::RightPane>>().select_rows({0}, GridRow{0});
+    files_compare(tree);
+    check(transfers.matching(), "a match started");
+    for (int i = 0; i < 100 && !popup.is_open(); ++i) jgui_test::notify(tree, TimersDue{});
+    check(popup.is_open() && popup.heading() == "They all match" && popup.findings().empty(), "and the popup says a copy matches");
+    popup.close();
+
+    // A byte changed underneath, and the same two now say so.
+    change_a_byte(top / "b" / "file.txt", 0);
+    files_compare(tree);
+    for (int i = 0; i < 100 && !popup.is_open(); ++i) jgui_test::notify(tree, TimersDue{});
+    check(popup.is_open() && popup.heading() == "1 thing does not match" && popup.findings().size() == 1 && popup.findings()[0].why == "The contents differ by SHA-256", "and that it no longer does");
+}
+
+struct RealMatch {
+    bool done{};
+    MatchProgress progress{};
+    std::vector<MatchFinding> findings{};
+};
+
+[[nodiscard]] RealMatch match_real(const std::filesystem::path& first, const std::filesystem::path& second) {
+    RealMatch out;
+    auto job = start_local_match(first.string(), second.string());
+    if (!job) return out;
+    for (int i = 0; i < 10000; ++i) {
+        auto stepped = job->step();
+        if (!stepped) return out;
+        if (*stepped) {
+            out.done = true;
+            break;
+        }
+    }
+    out.progress = job->progress();
+    out.findings.assign(job->findings().begin(), job->findings().end());
+    return out;
+}
+
+[[nodiscard]] bool found_only(const RealMatch& result, std::string_view where, std::string_view why) {
+    return result.done && result.progress.differences == 1 && result.findings.size() == 1 && result.findings[0].where == where && result.findings[0].why.contains(why);
+}
+
+void matches_real_things() {
+    const jgui_test::TemporaryDirectory directory;
+    const std::filesystem::path top = std::filesystem::canonical(directory.path());
+    const std::filesystem::path a = top / "a";
+    const std::filesystem::path b = top / "b";
+    const std::string large(std::size_t{3} * 1024 * 1024 + 5, 'x');
+    for (const std::filesystem::path& side : {a, b}) {
+        std::filesystem::create_directories(side / "sub" / "deeper");
+        put_text(side / "large.bin", large);
+        put_text(side / "empty", "");
+        put_text(side / "sub" / "deeper" / "note.txt", "note");
+        std::filesystem::create_symlink("somewhere/gone", side / "link");
+    }
+    // The same contents at another time still match: times are not what is asked.
+    std::filesystem::last_write_time(b / "sub" / "deeper" / "note.txt", std::filesystem::file_time_type{});
+
+    const RealMatch same = match_real(a, b);
+    check(same.done && same.progress.differences == 0 && same.findings.empty(), "two copies of a tree match");
+    check(same.progress.files == 3 && same.progress.links == 1 && same.progress.folders == 3 && same.progress.bytes == large.size() + 4, "and each thing was looked at");
+
+    put_text(top / "another_name", "note");
+    const RealMatch differently_named = match_real(a / "sub" / "deeper" / "note.txt", top / "another_name");
+    check(differently_named.done && differently_named.progress.files == 1 && differently_named.progress.differences == 0, "two files of different names match");
+
+    // A byte, the same size: only the sums can tell.
+    change_a_byte(b / "large.bin", std::int64_t{3} * 1024 * 1024 + 4);
+    check(found_only(match_real(a, b), "a and b/large.bin", "contents differ by SHA-256"), "a changed byte is found");
+    std::filesystem::remove(b / "large.bin");
+    put_text(b / "large.bin", large);
+    check(match_real(a, b).progress.differences == 0, "and matches again once put right");
+
+    // What is deep down, and on one side only, on either side.
+    put_text(a / "sub" / "deeper" / "only_a", "");
+    check(found_only(match_real(a, b), "a and b/sub/deeper/only_a", "Only in"), "a file only on the first side is found");
+    std::filesystem::remove(a / "sub" / "deeper" / "only_a");
+    std::filesystem::create_directories(b / "sub" / "only_b");
+    check(found_only(match_real(a, b), "a and b/sub/only_b", "Only in"), "a folder only on the second side is found");
+    std::filesystem::remove(b / "sub" / "only_b");
+
+    // Sizes differ, kinds differ, links differ.
+    std::filesystem::remove(b / "empty");
+    put_text(b / "empty", "not");
+    check(found_only(match_real(a, b), "a and b/empty", "sizes differ"), "a different size is found");
+    std::filesystem::remove(b / "empty");
+    put_text(b / "empty", "");
+    std::filesystem::remove(b / "link");
+    std::filesystem::create_symlink("somewhere/else", b / "link");
+    check(found_only(match_real(a, b), "a and b/link", "different places"), "a link saying something else is found");
+    std::filesystem::remove(b / "link");
+    put_text(b / "link", "");
+    check(found_only(match_real(a, b), "a and b/link", "same kind"), "a file for a link is found");
+    std::filesystem::remove(b / "link");
+    std::filesystem::create_symlink("somewhere/gone", b / "link");
+
+    // A link is never followed: these say the same, so they match, and the file they point to is not counted.
+    put_text(top / "target", "t");
+    std::filesystem::create_symlink(top / "target", a / "to_target");
+    std::filesystem::create_symlink(top / "target", b / "to_target");
+    check(match_real(a, b).progress.differences == 0 && match_real(a, b).progress.files == 3, "what a link points to is not read");
+    std::filesystem::remove(a / "to_target");
+    std::filesystem::remove(b / "to_target");
+
+    // Something with no contents to check is not a match.
+    check(::mkfifo((a / "pipe").c_str(), S_IRUSR | S_IWUSR) == 0 && ::mkfifo((b / "pipe").c_str(), S_IRUSR | S_IWUSR) == 0, "two pipes were made");
+    check(found_only(match_real(a, b), "a and b/pipe", "nothing that can be checked"), "two pipes are not called a match, and neither is opened");
+    std::filesystem::remove(a / "pipe");
+    std::filesystem::remove(b / "pipe");
+
+    // One and the same thing is not two copies, so a person told it matched would lose it by deleting one.
+    check(found_only(match_real(a, a), "a", "one and the same"), "a folder against itself is not a match");
+    std::filesystem::create_hard_link(a / "empty", top / "hard");
+    check(found_only(match_real(a / "empty", top / "hard"), "empty and hard", "one and the same"), "a hard link is not a copy");
+
+    // Something unreadable is a finding, and the rest is still looked at. Root can read anything, so this is only asked when it means something.
+    if (::geteuid() != 0) {
+        std::filesystem::permissions(b / "sub" / "deeper" / "note.txt", std::filesystem::perms::none);
+        const RealMatch shut = match_real(a, b);
+        check(found_only(shut, "a and b/sub/deeper/note.txt", "Cannot open") && shut.progress.files == 2, "what cannot be read is found, and the rest is still checked");
+        std::filesystem::permissions(b / "sub" / "deeper" / "note.txt", std::filesystem::perms::owner_all);
+    }
+
+    // Nothing was changed by any of it: a match only reads.
+    check(match_real(a, b).progress.differences == 0 && whole_text_of(a / "sub" / "deeper" / "note.txt") == "note", "it left everything as it was");
+    check(!start_local_match("/", (a / "empty").string()), "the top of the disk has no name to match under");
+    check(!start_local_match("not/absolute", (a / "empty").string()), "a path a pane could not hold is refused");
+}
+
+struct RealCount {
+    std::optional<DeleteCount> count{};
+    std::string why{};
+};
+
+[[nodiscard]] RealCount count_real(const std::filesystem::path& path) {
+    auto job = start_local_count(path.string());
+    if (!job) return RealCount{std::nullopt, job.error().message};
+    for (int i = 0; i < 100000; ++i) {
+        auto stepped = job->step();
+        if (!stepped) return RealCount{std::nullopt, stepped.error().message};
+        if (*stepped) return RealCount{job->counted(), {}};
+    }
+    return RealCount{std::nullopt, "it never ended"};
+}
+
+[[nodiscard]] std::size_t things_in(const std::filesystem::path& folder) {
+    std::size_t count = 0;
+    std::error_code ignored;
+    for (const auto& entry : std::filesystem::directory_iterator{folder, ignored}) {
+        static_cast<void>(entry);
+        ++count;
+    }
+    return count;
+}
+
+void counts_real_things() {
+    const jgui_test::TemporaryDirectory directory;
+    const std::filesystem::path top = std::filesystem::canonical(directory.path());
+    const std::filesystem::path outside = top / "outside";
+    std::filesystem::create_directories(outside / "inside");
+    put_text(outside / "keep.txt", "keep");
+    const std::filesystem::path counted_here = top / "counted";
+    std::filesystem::create_directories(counted_here / "sub" / "deeper");
+    put_text(counted_here / "a.txt", "12345");
+    put_text(counted_here / "sub" / "b.txt", "123");
+    put_text(counted_here / "sub" / "deeper" / "c.txt", "1");
+    put_text(counted_here / "sub" / "bad\xFFname", "22");  // no pane could show this name, and it still counts
+    std::filesystem::create_symlink(outside, counted_here / "link_to_folder");
+    std::filesystem::create_symlink(outside / "keep.txt", counted_here / "link_to_file");
+    std::filesystem::create_symlink("/nowhere/at/all", counted_here / "broken_link");
+    check(::mkfifo((counted_here / "pipe").c_str(), 0600) == 0, "a pipe was made");
+    const RealCount counted = count_real(counted_here);
+    check(counted.count.has_value(), "a folder can be counted");
+    if (!counted.count) return;
+    check(counted.count->files == 8, "four files, three links and a pipe");
+    check(counted.count->folders == 3, "the folder and two inside");
+    check(counted.count->bytes == 11, "the bytes of regular files");
+    check(std::filesystem::exists(counted_here / "a.txt"), "the count left it all there");
+    std::filesystem::create_symlink(outside, top / "lone_link");
+    const RealCount lone = count_real(top / "lone_link");
+    check(lone.count && lone.count->files == 1 && lone.count->folders == 0, "a link to a folder counts as one thing");
+    // Something it cannot look into stops the count, so nobody is asked about a number that is short.
+    if (::geteuid() != 0) {
+        const std::filesystem::path shut = top / "shut";
+        std::filesystem::create_directories(shut / "closed");
+        put_text(shut / "closed" / "x", "x");
+        std::filesystem::permissions(shut / "closed", std::filesystem::perms::none);
+        const RealCount refused = count_real(shut);
+        check(!refused.count && refused.why.contains("closed"), "a folder that cannot be read refuses the count");
+        std::filesystem::permissions(shut / "closed", std::filesystem::perms::owner_all);
+    }
+    // Only counted here, so this test could never harm it. A mount inside a folder goes the same way, and needs privileges to set up.
+    const RealCount proc = count_real("/proc");
+    check(!proc.count && proc.why.contains("another mounted disk"), "a mounted disk is not gone into");
+    check(!start_local_count("/") && !start_local_count("relative"), "and the top of everything, and what is not a plain path, are refused");
+    check(!count_real(top / "missing").count, "and what is not there");
+}
+
+void moves_real_things_to_the_trash() {
+    const jgui_test::TemporaryDirectory directory;
+    const std::filesystem::path top = std::filesystem::canonical(directory.path());
+    const std::filesystem::path data = top / "made" / "on" / "demand";  // not the person's real trash, whatever this runs on
+    const std::filesystem::path trash = data / "Trash";
+    const std::filesystem::path outside = top / "outside";
+    std::filesystem::create_directories(outside);
+    put_text(outside / "keep.txt", "keep");
+
+    // A folder, whole, with a link in it that stays a link, and a name that needs escaping.
+    std::filesystem::create_directories(top / "a b" / "sub");
+    put_text(top / "a b" / "sub" / "in.txt", "inner");
+    std::filesystem::create_symlink(outside, top / "a b" / "link");
+    check(move_to_trash_under((top / "a b").string(), data.string()).has_value(), "a folder goes to the trash");
+    check(!std::filesystem::exists(std::filesystem::symlink_status(top / "a b")), "and has left where it was");
+    check(whole_text_of(trash / "files" / "a b" / "sub" / "in.txt") == "inner", "with what was in it whole");
+    check(std::filesystem::is_symlink(trash / "files" / "a b" / "link") && whole_text_of(outside / "keep.txt") == "keep", "and a link is still a link, with what it points to left alone");
+    const std::string info = whole_text_of(trash / "info" / "a b.trashinfo");
+    check(info.starts_with("[Trash Info]\nPath=" + trash_escaped_path((top / "a b").string()) + "\nDeletionDate=20") && info.ends_with("\n"), "and its info says where it came from and when");
+    check(info.contains("%20"), "with the path escaped");
+
+    // The same name again takes the next free one, and the first stays.
+    put_text(top / "a b", "second");
+    check(move_to_trash_under((top / "a b").string(), data.string()).has_value(), "a second of that name goes too");
+    check(whole_text_of(trash / "files" / "a b.1") == "second" && whole_text_of(trash / "files" / "a b" / "sub" / "in.txt") == "inner", "beside the first");
+    check(std::filesystem::exists(trash / "info" / "a b.1.trashinfo"), "with its own info");
+
+    // A name left in files with no info is not replaced.
+    put_text(trash / "files" / "orphan", "older");
+    put_text(top / "orphan", "newer");
+    check(move_to_trash_under((top / "orphan").string(), data.string()).has_value(), "a name taken in the trash is stepped over");
+    check(whole_text_of(trash / "files" / "orphan") == "older" && whole_text_of(trash / "files" / "orphan.1") == "newer", "and what held it stays");
+    check(!std::filesystem::exists(trash / "info" / "orphan.trashinfo") && std::filesystem::exists(trash / "info" / "orphan.1.trashinfo"), "with no info left for a move that did not happen");
+
+    // A link alone goes as a link. A longest name still fits.
+    std::filesystem::create_symlink(outside, top / "lone_link");
+    check(move_to_trash_under((top / "lone_link").string(), data.string()).has_value() && std::filesystem::is_symlink(trash / "files" / "lone_link") && whole_text_of(outside / "keep.txt") == "keep", "a link goes as a link");
+    const std::string longest(255, 'n');
+    put_text(top / longest, "long");
+    check(move_to_trash_under((top / longest).string(), data.string()).has_value() && things_in(trash / "files") == things_in(trash / "info") + 1, "the longest name fits, and only the orphan has no info");
+
+    // What is refused stays where it is, and leaves nothing behind.
+    const std::size_t infos = things_in(trash / "info");
+    put_text(trash / "files" / "already", "x");
+    check(!move_to_trash_under((trash / "files" / "already").string(), data.string()) && whole_text_of(trash / "files" / "already") == "x", "what is in the trash stays");
+    check(!move_to_trash_under(data.string(), data.string()) && !move_to_trash_under((top / "made").string(), data.string()) && std::filesystem::exists(trash), "a folder holding the trash stays");
+    check(!move_to_trash_under((top / "missing").string(), data.string()), "what is not there is refused");
+    check(!move_to_trash_under("/", data.string()) && !move_to_trash_under("relative", data.string()), "and the top of everything, and what is not a plain path");
+    check(things_in(trash / "info") == infos, "and none of those left an info file");
+
+    // A trash someone else could write to, or that is a link, is not used, and the thing stays.
+    const std::filesystem::path open_data = top / "open";
+    std::filesystem::create_directories(open_data / "Trash");
+    std::filesystem::permissions(open_data / "Trash", std::filesystem::perms::others_write, std::filesystem::perm_options::add);
+    put_text(top / "stays.txt", "stays");
+    check(!move_to_trash_under((top / "stays.txt").string(), open_data.string()) && whole_text_of(top / "stays.txt") == "stays", "a trash others can write to is refused");
+    // A group may write to it, as on a disk shared with a group.
+    const std::filesystem::path group_data = top / "group";
+    std::filesystem::create_directories(group_data / "Trash");
+    std::filesystem::permissions(group_data / "Trash", std::filesystem::perms::group_write, std::filesystem::perm_options::add);
+    put_text(top / "goes.txt", "goes");
+    check(move_to_trash_under((top / "goes.txt").string(), group_data.string()).has_value() && whole_text_of(group_data / "Trash" / "files" / "goes.txt") == "goes", "a trash its group can write to is used");
+    const std::filesystem::path linked_data = top / "linked";
+    std::filesystem::create_directories(linked_data);
+    std::filesystem::create_symlink(outside, linked_data / "Trash");
+    check(!move_to_trash_under((top / "stays.txt").string(), linked_data.string()) && whole_text_of(top / "stays.txt") == "stays" && !std::filesystem::exists(outside / "files"), "and so is one that is a link");
+
+    // Another disk than the home trash's: the temporary folder's own, with a home trash in the folder the tests run in, when those differ and the temporary folder is the top of its disk. Its own trash is used, by
+    // the specification's two ways, and the path is written from the top of that disk. Only what this made is taken away afterwards, because a trash already there is the person's.
+    const std::filesystem::path disk_top = top.parent_path();
+    std::string far_made = (std::filesystem::current_path() / "trash-test-XXXXXX").string();
+    std::error_code no_shared;
+    struct statx top_found {};
+    const bool can_try = ::mkdtemp(far_made.data()) != nullptr && !std::filesystem::exists(disk_top / ".Trash", no_shared) && ::statx(AT_FDCWD, disk_top.c_str(), AT_NO_AUTOMOUNT, STATX_BASIC_STATS, &top_found) == 0 && (top_found.stx_attributes & STATX_ATTR_MOUNT_ROOT) != 0;
+    struct stat near_disk {};
+    struct stat far_disk {};
+    if (can_try && ::access(disk_top.c_str(), W_OK) == 0 && ::stat(top.c_str(), &near_disk) == 0 && ::stat(far_made.c_str(), &far_disk) == 0 && near_disk.st_dev != far_disk.st_dev) {
+        const std::string far_data = far_made;
+        const std::string uid = std::to_string(::geteuid());
+        const std::filesystem::path own_trash = disk_top / (".Trash-" + uid);
+        const bool own_was_there = std::filesystem::exists(own_trash);
+        const std::string stem = "jcppgui-test-" + top.filename().string();
+        const auto named = [&](std::string_view ending) { return stem + std::string{ending}; };
+        put_text(top / named("own"), "own");
+        check(move_to_trash_under((top / named("own")).string(), far_data).has_value(), "the other disk's own trash is used");
+        check(whole_text_of(own_trash / "files" / named("own")) == "own", "$top/.Trash-$uid");
+        check(whole_text_of(own_trash / "info" / (named("own") + ".trashinfo")).contains("Path=" + top.filename().string() + "/" + named("own") + "\n"), "with the path from the top of that disk");
+
+        // A shared trash that is not sticky is passed over, and a sticky one is used.
+        const std::filesystem::path shared = disk_top / ".Trash";
+        std::filesystem::create_directories(shared);
+        std::filesystem::permissions(shared, std::filesystem::perms::owner_all);
+        put_text(top / named("plain"), "plain");
+        check(move_to_trash_under((top / named("plain")).string(), far_data).has_value() && std::filesystem::exists(own_trash / "files" / named("plain")), "a shared trash that is not sticky is passed over");
+        std::filesystem::permissions(shared, std::filesystem::perms::all | std::filesystem::perms::sticky_bit);
+        put_text(top / named("shared"), "shared");
+        check(move_to_trash_under((top / named("shared")).string(), far_data).has_value(), "a sticky shared trash is used");
+        check(whole_text_of(shared / uid / "files" / named("shared")) == "shared", "$top/.Trash/$uid");
+        std::filesystem::remove_all(shared);
+        for (const std::string& each : {named("own"), named("plain")}) {
+            std::filesystem::remove(own_trash / "files" / each);
+            std::filesystem::remove(own_trash / "info" / (each + ".trashinfo"));
+        }
+        if (!own_was_there) std::filesystem::remove_all(own_trash);
+    } else {
+        std::cout << "not tried here: a trash on another disk than the home trash's\n";
+    }
+    std::error_code no_far;
+    std::filesystem::remove_all(far_made, no_far);
+
+    // Through the real tree, with the real way of finding the trash: the buttons, the popup, and the real disk.
+    check(::setenv("XDG_DATA_HOME", data.c_str(), 1) == 0, "the trash for this test is its own");
+    const std::filesystem::path shown = top / "shown";
+    std::filesystem::create_directories(shown / "folder");
+    put_text(shown / "folder" / "in.txt", "abc");
+    put_text(shown / "stays.txt", "stays");
+    auto tree = files::make_ui(LocalFiles{}, files::StartFolder{shown.string()}, files::StartFolder{shown.string()});
+    static_cast<void>(lay_out(tree, Rect{Point{}, Size{Width{1400}, Height{400}}}));
+    auto& popup = tree.template get<files::DeletePopup>();
+    auto& transfers = tree.template get<files::Transfers>();
+    tree.template get<FilePaneGrid<files::LeftPane>>().select_row(GridRow{0});
+    const auto click = [&](Rect area) {
+        const Point at{left_after(area.left() + Width{1}), top_after(area.top() + Height{1})};
+        jgui_test::dispatch(tree, PointerPress{at, MouseButton::Left, jgui_test::serial(1)});
+        jgui_test::dispatch(tree, PointerRelease{at, MouseButton::Left});
+    };
+    click(tree.template get<FilePaneDeleteButton<files::LeftPane>>().bounds());
+    for (int i = 0; i < 100 && !popup.is_open(); ++i) jgui_test::notify(tree, TimersDue{});
+    check(popup.is_open() && popup.count_text() == "File count to be deleted: 1", "the popup says how many files");
+    check(popup.what_text().starts_with("Also 1 folder, and 3 bytes"), "and what else");
+    check(std::filesystem::exists(shown / "folder" / "in.txt"), "and it is all still there");
+    static_cast<void>(lay_out(tree, Rect{Point{}, Size{Width{1400}, Height{400}}}));
+    click(tree.template get<FileDeletePopupConfirm<files::DeletePopup>>().bounds());
+    check(transfers.deleting(), "the button starts it");
+    for (int i = 0; i < 100 && transfers.deleting(); ++i) jgui_test::notify(tree, TimersDue{});
+    check(!std::filesystem::exists(shown / "folder") && whole_text_of(shown / "stays.txt") == "stays", "and what was selected has left, and nothing else");
+    check(whole_text_of(trash / "files" / "folder" / "in.txt") == "abc", "and is in the trash");
+    check(transfers.line() == "Moved to the trash: 1 file, 1 folder, 3 bytes", "and the line says so");
+    jgui_test::notify(tree, TimersDue{});
+    check(tree.template get<files::LeftPane>().rows().size() == 1 && tree.template get<files::RightPane>().rows().size() == 1, "and both sides have looked again");
+    check(::unsetenv("XDG_DATA_HOME") == 0, "that is undone");
+}
+
+void diffs_real_things() {
+    const jgui_test::TemporaryDirectory directory;
+    const std::filesystem::path top = std::filesystem::canonical(directory.path());
+    std::filesystem::create_directories(top / "folder");
+    put_text(top / "a.txt", "one\ntwo\nthree\n");
+    put_text(top / "b.txt", "one\n2\nthree\nfour\n");
+    put_text(top / "zero.bin", std::string{"a\0b", 3});
+    std::filesystem::create_symlink(top / "a.txt", top / "link.txt");
+    check(::mkfifo((top / "pipe").c_str(), 0600) == 0, "a pipe was made");
+    check(read_text_file((top / "a.txt").string()) == "one\ntwo\nthree\n", "a file is read whole");
+    check(!read_text_file((top / "link.txt").string()), "a link is not followed");
+    check(!read_text_file((top / "pipe").string()), "and a pipe is refused rather than waited on");
+    check(!read_text_file((top / "folder").string()), "and a folder");
+    check(!read_text_file((top / "missing").string()), "and what is not there");
+    put_text(top / "big", std::string(most_diff_file_bytes + 1, 'x'));
+    check(!read_text_file((top / "big").string()), "and what is too big");
+
+    auto tree = files::make_ui(LocalFiles{}, files::StartFolder{(top / "folder").string()}, files::StartFolder{(top / "folder").string()});
+    auto& transfers = tree.template get<files::Transfers>();
+    auto& popup = tree.template get<files::DiffPopup>();
+    transfers.start_diff((top / "a.txt").string(), (top / "b.txt").string());
+    for (int i = 0; i < 100 && !popup.is_open(); ++i) jgui_test::notify(tree, TimersDue{});
+    check(popup.is_open() && popup.heading() == "1 line only on the left, 2 lines only on the right", "two real files differ");
+    popup.close();
+    transfers.start_diff((top / "a.txt").string(), (top / "zero.bin").string());
+    check(!transfers.diffing() && transfers.line().contains("not both text"), "and one that is not text is refused");
+}
+
+// The search against the longest common subsequence worked out the slow way, on many small texts of few different lines, so lines repeat as they do in real files. The rows must say what the texts say.
+void diffs_agree_with_the_slow_way() {
+    std::uint32_t seed = 12345;
+    const auto next = [&](std::uint32_t below) {
+        seed = seed * 1103515245U + 12345U;
+        return ((seed >> 16U) & 0x7FFFU) % below;
+    };
+    const auto text_of = [&](std::vector<std::string>& lines) {
+        const std::uint32_t count = next(25);
+        const std::uint32_t different = next(5) + 1;
+        std::string text;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            lines.push_back(decimal_text(next(different), false));
+            text += lines.back() + "\n";
+        }
+        return text;
+    };
+    bool all_agree = true;
+    for (int round = 0; round < 3000 && all_agree; ++round) {
+        std::vector<std::string> a;
+        std::vector<std::string> b;
+        const std::string first = text_of(a);
+        const std::string second = text_of(b);
+        std::vector<std::vector<std::size_t>> common(a.size() + 1, std::vector<std::size_t>(b.size() + 1, 0));
+        for (std::size_t i = a.size(); i-- > 0;)
+            for (std::size_t j = b.size(); j-- > 0;) common[i][j] = a[i] == b[j] ? common[i + 1][j + 1] + 1 : std::max(common[i + 1][j], common[i][j + 1]);
+        const DiffOutcome out = diff_of(first, second);
+        all_agree = !out.too_different && out.left_only == a.size() - common[0][0] && out.right_only == b.size() - common[0][0];
+        std::uint64_t last_left = 0;
+        std::uint64_t last_right = 0;
+        for (const DiffRow& row : out.rows) {
+            if (row.text.starts_with("...")) continue;
+            if (row.left.known) {
+                all_agree = all_agree && row.left.count > last_left && a[row.left.count - 1] == row.text;
+                last_left = row.left.count;
+            }
+            if (row.right.known) {
+                all_agree = all_agree && row.right.count > last_right && b[row.right.count - 1] == row.text;
+                last_right = row.right.count;
+            }
+        }
+    }
+    check(all_agree, "the search finds the fewest changes, and its rows say what the texts say");
+    check(the_search_has_a_limit(), "too many changes ends the search");
 }
 
 }  // namespace
@@ -1351,5 +2224,10 @@ int main() {
     copies_real_things();
     checks_what_it_copied();
     copies_through_a_real_tree();
+    matches_real_things();
+    counts_real_things();
+    moves_real_things_to_the_trash();
+    diffs_real_things();
+    diffs_agree_with_the_slow_way();
     return check.finish();
 }

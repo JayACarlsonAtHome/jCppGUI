@@ -88,6 +88,8 @@ template <class Pane>
 struct FilePaneCopyButton;
 template <class Pane>
 struct FilePanePasteButton;
+template <class Pane>
+struct FilePaneDeleteButton;
 
 inline constexpr std::size_t file_name_column = 0;
 inline constexpr std::size_t file_size_column = 1;
@@ -132,6 +134,14 @@ struct FilePanePaste {
     }
 };
 
+template <class Pane>
+struct FilePaneDelete {
+    template <class U>
+    constexpr void operator()(U& u) const {
+        u.template get<Pane>().delete_selected(u);
+    }
+};
+
 [[nodiscard]] constexpr std::string count_of_things(std::size_t count) {
     std::string text = decimal_text(count, false);
     text.append(count == 1 ? " thing" : " things");
@@ -146,18 +156,19 @@ class FilePane {
     using ReloadButton = Button<FilePaneReloadButton<Tag>, detail::FilePaneReload<Tag>>;
     using CopyButton = Button<FilePaneCopyButton<Tag>, detail::FilePaneCopy<Tag>>;
     using PasteButton = Button<FilePanePasteButton<Tag>, detail::FilePanePaste<Tag>>;
+    using DeleteButton = Button<FilePaneDeleteButton<Tag>, detail::FilePaneDelete<Tag>>;
     using PathLabel = Label<FilePanePath<Tag>>;
     using StatusLabel = Label<FilePaneStatus<Tag>>;
     using Grid = FileGrid<Tag>;
 
 public:
     using tag = Tag;
-    using children_type = std::tuple<UpButton, OpenButton, ReloadButton, CopyButton, PasteButton, PathLabel, StatusLabel, Grid>;
+    using children_type = std::tuple<UpButton, OpenButton, ReloadButton, CopyButton, PasteButton, DeleteButton, PathLabel, StatusLabel, Grid>;
 
     constexpr explicit FilePane(Source source)
         : source_{std::move(source)},
           children_{UpButton{"Up", detail::FilePaneGoUp<Tag>{}}, OpenButton{"Show this folder", detail::FilePaneOpenSelected<Tag>{}}, ReloadButton{"Reload", detail::FilePaneReload<Tag>{}},
-                    CopyButton{"Copy", detail::FilePaneCopy<Tag>{}}, PasteButton{"Paste", detail::FilePanePaste<Tag>{}},
+                    CopyButton{"Copy", detail::FilePaneCopy<Tag>{}}, PasteButton{"Paste", detail::FilePanePaste<Tag>{}}, DeleteButton{"Delete", detail::FilePaneDelete<Tag>{}},
                     PathLabel{"No folder"}, StatusLabel{"Nothing read yet"}, Grid{}} {
         // The column is there, so this is not refused.
         static_cast<void>(grid().set_column_align(file_size_column, ColumnAlign::AtRight));
@@ -275,6 +286,17 @@ public:
         ui.template get<Transfers>().copy(std::move(paths));
     }
 
+    // Delete: only what is selected on this side. The transfers count it, and a person is asked before it goes to the trash.
+    template <class U>
+    constexpr void delete_selected(U& ui) {
+        std::vector<std::string> paths = selected_paths();
+        if (paths.empty()) {
+            say("Select something to delete first");
+            return;
+        }
+        ui.template get<Transfers>().start_deleting(std::move(paths));
+    }
+
     // What is selected, in tree order. Something inside a selected folder is left out, because it goes with that folder.
     [[nodiscard]] constexpr std::vector<std::string> selected_paths() const {
         std::vector<std::string> paths;
@@ -323,6 +345,7 @@ public:
         place_button(std::get<ReloadButton>(children_));
         place_button(std::get<CopyButton>(children_));
         place_button(std::get<PasteButton>(children_));
+        place_button(std::get<DeleteButton>(children_));
         if (!room) return std::unexpected(std::move(room.error()));
         std::expected<Rect, Error> below{Rect{Point{area.left(), top_after(strip_.bottom())}, Size{area.width(), area.height() - strip_.height()}}};
         const auto place_below = [&](auto& part) {
@@ -671,12 +694,19 @@ private:
     bool drag_seen_{};
 };
 
-// Compares what shows on each side and says on the transfers' line how it came out. Neither side is read again and nothing is changed on a disk. Differ counts each thing once, from the left.
+// With two or more selected, across both sides, those are matched by their contents, one pair at a time. With fewer, this compares what shows on each side and says on the transfers' line how it
+// came out: neither side is read again and nothing is changed on a disk, and differ counts each thing once, from the left.
 template <class LeftTag, class RightTag, class TransfersTag, class U>
 constexpr void compare_panes(U& ui) {
     auto& left = ui.template get<LeftTag>();
     auto& right = ui.template get<RightTag>();
     auto& transfers = ui.template get<TransfersTag>();
+    const std::vector<std::string> left_selected = left.selected_paths();
+    const std::vector<std::string> right_selected = right.selected_paths();
+    if (left_selected.size() + right_selected.size() >= 2) {
+        transfers.start_matching(plan_matches(left_selected, right_selected));
+        return;
+    }
     if (left.folder().empty() || right.folder().empty()) {
         transfers.tell("Comparing needs a folder on each side");
         return;
@@ -689,8 +719,22 @@ constexpr void compare_panes(U& ui) {
     text.append(decimal_text(on_left.only_here, false)).append(" only on the left, ");
     text.append(decimal_text(on_right.only_here, false)).append(" only on the right, ");
     text.append(decimal_text(on_left.differ, false)).append(" different, ");
-    text.append(decimal_text(on_left.same, false)).append(" same size and time. Contents were not read, and a closed folder was not looked inside.");
+    text.append(decimal_text(on_left.same, false)).append(" same size and time. Contents were not read. To match by contents, select two or more first.");
     transfers.tell(text);
+}
+
+// Exactly two selected, on either side, the left pane's first.
+template <class LeftTag, class RightTag, class TransfersTag, class U>
+constexpr void diff_panes(U& ui) {
+    std::vector<std::string> selected = ui.template get<LeftTag>().selected_paths();
+    const std::vector<std::string> on_right = ui.template get<RightTag>().selected_paths();
+    selected.insert(selected.end(), on_right.begin(), on_right.end());
+    auto& transfers = ui.template get<TransfersTag>();
+    if (selected.size() != 2) {
+        transfers.tell("Select exactly two files to diff");
+        return;
+    }
+    transfers.start_diff(selected[0], selected[1]);
 }
 
 template <class Tag, class Transfers, class Source>

@@ -165,7 +165,7 @@ target_include_directories(jgui_jtext PUBLIC include PRIVATE src)
 target_link_libraries(jgui_jtext PUBLIC jgui_hardening PRIVATE jgui_warnings)
 
 # Reading and copying on this machine: only a program that does so links it.
-add_library(jgui_files STATIC src/files/read_directory.cpp src/files/copy_job.cpp)
+add_library(jgui_files STATIC src/files/read_directory.cpp src/files/copy_job.cpp src/files/match_job.cpp src/files/count_job.cpp src/files/trash.cpp src/files/read_text.cpp)
 target_include_directories(jgui_files PUBLIC include PRIVATE src)
 target_link_libraries(jgui_files PUBLIC jgui_hardening PRIVATE jgui_warnings)
 
@@ -174,7 +174,7 @@ find_program(JGUI_BASH bash REQUIRED)
 # --- Fuzzing: this preset builds the harnesses and a tiny smoke run of each, and nothing else ---
 if(JGUI_FUZZ)
   enable_testing()
-  foreach(harness utf8 keymap font backend jtext)
+  foreach(harness utf8 keymap font backend jtext line_diff)
     add_executable(fuzz_${harness} tests/fuzz/fuzz_${harness}.cpp)
     target_include_directories(fuzz_${harness} PRIVATE src src/wayland tests)
     target_link_libraries(fuzz_${harness} PRIVATE jgui_wayland jgui_text jgui_warnings)
@@ -315,7 +315,7 @@ set(JGUI_FAKE_SCENARIOS
   viewer_first_frame viewer_section_switch viewer_wheel_scroll viewer_resize viewer_missing_file viewer_malformed_file viewer_refused_symlink viewer_path_not_text viewer_copy_with_no_base viewer_file_in_its_base viewer_65536_rows
   settings_demo_records settings_demo_both_flags settings_demo_no_base
   settings_viewer_items settings_viewer_bad_row settings_viewer_missing_file settings_viewer_only_settings settings_viewer_malformed_file settings_viewer_files_in_its_base
-  files_open_on_the_left files_missing_folder files_copy_and_drag files_several)
+  files_open_on_the_left files_missing_folder files_copy_and_drag files_several files_delete)
 foreach(scenario ${JGUI_FAKE_SCENARIOS})
   add_test(NAME fake_${scenario} COMMAND test_fake_compositor ${scenario})
   set_tests_properties(fake_${scenario} PROPERTIES TIMEOUT 300
@@ -329,7 +329,7 @@ foreach(scenario viewer_first_frame viewer_section_switch viewer_wheel_scroll vi
   set_property(TEST fake_${scenario} APPEND PROPERTY ENVIRONMENT "JGUI_TEST_VIEWER=$<TARGET_FILE:jcppgui-viewer>")
 endforeach()
 # These start the real file manager itself, against the same compositor.
-set_property(TEST fake_files_open_on_the_left fake_files_missing_folder fake_files_copy_and_drag fake_files_several APPEND PROPERTY ENVIRONMENT "JGUI_TEST_FILES=$<TARGET_FILE:jcppgui-files>")
+set_property(TEST fake_files_open_on_the_left fake_files_missing_folder fake_files_copy_and_drag fake_files_several fake_files_delete APPEND PROPERTY ENVIRONMENT "JGUI_TEST_FILES=$<TARGET_FILE:jcppgui-files>")
 # One C call failing at a time, through the real implementation. It goes against the compositor above.
 jgui_test(test_injection)
 target_include_directories(test_injection PRIVATE src src/wayland)
