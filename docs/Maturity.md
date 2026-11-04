@@ -15,7 +15,7 @@
 - `DataGrid`, a read-only typed table with virtual drawing, scroll bars, wheel and smooth scrolling, selection, sorting, column resizing, and each column's font and alignment from buttons in its header. **The automated tests of the buttons, the wait after a press and monospace text run only against the test compositor and headless. The owner has used the grid on a real screen, as noted for the viewer below.**
 - A timer in the event loop, on the monotonic clock, that a widget asks through `TimersDue`. **That an idle program uses no CPU is shown by counting the loop's turns against the test compositor, and has not been measured on a real session.**
 - `jcppgui-viewer`, which shows a redraw monitor's file and a settings record in those grids, one section at a time. **The automated tests run only against the test compositor. On 2026-11-03 the owner used it on a real screen and accepted the grid by eye, which was not a check of each feature.**
-- `jcppgui-files`, two independent trees of local folders side by side, with copy and paste between them and dragging to copy, each file checked by SHA-256, several selected at once, the selection matched by SHA-256 with a popup saying how it came out, what shows compared by size and time, moving to the trash after a count and a question, and a diff of two text files. There is no move, and nothing is removed for good. **It changes real files. Tested on temporary folders, against the test compositor and headless. On 2026-11-04 the owner copied 22 GiB with it on a spindle drive, on a real screen, in about 20 minutes, and it worked, and used matching a selection on one and said it works. Moving to the trash and diffing have not been used on a real screen.**
+- `jcppgui-files`, two independent trees of local folders side by side, with copy and paste between them and dragging to copy, each file checked by SHA-256, several selected at once, the selection matched by SHA-256 with a popup saying how it came out, what shows compared by size and time, moving to the trash after a count and a question, a diff of two text files, Cat, Edit and Touch, and status lines that copy to the clipboard through a sanitizer. There is no move, and nothing is removed for good. **It changes real files. Tested on temporary folders, against the test compositor and headless. On 2026-11-04 the owner copied 22 GiB with it on a spindle drive, on a real screen, in about 20 minutes, and it worked, and used matching a selection on one and said it works. Moving to the trash, diffing, Cat, Touch and the clipboard have not been reported used on a real screen. On 2026-11-04 the owner opened a file with Edit on a real screen, in a real terminal. Cat has only been tested with a stand-in for a terminal, and the clipboard only against the test compositor.**
 - A redraw monitor for development, `jcppgui-demo --redraw-monitor`, which records each frame to a jText file. A file from a live
   `--smoke` run passed jText's own parser and validator, in a throwaway check that is not part of this repository.
 
@@ -156,7 +156,7 @@ Missing: renaming, new folders, replacing a file on request, typing a path, open
   - The memory budget at its byte limit against the real backend, because each frame there is 256 MiB. It is tested on its
     own, in `static_assert`, and the limit on four buffers is tested through the wire.
   - A buffer over 16 MiB is not checked for writes while held, because each check reads the whole file.
-  - The clipboard and everything else not implemented.
+  - Reading from the clipboard, which does not exist, and everything else not implemented.
 
 ## Known limits
 
@@ -177,6 +177,6 @@ Missing: renaming, new folders, replacing a file on request, typing a path, open
 - Scale is fixed at 1, so the window is upscaled on HiDPI outputs.
 - The frame has no maximize or minimize control.
 - A compositor without `cursor-shape-v1` gets no resize cursors, only the drawn arrow.
-- No key repeat, popups, drop-down menus, clipboard, drag and drop, themes or accessibility.
+- No key repeat, real popups (they are drawn inside the window), drop-down menus, reading from the clipboard, drag and drop of data between programs, themes or accessibility.
 - No X11, Windows or macOS, and no C++26 or modules.
 - No CI.

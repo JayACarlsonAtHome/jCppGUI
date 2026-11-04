@@ -169,6 +169,7 @@ private:
 
     constexpr void carry_out_requests() {
         const WindowRequests asked = root_.take_requests();
+        if (asked.copy) backend_.copy_text(asked.copy->serial, asked.copy->text);
         if (asked.move) backend_.begin_move(*asked.move);
         if (asked.resize) backend_.begin_resize(asked.resize->serial, asked.resize->edge);
         if (asked.cursor) show_cursor(*asked.cursor);

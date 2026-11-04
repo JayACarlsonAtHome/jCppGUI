@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <string_view>
 #include <optional>
 #include <string>
 
@@ -53,6 +54,8 @@ public:
     void begin_move(Serial serial) noexcept;
     void begin_resize(Serial serial, ResizeEdge edge) noexcept;
     void set_cursor(CursorShape shape) noexcept;
+    // Offers this text as the clipboard, until something else takes the clipboard. With a compositor that has no clipboard it does nothing.
+    void copy_text(Serial serial, const SafeClipboardText& text);
 
 private:
     WaylandBackend(std::unique_ptr<BackendEventQueue> events,

@@ -27,8 +27,9 @@ match cxxReinterpretCastExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|s
 match cxxNewExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"))
 match cxxDeleteExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"))
 
-# Calls that move raw bytes, outside the named helpers
-match callExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), callee(functionDecl(hasAnyName("::read", "::write", "::recv", "::send", "::fread", "::fwrite", "::readv", "::writev", "::recvfrom", "::sendto", "::sendfile", "::memcpy", "::memmove", "::mmap", "::munmap", "::mprotect"))))
+# Calls that move raw bytes, outside the named helpers. read and write have one exception, src/file_io.hpp, which the owner approved on 2026-11-04: a pipe has no offsets, and it is how a clipboard hands text to another program.
+match callExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), callee(functionDecl(hasAnyName("::recv", "::send", "::fread", "::fwrite", "::readv", "::writev", "::recvfrom", "::sendto", "::sendfile", "::memcpy", "::memmove", "::mmap", "::munmap", "::mprotect"))))
+match callExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), callee(functionDecl(hasAnyName("::read", "::write"))), unless(isExpansionInFileMatching("src/file_io[.]hpp")))
 match callExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), callee(functionDecl(hasAnyName("::pread", "::pwrite", "::pread64", "::pwrite64"))), unless(isExpansionInFileMatching("src/file_io[.]hpp$")))
 match callExpr(isExpansionInFileMatching("/(include/jCppGUI/v001|src|tests|demo)/"), callee(functionDecl(hasAnyName("::sendmsg", "::recvmsg"))), unless(isExpansionInFileMatching("tests/fake_compositor/socket_io[.]hpp$")))
 

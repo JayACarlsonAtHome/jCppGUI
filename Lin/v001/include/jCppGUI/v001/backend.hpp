@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "canvas.hpp"
+#include "clipboard_text.hpp"
 #include "error.hpp"
 #include "events.hpp"
 #include "timer.hpp"
@@ -182,7 +183,7 @@ struct ProbeSink {
 // backend that cannot show that shape leaves it as it is. Only a change is ever asked for.
 template <class B>
 concept Backend = requires(B& backend, const B& constant, detail::ProbeSink& sink, std::optional<MonotonicTime> deadline, Size size, Rect damage,
-                           Serial serial, ResizeEdge edge, CursorShape shape, const Frame<B>& frame, Frame<B>&& taken) {
+                           Serial serial, ResizeEdge edge, CursorShape shape, const Frame<B>& frame, Frame<B>&& taken, const SafeClipboardText& safe_text) {
     { backend.process_pending(sink) } -> std::same_as<std::expected<void, Error>>;
     { backend.wait(sink, deadline) } -> std::same_as<std::expected<void, Error>>;
     { constant.now() } -> std::same_as<MonotonicTime>;
@@ -194,6 +195,7 @@ concept Backend = requires(B& backend, const B& constant, detail::ProbeSink& sin
     { backend.begin_move(serial) } -> std::same_as<void>;
     { backend.begin_resize(serial, edge) } -> std::same_as<void>;
     { backend.set_cursor(shape) } -> std::same_as<void>;
+    { backend.copy_text(serial, safe_text) } -> std::same_as<void>;
 };
 
 }  // namespace jgui::inline v001

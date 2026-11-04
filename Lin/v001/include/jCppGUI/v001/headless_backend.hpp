@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <string_view>
+#include <string>
 #include <span>
 #include <vector>
 
@@ -83,7 +85,13 @@ public:
         ++cursor_requests_;
     }
 
+    constexpr void copy_text(Serial serial, const SafeClipboardText& text) {
+        copied_text_ = text.view();
+        copied_serial_ = serial;
+    }
+
     // --- For tests ---
+    [[nodiscard]] constexpr std::string_view copied_text() const noexcept { return copied_text_; }
     constexpr void advance_time(std::chrono::nanoseconds by) noexcept { time_ = time_.after(by); }
     constexpr void set_display_holding(bool holding) noexcept { display_holding_ = holding; }
     [[nodiscard]] constexpr std::uint32_t pixel(Point p) const {
@@ -106,6 +114,8 @@ private:
     std::size_t presented_{};
     bool display_holding_{};
     std::optional<Serial> move_serial_{};
+    std::string copied_text_{};
+    std::optional<Serial> copied_serial_{};
     std::optional<Serial> resize_serial_{};
     std::optional<ResizeEdge> resize_edge_{};
     std::optional<CursorShape> cursor_{};

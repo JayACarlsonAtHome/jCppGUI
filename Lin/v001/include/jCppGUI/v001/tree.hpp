@@ -10,11 +10,14 @@
 #include <deque>
 #include <expected>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "clipboard_text.hpp"
 #include "message.hpp"
 #include "pool.hpp"
 #include "redraw_points.hpp"
@@ -416,11 +419,18 @@ struct ResizeRequest {
     ResizeEdge edge;
 };
 
+// Text for the clipboard, which has been through the sanitizer, and the serial of a press, without which a compositor refuses.
+struct CopyRequest {
+    Serial serial;
+    SafeClipboardText text;
+};
+
 struct WindowRequests {
     std::optional<Serial> move;  // the serial of the press that started it
     std::optional<ResizeRequest> resize;
     std::optional<CursorShape> cursor{};
     bool close{};
+    std::optional<CopyRequest> copy{};
 };
 
 // The root of a tree. Callbacks receive it as their "u", and can reach only what is public: widgets by tag,
@@ -471,6 +481,19 @@ public:
         requests_.resize = ResizeRequest{serial, edge};
     }
     constexpr void request_close() noexcept { requests_.close = true; }
+    // Sends text through the sanitizer. Clean, it goes to the clipboard, and this answers true. Otherwise nothing goes, this answers false, and it waits as a question for a popup to take. In a window with no such popup it never goes.
+    [[nodiscard]] constexpr bool propose_copy_text(Serial serial, std::string_view text) {
+        ClipboardInspection inspected = inspect_clipboard_text(text);
+        if (inspected.found.none()) {
+            requests_.copy = CopyRequest{serial, std::move(inspected.text)};
+            return true;
+        }
+        clipboard_question_ = ClipboardQuestion{std::move(inspected.text), inspected.found};
+        return false;
+    }
+    [[nodiscard]] constexpr std::optional<ClipboardQuestion> take_clipboard_question() { return std::exchange(clipboard_question_, std::nullopt); }
+    // What a person said to go on with, and only that: it can only be text that has been through the sanitizer.
+    constexpr void copy_after_question(Serial serial, SafeClipboardText text) { requests_.copy = CopyRequest{serial, std::move(text)}; }
     constexpr void request_cursor(CursorShape shape) noexcept { requests_.cursor = shape; }
     // The same, unless something has already asked during this delivery.
     constexpr void suggest_cursor(CursorShape shape) noexcept {
@@ -575,6 +598,7 @@ private:
     children_type children_;
     std::size_t dispatch_depth_{};
     WindowRequests requests_{};
+    std::optional<ClipboardQuestion> clipboard_question_{};
     std::optional<MonotonicTime> wake_{};
     Size size_{};
 };

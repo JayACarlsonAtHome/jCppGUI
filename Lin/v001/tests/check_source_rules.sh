@@ -113,8 +113,10 @@ check "memory mapping" '\b(mmap(64)?|munmap|mremap|msync|mprotect)\b'
 # --- Typed memory meets the OS's untyped byte interface in a few named helpers only ---
 check "positioned file I/O outside its helper" '\bp(read|write)(v2?|64|64v2?)?\b' '^src/file_io\.hpp:?'
 expression='(?:^|[(=,;{}!?:]|&&|\|\||\breturn\b|\belse\b)\s*'
+# The one exception, which the owner approved on 2026-11-04: src/file_io.hpp, for read_stream and write_stream. A pipe has no offsets, and it is how a clipboard hands text to another program.
+check "read or write outside src/file_io.hpp" "$expression(read|write)\s*\(" '^src/file_io\.hpp:?'
 check "byte I/O or a copy of raw bytes outside the named helpers" \
-  "$expression(read|write|recv|send|fread|fwrite|fgets|fputs|fprintf|readv|writev|recvfrom|sendto|recvmmsg|sendmmsg|sendfile|splice|tee|vmsplice|copy_file_range|memcpy|memmove|memccpy|mempcpy|bcopy|wmemcpy|wmemmove)\s*\("
+  "$expression(recv|send|fread|fwrite|fgets|fputs|fprintf|readv|writev|recvfrom|sendto|recvmmsg|sendmmsg|sendfile|splice|tee|vmsplice|copy_file_range|memcpy|memmove|memccpy|mempcpy|bcopy|wmemcpy|wmemmove)\s*\("
 check "descriptor passing outside the socket helper, which the owner approved for tests only" \
   '\b(sendmsg|recvmsg|iovec|msghdr|cmsghdr|CMSG_\w+|SCM_RIGHTS|sockaddr\w*)\b' '^tests/fake_compositor/socket_io\.hpp:?'
 check "a way around the C library" '\bsyscall\s*\(|\basm\b|\b__asm\w*\b|\bdlopen\b|\bdlsym\b|\b__builtin_\w*(mem|str)\w*\b'

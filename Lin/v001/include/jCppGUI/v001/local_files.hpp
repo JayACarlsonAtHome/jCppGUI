@@ -90,10 +90,23 @@ private:
 // A whole regular file, of at most most_diff_file_bytes, without following a link at its name.
 [[nodiscard]] std::expected<std::string, Error> read_text_file(const std::string& path);
 
+// Sets when something last changed to now, and only that: nothing is made, and a link's own time is set, not that of what it points to.
+[[nodiscard]] std::expected<void, Error> touch_local_file(const std::string& path);
+
+// Opens a terminal in this folder running this command, each word of it one argument with no shell between, and returns without waiting. The first terminal that can be started is used: TERMINAL's if that is set,
+// then those in known_terminals. It goes on by itself when this program ends. Refused when no terminal can be started.
+[[nodiscard]] std::expected<void, Error> run_in_local_terminal(const std::string& folder, std::span<const std::string> command);
+
+// What EDITOR says, or nothing.
+[[nodiscard]] std::string local_editor();
+
 struct LocalFiles {
     using CopyJob = LocalCopyJob;
     using MatchJob = LocalMatchJob;
     using CountJob = LocalCountJob;
+    [[nodiscard]] std::expected<void, Error> touch(const std::string& path) const { return touch_local_file(path); }
+    [[nodiscard]] std::string editor() const { return local_editor(); }
+    [[nodiscard]] std::expected<void, Error> run_in_terminal(const std::string& folder, std::span<const std::string> command) const { return run_in_local_terminal(folder, command); }
     [[nodiscard]] std::expected<LocalCountJob, Error> start_count(const std::string& path) const { return start_local_count(path); }
     [[nodiscard]] std::expected<void, Error> move_to_trash(const std::string& path) const { return ::jgui::move_to_trash(path); }
     [[nodiscard]] std::expected<std::string, Error> read_text(const std::string& path) const { return read_text_file(path); }

@@ -131,4 +131,6 @@ void WaylandBackend::begin_resize(Serial serial, ResizeEdge edge) noexcept {
 
 void WaylandBackend::set_cursor(CursorShape shape) noexcept { impl_->core.set_cursor_shape(shape); }
 
+void WaylandBackend::copy_text(Serial serial, const SafeClipboardText& text) { impl_->core.copy_text(detail::WireAccess::number(serial), text.view()); }
+
 }  // namespace jgui::inline v001

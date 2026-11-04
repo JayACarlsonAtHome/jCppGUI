@@ -119,4 +119,26 @@ template <FileElement T>
     });
 }
 
+// One read from a pipe or socket, which has no offsets: how many bytes came, and 0 at its end. Interrupted calls are repeated.
+template <FileElement T>
+[[nodiscard]] std::expected<std::size_t, IoStep> read_stream(int fd, std::span<T> data) {
+    const std::span<std::byte> bytes = std::as_writable_bytes(data);
+    while (true) {
+        const ::ssize_t moved = ::read(fd, bytes.data(), bytes.size());
+        if (moved >= 0) return saturate_to<std::size_t>(moved);
+        if (errno != EINTR) return std::unexpected(IoStep{moved, errno});
+    }
+}
+
+// One write to a pipe or socket: how many bytes went, which may be fewer than given. Interrupted calls are repeated.
+template <FileElement T>
+[[nodiscard]] std::expected<std::size_t, IoStep> write_stream(int fd, std::span<const T> data) {
+    const std::span<const std::byte> bytes = std::as_bytes(data);
+    while (true) {
+        const ::ssize_t moved = ::write(fd, bytes.data(), bytes.size());
+        if (moved >= 0) return saturate_to<std::size_t>(moved);
+        if (errno != EINTR) return std::unexpected(IoStep{moved, errno});
+    }
+}
+
 }  // namespace jgui::inline v001::detail

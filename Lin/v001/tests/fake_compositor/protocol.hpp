@@ -16,7 +16,7 @@ namespace jgui_test::wire {
 
 // What kind of thing an object is. It decides how its requests are read.
 enum class Kind : std::uint8_t {
-    Display, Registry, Callback, Compositor, Shm, ShmPool, Buffer, Surface, Seat, Pointer, Keyboard, WmBase, XdgSurface, Toplevel, CursorShapeManager, CursorShapeDevice,
+    Display, Registry, Callback, Compositor, Shm, ShmPool, Buffer, Surface, Seat, Pointer, Keyboard, WmBase, XdgSurface, Toplevel, CursorShapeManager, CursorShapeDevice, DataDeviceManager, DataDevice, DataSource, DataOffer,
 };
 
 namespace request {
@@ -33,6 +33,10 @@ enum class Keyboard : std::uint16_t { Release = 0 };
 enum class WmBase : std::uint16_t { Destroy = 0, GetXdgSurface = 2, Pong = 3 };
 enum class XdgSurface : std::uint16_t { Destroy = 0, GetToplevel = 1, SetWindowGeometry = 3, AckConfigure = 4 };
 enum class Toplevel : std::uint16_t { Destroy = 0, SetTitle = 2, SetAppId = 3, Move = 5, Resize = 6, SetMinSize = 8 };
+enum class DataDeviceManager : std::uint16_t { CreateDataSource = 0, GetDataDevice = 1 };
+enum class DataSource : std::uint16_t { Offer = 0, Destroy = 1, SetActions = 2 };
+enum class DataDevice : std::uint16_t { StartDrag = 0, SetSelection = 1, Release = 2 };
+enum class DataOffer : std::uint16_t { Accept = 0, Receive = 1, Destroy = 2, Finish = 3, SetActions = 4 };
 enum class CursorShapeManager : std::uint16_t { Destroy = 0, GetPointer = 1, GetTabletToolV2 = 2 };
 enum class CursorShapeDevice : std::uint16_t { Destroy = 0, SetShape = 1 };
 }  // namespace request
@@ -105,6 +109,10 @@ namespace event {
 [[nodiscard]] constexpr std::vector<std::byte> pointer_axis_source(ObjectId pointer, std::uint32_t source) { return MessageWriter{pointer, 6}.u32(source).finish(); }
 [[nodiscard]] constexpr std::vector<std::byte> pointer_axis_stop(ObjectId pointer, std::uint32_t time, std::uint32_t axis) { return MessageWriter{pointer, 7}.u32(time).u32(axis).finish(); }
 [[nodiscard]] constexpr std::vector<std::byte> pointer_axis_discrete(ObjectId pointer, std::uint32_t axis, std::int32_t steps) { return MessageWriter{pointer, 8}.u32(axis).i32(steps).finish(); }
+[[nodiscard]] constexpr std::vector<std::byte> data_device_data_offer(ObjectId device, ObjectId offer) { return MessageWriter{device, 0}.object(offer).finish(); }
+[[nodiscard]] constexpr std::vector<std::byte> data_device_selection(ObjectId device, ObjectId offer) { return MessageWriter{device, 5}.object(offer).finish(); }
+[[nodiscard]] constexpr std::vector<std::byte> data_source_send(ObjectId source, std::string_view type) { return MessageWriter{source, 1}.string(type).finish(); }
+[[nodiscard]] constexpr std::vector<std::byte> data_source_cancelled(ObjectId source) { return MessageWriter{source, 2}.finish(); }
 [[nodiscard]] constexpr std::vector<std::byte> keyboard_keymap(ObjectId keyboard, std::uint32_t format, std::uint32_t size) {
     return MessageWriter{keyboard, 0}.u32(format).u32(size).finish();
 }

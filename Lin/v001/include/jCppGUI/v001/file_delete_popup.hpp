@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "button.hpp"
+#include "copy_line.hpp"
 #include "file_transfers.hpp"
 #include "label.hpp"
 #include "popup_layer.hpp"
@@ -69,7 +70,7 @@ template <class Tag, class Transfers>
 class FileDeletePopup {
     using Heading = Label<FileDeletePopupHeading<Tag>>;
     using Count = Label<FileDeletePopupCount<Tag>>;
-    using What = Label<FileDeletePopupWhat<Tag>>;
+    using What = CopyLine<FileDeletePopupWhat<Tag>>;
     using Warning = Label<FileDeletePopupWarning<Tag>>;
     using CancelButton = Button<FileDeletePopupCancel<Tag>, detail::FileDeletePopupSayNo<Tag>>;
     using ConfirmButton = Button<FileDeletePopupConfirm<Tag>, detail::FileDeletePopupSayYes<Tag>>;

@@ -53,6 +53,10 @@ static_assert(std::to_underlying(request::Surface::Frame) == WL_SURFACE_FRAME &&
 static_assert(std::to_underlying(request::Seat::GetPointer) == WL_SEAT_GET_POINTER && std::to_underlying(request::Seat::GetKeyboard) == WL_SEAT_GET_KEYBOARD && std::to_underlying(request::Seat::GetTouch) == WL_SEAT_GET_TOUCH && std::to_underlying(request::Seat::Release) == WL_SEAT_RELEASE);
 static_assert(std::to_underlying(request::Pointer::SetCursor) == WL_POINTER_SET_CURSOR && std::to_underlying(request::Pointer::Release) == WL_POINTER_RELEASE);
 static_assert(std::to_underlying(request::Keyboard::Release) == WL_KEYBOARD_RELEASE);
+static_assert(std::to_underlying(request::DataDeviceManager::CreateDataSource) == WL_DATA_DEVICE_MANAGER_CREATE_DATA_SOURCE && std::to_underlying(request::DataDeviceManager::GetDataDevice) == WL_DATA_DEVICE_MANAGER_GET_DATA_DEVICE);
+static_assert(std::to_underlying(request::DataDevice::SetSelection) == WL_DATA_DEVICE_SET_SELECTION && std::to_underlying(request::DataDevice::Release) == WL_DATA_DEVICE_RELEASE);
+static_assert(std::to_underlying(request::DataSource::Offer) == WL_DATA_SOURCE_OFFER && std::to_underlying(request::DataSource::Destroy) == WL_DATA_SOURCE_DESTROY);
+static_assert(std::to_underlying(request::DataOffer::Destroy) == WL_DATA_OFFER_DESTROY);
 static_assert(std::to_underlying(request::WmBase::Destroy) == XDG_WM_BASE_DESTROY && std::to_underlying(request::WmBase::GetXdgSurface) == XDG_WM_BASE_GET_XDG_SURFACE && std::to_underlying(request::WmBase::Pong) == XDG_WM_BASE_PONG);
 static_assert(std::to_underlying(request::XdgSurface::Destroy) == XDG_SURFACE_DESTROY && std::to_underlying(request::XdgSurface::GetToplevel) == XDG_SURFACE_GET_TOPLEVEL);
 static_assert(std::to_underlying(request::XdgSurface::SetWindowGeometry) == XDG_SURFACE_SET_WINDOW_GEOMETRY && std::to_underlying(request::XdgSurface::AckConfigure) == XDG_SURFACE_ACK_CONFIGURE);
@@ -135,6 +139,8 @@ struct Failing {
     [[nodiscard]] static wp_cursor_shape_device_v1* get_cursor_device(wp_cursor_shape_manager_v1* manager, wl_pointer* pointer) noexcept {
         return Fails == Site::CursorDevice ? nullptr : LibWayland::get_cursor_device(manager, pointer);
     }
+    [[nodiscard]] static wl_data_device* get_data_device(wl_data_device_manager* manager, wl_seat* seat) noexcept { return LibWayland::get_data_device(manager, seat); }
+    [[nodiscard]] static wl_data_source* create_data_source(wl_data_device_manager* manager) noexcept { return LibWayland::create_data_source(manager); }
     [[nodiscard]] static wl_shm_pool* create_pool(wl_shm* shm, int fd, std::int32_t bytes) noexcept { return Fails == Site::Pool ? nullptr : LibWayland::create_pool(shm, fd, bytes); }
     [[nodiscard]] static wl_buffer* create_buffer(wl_shm_pool* pool, std::int32_t width, std::int32_t height, std::int32_t stride) noexcept {
         return Fails == Site::Buffer ? nullptr : LibWayland::create_buffer(pool, width, height, stride);

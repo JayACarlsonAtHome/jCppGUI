@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "button.hpp"
+#include "copy_line.hpp"
 #include "datagrid.hpp"
 #include "file_listing.hpp"
 #include "file_transfers.hpp"
@@ -90,6 +91,12 @@ template <class Pane>
 struct FilePanePasteButton;
 template <class Pane>
 struct FilePaneDeleteButton;
+template <class Pane>
+struct FilePaneCatButton;
+template <class Pane>
+struct FilePaneTouchButton;
+template <class Pane>
+struct FilePaneEditButton;
 
 inline constexpr std::size_t file_name_column = 0;
 inline constexpr std::size_t file_size_column = 1;
@@ -142,6 +149,28 @@ struct FilePaneDelete {
     }
 };
 
+template <class Pane>
+struct FilePaneCat {
+    template <class U>
+    constexpr void operator()(U& u) const {
+        u.template get<Pane>().open_selected_in_terminal(u, TerminalTool::Cat);
+    }
+};
+template <class Pane>
+struct FilePaneEdit {
+    template <class U>
+    constexpr void operator()(U& u) const {
+        u.template get<Pane>().open_selected_in_terminal(u, TerminalTool::Edit);
+    }
+};
+template <class Pane>
+struct FilePaneTouch {
+    template <class U>
+    constexpr void operator()(U& u) const {
+        u.template get<Pane>().touch_selected(u);
+    }
+};
+
 [[nodiscard]] constexpr std::string count_of_things(std::size_t count) {
     std::string text = decimal_text(count, false);
     text.append(count == 1 ? " thing" : " things");
@@ -157,18 +186,22 @@ class FilePane {
     using CopyButton = Button<FilePaneCopyButton<Tag>, detail::FilePaneCopy<Tag>>;
     using PasteButton = Button<FilePanePasteButton<Tag>, detail::FilePanePaste<Tag>>;
     using DeleteButton = Button<FilePaneDeleteButton<Tag>, detail::FilePaneDelete<Tag>>;
-    using PathLabel = Label<FilePanePath<Tag>>;
-    using StatusLabel = Label<FilePaneStatus<Tag>>;
+    using CatButton = Button<FilePaneCatButton<Tag>, detail::FilePaneCat<Tag>>;
+    using TouchButton = Button<FilePaneTouchButton<Tag>, detail::FilePaneTouch<Tag>>;
+    using EditButton = Button<FilePaneEditButton<Tag>, detail::FilePaneEdit<Tag>>;
+    using PathLabel = CopyLine<FilePanePath<Tag>>;
+    using StatusLabel = CopyLine<FilePaneStatus<Tag>>;
     using Grid = FileGrid<Tag>;
 
 public:
     using tag = Tag;
-    using children_type = std::tuple<UpButton, OpenButton, ReloadButton, CopyButton, PasteButton, DeleteButton, PathLabel, StatusLabel, Grid>;
+    using children_type = std::tuple<UpButton, OpenButton, ReloadButton, CopyButton, PasteButton, DeleteButton, CatButton, TouchButton, EditButton, PathLabel, StatusLabel, Grid>;
 
     constexpr explicit FilePane(Source source)
         : source_{std::move(source)},
           children_{UpButton{"Up", detail::FilePaneGoUp<Tag>{}}, OpenButton{"Show this folder", detail::FilePaneOpenSelected<Tag>{}}, ReloadButton{"Reload", detail::FilePaneReload<Tag>{}},
                     CopyButton{"Copy", detail::FilePaneCopy<Tag>{}}, PasteButton{"Paste", detail::FilePanePaste<Tag>{}}, DeleteButton{"Delete", detail::FilePaneDelete<Tag>{}},
+                    CatButton{"Cat", detail::FilePaneCat<Tag>{}}, TouchButton{"Touch", detail::FilePaneTouch<Tag>{}}, EditButton{"Edit", detail::FilePaneEdit<Tag>{}},
                     PathLabel{"No folder"}, StatusLabel{"Nothing read yet"}, Grid{}} {
         // The column is there, so this is not refused.
         static_cast<void>(grid().set_column_align(file_size_column, ColumnAlign::AtRight));
@@ -297,6 +330,35 @@ public:
         ui.template get<Transfers>().start_deleting(std::move(paths));
     }
 
+    // Cat and Edit: what is selected on this side, all of it files or links to them. A folder or a pipe is refused, because a terminal would only sit and wait on one.
+    template <class U>
+    constexpr void open_selected_in_terminal(U& ui, TerminalTool tool) {
+        std::vector<std::string> paths;
+        for (const std::uint32_t row : grid().selected_rows()) {
+            if (rows()[row].kind != FileKind::File && rows()[row].kind != FileKind::Link) {
+                say("Only files can be shown or edited, and " + rows()[row].name.text + " is not one");
+                return;
+            }
+            paths.push_back(path_of(row));
+        }
+        if (paths.empty()) {
+            say("Select a file first");
+            return;
+        }
+        ui.template get<Transfers>().open_in_terminal(tool, paths);
+    }
+
+    // Touch: what is selected on this side, folders too, but not what is in them.
+    template <class U>
+    constexpr void touch_selected(U& ui) {
+        const std::vector<std::string> paths = selected_paths();
+        if (paths.empty()) {
+            say("Select something to touch first");
+            return;
+        }
+        ui.template get<Transfers>().touch(paths);
+    }
+
     // What is selected, in tree order. Something inside a selected folder is left out, because it goes with that folder.
     [[nodiscard]] constexpr std::vector<std::string> selected_paths() const {
         std::vector<std::string> paths;
@@ -346,6 +408,9 @@ public:
         place_button(std::get<CopyButton>(children_));
         place_button(std::get<PasteButton>(children_));
         place_button(std::get<DeleteButton>(children_));
+        place_button(std::get<CatButton>(children_));
+        place_button(std::get<TouchButton>(children_));
+        place_button(std::get<EditButton>(children_));
         if (!room) return std::unexpected(std::move(room.error()));
         std::expected<Rect, Error> below{Rect{Point{area.left(), top_after(strip_.bottom())}, Size{area.width(), area.height() - strip_.height()}}};
         const auto place_below = [&](auto& part) {

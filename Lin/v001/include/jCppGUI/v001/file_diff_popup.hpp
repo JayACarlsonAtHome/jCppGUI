@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "button.hpp"
+#include "copy_line.hpp"
 #include "datagrid.hpp"
 #include "file_transfers.hpp"
 #include "label.hpp"
@@ -58,9 +59,9 @@ struct FileDiffPopupClose {
 
 template <class Tag, class Transfers>
 class FileDiffPopup {
-    using Heading = Label<FileDiffPopupHeading<Tag>>;
-    using Detail = Label<FileDiffPopupDetail<Tag>>;
-    using RightPath = Label<FileDiffPopupRight<Tag>>;
+    using Heading = CopyLine<FileDiffPopupHeading<Tag>>;
+    using Detail = CopyLine<FileDiffPopupDetail<Tag>>;
+    using RightPath = CopyLine<FileDiffPopupRight<Tag>>;
     using Grid = DataGrid<FileDiffPopupGrid<Tag>, DiffRow, NoGridMessage, Column<"Left", &DiffRow::left, 70>, Column<"Right", &DiffRow::right, 70>, Column<"Only in", &DiffRow::only_in, 70>, Column<"Line", &DiffRow::text, 1300>>;
     using CloseButton = Button<FileDiffPopupButton<Tag>, detail::FileDiffPopupClose<Tag>>;
 

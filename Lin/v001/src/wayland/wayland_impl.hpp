@@ -5,7 +5,9 @@
 //          template parameter, so a test can make it fail with no branch here for that.
 #pragma once
 
+#include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
@@ -58,6 +60,7 @@ constexpr std::uint32_t compositor_version = 4;  // for wl_surface.damage_buffer
 constexpr std::uint32_t shm_version = 1;
 constexpr std::uint32_t wm_base_version = 2;
 constexpr std::uint32_t seat_version = 5;  // for release requests and pointer frames
+constexpr std::uint32_t data_device_manager_version = 3;  // for wl_data_device.release, and every event is answered
 constexpr std::uint32_t cursor_shape_version = 1;  // every shape used here is in version 1
 
 constexpr std::size_t max_wire_string_bytes = 4096;  // libwayland refuses a longer message
@@ -88,6 +91,10 @@ using Surface = CResource<wl_surface, wl_surface_destroy>;
 using XdgSurface = CResource<xdg_surface, xdg_surface_destroy>;
 using Toplevel = CResource<xdg_toplevel, xdg_toplevel_destroy>;
 using SyncCallback = CResource<wl_callback, wl_callback_destroy>;
+using DataDeviceManager = CResource<wl_data_device_manager, wl_data_device_manager_destroy>;
+using DataDevice = CResource<wl_data_device, wl_data_device_release>;
+using DataSource = CResource<wl_data_source, wl_data_source_destroy>;
+using DataOffer = CResource<wl_data_offer, wl_data_offer_destroy>;
 using CursorShapeManager = CResource<wp_cursor_shape_manager_v1, wp_cursor_shape_manager_v1_destroy>;
 using CursorShapeDevice = CResource<wp_cursor_shape_device_v1, wp_cursor_shape_device_v1_destroy>;
 
@@ -114,6 +121,8 @@ struct LibWayland {
     [[nodiscard]] static wp_cursor_shape_device_v1* get_cursor_device(wp_cursor_shape_manager_v1* manager, wl_pointer* pointer) noexcept {
         return wp_cursor_shape_manager_v1_get_pointer(manager, pointer);
     }
+    [[nodiscard]] static wl_data_device* get_data_device(wl_data_device_manager* manager, wl_seat* seat) noexcept { return wl_data_device_manager_get_data_device(manager, seat); }
+    [[nodiscard]] static wl_data_source* create_data_source(wl_data_device_manager* manager) noexcept { return wl_data_device_manager_create_data_source(manager); }
     [[nodiscard]] static wl_shm_pool* create_pool(wl_shm* shm, int fd, std::int32_t bytes) noexcept { return wl_shm_create_pool(shm, fd, bytes); }
     [[nodiscard]] static wl_buffer* create_buffer(wl_shm_pool* pool, std::int32_t width, std::int32_t height, std::int32_t stride) noexcept {
         return wl_shm_pool_create_buffer(pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
@@ -245,6 +254,11 @@ struct GlobalInterface<wl_seat> {
 };
 
 template <>
+struct GlobalInterface<wl_data_device_manager> {
+    static constexpr const wl_interface* value = &wl_data_device_manager_interface;
+};
+
+template <>
 struct GlobalInterface<wp_cursor_shape_manager_v1> {
     static constexpr const wl_interface* value = &wp_cursor_shape_manager_v1_interface;
 };
@@ -276,6 +290,30 @@ struct BasicWaylandImpl {
     void on_toplevel_capabilities(xdg_toplevel*, wl_array*) noexcept {}
     void on_seat_capabilities(wl_seat* object, std::uint32_t capabilities) noexcept;
     void on_seat_name(wl_seat*, const char*) noexcept {}
+
+    // The clipboard, for giving only: nothing here reads what others offer, so no descriptor or text from another program is ever taken in. An offer is held only until the event that names it has come and gone: libwayland
+    // loses its count of an object destroyed while an event already read still names it, and that would leak with every change of the clipboard.
+    void on_data_offer(wl_data_device*, wl_data_offer* offer) noexcept { held_offer.reset(offer); }
+    void on_data_enter(wl_data_device*, std::uint32_t, wl_surface*, wl_fixed_t, wl_fixed_t, wl_data_offer*) noexcept { held_offer.reset(); }
+    void on_data_leave(wl_data_device*) noexcept { held_offer.reset(); }
+    void on_data_motion(wl_data_device*, std::uint32_t, wl_fixed_t, wl_fixed_t) noexcept {}
+    void on_data_drop(wl_data_device*) noexcept { held_offer.reset(); }
+    void on_data_selection(wl_data_device*, wl_data_offer*) noexcept { held_offer.reset(); }
+    void on_source_target(wl_data_source*, const char*) noexcept {}
+    void on_source_send(wl_data_source*, const char*, std::int32_t fd) noexcept;
+    void on_source_cancelled(wl_data_source* object) noexcept {
+        if (data_source.get() == object) data_source.reset();
+    }
+    void on_source_drop_performed(wl_data_source*) noexcept {}
+    void on_source_finished(wl_data_source*) noexcept {}
+    void on_source_action(wl_data_source*, std::uint32_t) noexcept {}
+    void make_data_device() noexcept;
+    void forget_clipboard() noexcept {
+        held_offer.reset();
+        data_source.reset();
+        data_device.reset();
+    }
+    void copy_text(std::uint32_t serial, std::string_view text);
     void on_pointer_enter(wl_pointer* object, std::uint32_t serial, wl_surface*, wl_fixed_t x, wl_fixed_t y) noexcept;
     void on_pointer_leave(wl_pointer*, std::uint32_t, wl_surface*) noexcept {
         enter_serial.reset();
@@ -358,6 +396,13 @@ struct BasicWaylandImpl {
     WmBase wm_base{};
     Seat seat{};
     std::uint32_t seat_name{};
+    // Optional. These go before the seat. The manager has no request of its own to end it.
+    DataDeviceManager data_manager{};
+    std::uint32_t data_manager_name{};
+    DataDevice data_device{};
+    DataSource data_source{};
+    DataOffer held_offer{};
+    std::string clipboard_text{};
     // Optional, so the drawn arrow below stays for a compositor without it. A device goes before the pointer it belongs
     // to, and the manager after both, which this order gives.
     CursorShapeManager cursor_shapes{};
@@ -420,6 +465,24 @@ struct Listeners {
     static constexpr Seat seat{{
         .capabilities = Seat::template on<&Impl::on_seat_capabilities>,
         .name = Seat::template on<&Impl::on_seat_name>,
+    }};
+    using DataDevice = OwnedListener<Impl, wl_data_device_listener>;
+    static constexpr DataDevice data_device{{
+        .data_offer = DataDevice::template on<&Impl::on_data_offer>,
+        .enter = DataDevice::template on<&Impl::on_data_enter>,
+        .leave = DataDevice::template on<&Impl::on_data_leave>,
+        .motion = DataDevice::template on<&Impl::on_data_motion>,
+        .drop = DataDevice::template on<&Impl::on_data_drop>,
+        .selection = DataDevice::template on<&Impl::on_data_selection>,
+    }};
+    using DataSource = OwnedListener<Impl, wl_data_source_listener>;
+    static constexpr DataSource data_source{{
+        .target = DataSource::template on<&Impl::on_source_target>,
+        .send = DataSource::template on<&Impl::on_source_send>,
+        .cancelled = DataSource::template on<&Impl::on_source_cancelled>,
+        .dnd_drop_performed = DataSource::template on<&Impl::on_source_drop_performed>,
+        .dnd_finished = DataSource::template on<&Impl::on_source_finished>,
+        .action = DataSource::template on<&Impl::on_source_action>,
     }};
     using Pointer = OwnedListener<Impl, wl_pointer_listener>;
     static constexpr Pointer pointer{{
@@ -484,12 +547,64 @@ void BasicWaylandImpl<Api>::on_global(wl_registry* object, std::uint32_t name, c
         seat_name = name;
         if (!Api::template listen<wl_seat_add_listener>(seat.get(), Listeners<Api>::seat, *this))
             fail(ErrorCode::System, "the wl_seat listener was refused");
+        make_data_device();
+    } else if (kind == wl_data_device_manager_interface.name && !data_manager && version >= data_device_manager_version) {
+        // A null here only means no clipboard, which is optional.
+        data_manager.reset(Api::template bind<wl_data_device_manager>(object, name, data_device_manager_version));
+        data_manager_name = name;
+        make_data_device();
     } else if (kind == wp_cursor_shape_manager_v1_interface.name && !cursor_shapes) {
         // A null here only means no shapes: this protocol is optional, so the drawn arrow goes on being used.
         cursor_shapes.reset(Api::template bind<wp_cursor_shape_manager_v1>(object, name, cursor_shape_version));
         cursor_shapes_name = name;
         make_cursor_device();
     }
+}
+
+// Needs both the manager and the seat, which can arrive in either order.
+template <class Api>
+void BasicWaylandImpl<Api>::make_data_device() noexcept {
+    if (!data_manager || !seat || data_device) return;
+    data_device.reset(Api::get_data_device(data_manager.get(), seat.get()));
+    if (data_device && !Api::template listen<wl_data_device_add_listener>(data_device.get(), Listeners<Api>::data_device, *this)) fail(ErrorCode::System, "the wl_data_device listener was refused");
+}
+
+template <class Api>
+void BasicWaylandImpl<Api>::copy_text(std::uint32_t serial, std::string_view text) {
+    if (!data_manager || !data_device) return;
+    DataSource made{Api::create_data_source(data_manager.get())};
+    if (!made) return;
+    if (!Api::template listen<wl_data_source_add_listener>(made.get(), Listeners<Api>::data_source, *this)) {
+        fail(ErrorCode::System, "the wl_data_source listener was refused");
+        return;
+    }
+    for (const char* type : {"text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT"}) wl_data_source_offer(made.get(), type);
+    clipboard_text = text;
+    wl_data_device_set_selection(data_device.get(), made.get(), serial);
+    // After the new one is the selection, so the compositor never sees a moment with none.
+    data_source = std::move(made);
+}
+
+// Whichever text type was asked for, it is the same UTF-8. This runs under libwayland, so it may never wait: the descriptor is set not to, and text this short fits an empty pipe in one write. A reader that has already
+// gone would raise SIGPIPE, which by default would end the whole program, so that signal is held off this thread for the write and any it raised is taken back.
+template <class Api>
+void BasicWaylandImpl<Api>::on_source_send(wl_data_source*, const char*, std::int32_t fd) noexcept {
+    const UniqueFd pipe{fd};
+    const int flags = ::fcntl(pipe.get(), F_GETFL);
+    if (flags < 0 || ::fcntl(pipe.get(), F_SETFL, flags | O_NONBLOCK) != 0) return;
+    sigset_t only_pipe{};
+    sigset_t before{};
+    static_cast<void>(::sigemptyset(&only_pipe));
+    static_cast<void>(::sigaddset(&only_pipe, SIGPIPE));
+    if (::pthread_sigmask(SIG_BLOCK, &only_pipe, &before) != 0) return;
+    sigset_t already{};
+    const bool was_pending = ::sigpending(&already) == 0 && ::sigismember(&already, SIGPIPE) == 1;
+    static_cast<void>(write_stream<char>(pipe.get(), std::span<const char>{clipboard_text}));
+    if (!was_pending) {
+        const timespec now{};
+        static_cast<void>(::sigtimedwait(&only_pipe, nullptr, &now));
+    }
+    static_cast<void>(::pthread_sigmask(SIG_SETMASK, &before, nullptr));
 }
 
 // Needs both the manager and the pointer, which can arrive in either order.
@@ -520,7 +635,12 @@ void BasicWaylandImpl<Api>::on_global_remove(wl_registry*, std::uint32_t name) n
         // No shape can be asked for now, so a pointer already here goes back to the drawn arrow.
         if (pointer && enter_serial && cursor_surface) wl_pointer_set_cursor(pointer.get(), *enter_serial, cursor_surface.get(), 0, 0);
     }
+    if (data_manager && name == data_manager_name) {
+        forget_clipboard();
+        data_manager.reset();
+    }
     if (seat && name == seat_name) {
+        forget_clipboard();
         forget_pointer();
         keyboard.reset();
         xkb_state_object.reset();

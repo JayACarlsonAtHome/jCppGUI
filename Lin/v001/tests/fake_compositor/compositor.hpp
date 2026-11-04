@@ -51,6 +51,7 @@ struct GlobalSet {
     bool seat{true};
     std::uint32_t seat_version{5};
     bool cursor_shape{true};
+    bool data_device{true};
 };
 
 inline constexpr std::uint32_t compositor_name = 1;
@@ -58,6 +59,7 @@ inline constexpr std::uint32_t shm_name = 2;
 inline constexpr std::uint32_t wm_base_name = 3;
 inline constexpr std::uint32_t seat_name = 4;
 inline constexpr std::uint32_t cursor_shape_name = 5;
+inline constexpr std::uint32_t data_device_manager_name = 6;
 
 // What a script can hear about. Each is its own type, and a script overloads on() for those it wants.
 struct SeatBound {};
@@ -98,6 +100,12 @@ struct Idle {
     std::size_t times{};  // how many quiet spells there have been in a row
 };
 struct ClientGone {};
+// The client asked for its data source to be the clipboard.
+struct SelectionSet {
+    ObjectId source;
+    std::uint32_t serial{};
+};
+struct SourceDestroyed {};
 
 // A stream of bytes is enough to tell whether a client wrote to a file it should not have.
 [[nodiscard]] constexpr std::uint64_t fnv1a(std::span<const std::uint8_t> bytes) noexcept {
@@ -208,6 +216,11 @@ public:
     [[nodiscard]] std::optional<ObjectId> toplevel() const noexcept { return toplevel_; }
     [[nodiscard]] std::size_t commits_with_buffer() const noexcept { return commits_with_buffer_; }
     [[nodiscard]] std::optional<ObjectId> cursor_manager() const noexcept { return cursor_manager_; }
+    [[nodiscard]] std::optional<ObjectId> data_device() const noexcept { return data_device_; }
+    [[nodiscard]] const std::vector<std::string>& offered_types() const noexcept { return offered_types_; }
+    [[nodiscard]] std::size_t offers_destroyed() const noexcept { return offers_destroyed_; }
+    // An object the compositor itself makes, whose id comes from its own range and so is not one a client may choose.
+    void add_server_object(ObjectId id, Kind kind) { objects_.insert_or_assign(id.value, kind); }
     [[nodiscard]] std::optional<ObjectId> cursor_device() const noexcept { return cursor_device_; }
     [[nodiscard]] const std::vector<std::uint32_t>& shapes() const noexcept { return shapes_; }
     [[nodiscard]] std::size_t set_cursors() const noexcept { return set_cursors_; }
@@ -235,7 +248,7 @@ public:
     // After an orderly end, nothing with a destroy request may be left. These have no destroy request of their own.
     void check_teardown() {
         for (const auto& [id, kind] : objects_) {
-            if (kind != Kind::Display && kind != Kind::Registry && kind != Kind::Compositor && kind != Kind::Shm)
+            if (kind != Kind::Display && kind != Kind::Registry && kind != Kind::Compositor && kind != Kind::Shm && kind != Kind::DataDeviceManager)
                 violation("left alive when the client ended: object " + std::to_string(id) + " of kind " + std::to_string(static_cast<int>(kind)));
         }
     }
@@ -337,6 +350,7 @@ public:
         if (globals_.wm_base) queue(event::global(registry_id, wm_base_name, "xdg_wm_base", 2));
         if (globals_.seat) queue(event::global(registry_id, seat_name, "wl_seat", globals_.seat_version));
         if (globals_.cursor_shape) queue(event::global(registry_id, cursor_shape_name, "wp_cursor_shape_manager_v1", 1));
+        if (globals_.data_device) queue(event::global(registry_id, data_device_manager_name, "wl_data_device_manager", 3));
     }
 
     struct PendingFd {
@@ -371,6 +385,9 @@ public:
     std::optional<ObjectId> xdg_surface_{};
     std::optional<ObjectId> toplevel_{};
     std::optional<ObjectId> cursor_manager_{};
+    std::optional<ObjectId> data_device_{};
+    std::vector<std::string> offered_types_{};
+    std::size_t offers_destroyed_{};
     std::optional<ObjectId> cursor_device_{};
     std::optional<std::uint32_t> enter_serial_{};
     std::vector<std::uint32_t> shapes_{};
@@ -592,6 +609,10 @@ private:
             case Kind::Toplevel: on_toplevel(header, reader); return;
             case Kind::CursorShapeManager: on_cursor_manager(header, reader); return;
             case Kind::CursorShapeDevice: on_cursor_device(header, reader); return;
+            case Kind::DataDeviceManager: on_data_manager(header, reader); return;
+            case Kind::DataDevice: on_data_device(header, reader); return;
+            case Kind::DataSource: on_data_source(header, reader); return;
+            case Kind::DataOffer: on_data_offer(header, reader); return;
             case Kind::Callback:
             default: unexpected("an object with no requests", header.opcode); return;
         }
@@ -652,6 +673,7 @@ private:
             session_.cursor_manager_ = id;
             return;
         }
+        if (bound(data_device_manager_name, "wl_data_device_manager", 3, Kind::DataDeviceManager)) return;
         session_.violation("a bind of a global that was not announced: " + interface);
     }
 
@@ -827,6 +849,78 @@ private:
         session_.keyboard_.reset();
         session_.remove_object(header.object);
         tell(KeyboardReleased{});
+    }
+
+    void on_data_manager(const Header& header, MessageReader& reader) {
+        switch (static_cast<request::DataDeviceManager>(header.opcode)) {
+            case request::DataDeviceManager::CreateDataSource: {
+                const auto args = session_.arguments<ObjectId>(reader, "wl_data_device_manager.create_data_source");
+                if (!args) return;
+                session_.add_object(std::get<0>(*args), Kind::DataSource);
+                return;
+            }
+            case request::DataDeviceManager::GetDataDevice: {
+                const auto args = session_.arguments<ObjectId, ObjectId>(reader, "wl_data_device_manager.get_data_device");
+                if (!args) return;
+                const auto [device, seat] = *args;
+                if (!session_.seat_ || session_.seat_->value != seat.value) session_.violation("a data device for something other than the seat");
+                if (session_.data_device_) session_.violation("a second data device");
+                session_.add_object(device, Kind::DataDevice);
+                session_.data_device_ = device;
+                return;
+            }
+            default: unexpected("wl_data_device_manager", header.opcode); return;
+        }
+    }
+
+    void on_data_device(const Header& header, MessageReader& reader) {
+        switch (static_cast<request::DataDevice>(header.opcode)) {
+            case request::DataDevice::SetSelection: {
+                const auto args = session_.arguments<ObjectId, std::uint32_t>(reader, "wl_data_device.set_selection");
+                if (!args) return;
+                const auto [source, serial] = *args;
+                if (serial == 0 || serial > session_.serial_) session_.violation("a selection with a serial never given");
+                if (session_.kind_of(source) != Kind::DataSource) session_.violation("a selection that is not a data source");
+                tell(SelectionSet{source, serial});
+                return;
+            }
+            case request::DataDevice::Release:
+                if (!session_.arguments<>(reader, "wl_data_device.release")) return;
+                session_.data_device_.reset();
+                session_.remove_object(header.object);
+                return;
+            case request::DataDevice::StartDrag:
+            default: unexpected("wl_data_device: this client never starts a drag of data", header.opcode); return;
+        }
+    }
+
+    void on_data_source(const Header& header, MessageReader& reader) {
+        switch (static_cast<request::DataSource>(header.opcode)) {
+            case request::DataSource::Offer: {
+                const auto args = session_.arguments<std::string>(reader, "wl_data_source.offer");
+                if (!args) return;
+                session_.offered_types_.push_back(std::get<0>(*args));
+                return;
+            }
+            case request::DataSource::Destroy:
+                if (!session_.arguments<>(reader, "wl_data_source.destroy")) return;
+                session_.remove_object(header.object);
+                tell(SourceDestroyed{});
+                return;
+            case request::DataSource::SetActions:
+            default: unexpected("wl_data_source", header.opcode); return;
+        }
+    }
+
+    // An offer from elsewhere: this client takes nothing from one, so all it may do is destroy it.
+    void on_data_offer(const Header& header, MessageReader& reader) {
+        if (static_cast<request::DataOffer>(header.opcode) != request::DataOffer::Destroy) {
+            session_.violation("a client that only gives to the clipboard used what another offered");
+            return;
+        }
+        if (!session_.arguments<>(reader, "wl_data_offer.destroy")) return;
+        ++session_.offers_destroyed_;
+        session_.objects_.erase(header.object.value);  // made by the compositor, so no delete_id goes back
     }
 
     void on_cursor_manager(const Header& header, MessageReader& reader) {

@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 
+#include "jCppGUI/v001/file_clipboard_popup.hpp"
 #include "jCppGUI/v001/file_delete_popup.hpp"
 #include "jCppGUI/v001/file_diff_popup.hpp"
 #include "jCppGUI/v001/file_match_popup.hpp"
@@ -28,6 +29,8 @@ struct DiffLayer;
 struct MatchPopup;
 struct DeletePopup;
 struct DiffPopup;
+struct ClipboardLayer;
+struct ClipboardPopup;
 
 using StartFolder = std::expected<std::string, jgui::Error>;
 
@@ -48,9 +51,10 @@ template <jgui::FileSource Source>
     start_in(right, right_folder);
     auto bar = jgui::menu_bar(jgui::button<CompareButton>("Compare", [](auto& u) -> void { jgui::compare_panes<LeftPane, RightPane, Transfers>(u); }),
                               jgui::button<DiffButton>("Diff", [](auto& u) -> void { jgui::diff_panes<LeftPane, RightPane, Transfers>(u); }));
-    // The transfers come first in the tree, so what they finish is seen by both panes and each popup in the same turn. Only one thing goes at a time, so only one popup is ever open.
+    // The transfers come first in the tree, so what they finish is seen by both panes and each popup in the same turn. Only one thing goes at a time, so only one of those popups is open, with the clipboard's on top of it, because a line inside a popup can be copied too.
     auto content = jgui::popup_layer<DiffLayer>(jgui::FileDiffPopup<DiffPopup, Transfers>{}, std::move(bar), jgui::file_transfers<Transfers>(std::move(source)), jgui::two_panes<Panes>(std::move(left), std::move(right)));
-    return jgui::window(jgui::window_frame(jgui::popup_layer<Layer>(jgui::FileMatchPopup<MatchPopup, Transfers>{}, jgui::popup_layer<DeleteLayer>(jgui::FileDeletePopup<DeletePopup, Transfers>{}, std::move(content)))));
+    auto below = jgui::popup_layer<Layer>(jgui::FileMatchPopup<MatchPopup, Transfers>{}, jgui::popup_layer<DeleteLayer>(jgui::FileDeletePopup<DeletePopup, Transfers>{}, std::move(content)));
+    return jgui::window(jgui::window_frame(jgui::popup_layer<ClipboardLayer>(jgui::FileClipboardPopup<ClipboardPopup, Transfers>{}, std::move(below))));
 }
 
 }  // namespace files

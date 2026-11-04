@@ -13,7 +13,7 @@ See `docs/Maturity.md` for what works and what does not, and `docs/SECURITY.md` 
 ## Build
 
 Linux, with a C++23 compiler, CMake, Ninja, and the Wayland, xkbcommon, FreeType, HarfBuzz and
-fontconfig development files. On Fedora, from `Lin/v001`, `bash bsir.sh` checks for all of these, offers
+fontconfig development files. `bsir.sh` also installs Vim, which works when only a terminal does, and which the file manager's Edit button falls back on. On Fedora, from `Lin/v001`, `bash bsir.sh` checks for all of these, offers
 what is missing, builds, tests and opens the demo. It runs a system update on every run and needs sudo,
 and it stops on a system with no `dnf`. It has been run end to end only on Fedora 44. The
 scripts have no shebang, because a shebang cannot be a relative path. `Lin/v001/bsir.sh` alone has the executable bit,
@@ -79,7 +79,7 @@ With no path for a file, it reads `redraw_monitor.jtext` or `settings.jtext` fro
 
 ## The file manager
 
-`jcppgui-files` shows two folders side by side, as trees, in the manner of TreeSync. Each pane is on its own: its folder, what is open, its selection, its sort and its scrolling are its own. **It changes real files, and it is as unproven as the rest of this: try it on copies first.** It can copy several things at a time. A copy never moves or replaces anything: a name already taken is refused. To move something, copy it, check the line says it matched, then delete the original. **Delete moves things to the trash,** the same one your desktop shows, which can put them back. It counts what is selected on that side, all the way down, asks "Are you sure? File count to be deleted: N", and only a click on the popup's Delete button goes ahead. It has no way to remove anything for good: if a disk has no trash it can use, the thing stays where it is. Diff shows the lines that differ between two selected text files of up to 16 MiB. It has no rename and no remote side yet.
+`jcppgui-files` shows two folders side by side, as trees, in the manner of TreeSync. Each pane is on its own: its folder, what is open, its selection, its sort and its scrolling are its own. **It changes real files, and it is as unproven as the rest of this: try it on copies first.** It can copy several things at a time. A copy never moves or replaces anything: a name already taken is refused. To move something, copy it, check the line says it matched, then delete the original. **Delete moves things to the trash,** the same one your desktop shows, which can put them back. It counts what is selected on that side, all the way down, asks "Are you sure? File count to be deleted: N", and only a click on the popup's Delete button goes ahead. It has no way to remove anything for good: if a disk has no trash it can use, the thing stays where it is. Diff shows the lines that differ between two selected text files of up to 16 MiB. Cat shows the selected files in a terminal, Edit opens them in `$EDITOR` in a terminal, or Vim if that is not set, and Touch sets their time to now. Click a status line or a path to copy it. If the text holds anything that could be unsafe to paste, a popup says what, and nothing is copied unless you click Continue. It has no rename and no remote side yet.
 
 ```
 ./build/gcc-debug/jcppgui-files

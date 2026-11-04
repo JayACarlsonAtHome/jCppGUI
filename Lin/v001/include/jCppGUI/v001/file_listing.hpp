@@ -264,6 +264,9 @@ concept FileSource = FileCopyJob<typename S::CopyJob> && FileMatchJob<typename S
     { source.start_count(path) } -> std::same_as<std::expected<typename S::CountJob, Error>>;
     { source.move_to_trash(path) } -> std::same_as<std::expected<void, Error>>;
     { source.read_text(path) } -> std::same_as<std::expected<std::string, Error>>;
+    { source.touch(path) } -> std::same_as<std::expected<void, Error>>;
+    { source.editor() } -> std::same_as<std::string>;
+    { source.run_in_terminal(path, std::span<const std::string>{}) } -> std::same_as<std::expected<void, Error>>;
 };
 
 inline constexpr std::size_t most_file_path_bytes = 4096;  // the longest path Linux takes in one call

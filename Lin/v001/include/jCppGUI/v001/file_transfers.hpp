@@ -18,8 +18,9 @@
 #include <vector>
 
 #include "file_listing.hpp"
-#include "label.hpp"
+#include "copy_line.hpp"
 #include "line_diff.hpp"
+#include "terminal_command.hpp"
 #include "timer.hpp"
 #include "widget.hpp"
 
@@ -99,7 +100,7 @@ struct DiffReport {
 
 template <class Tag, FileSource Source>
 class FileTransfers {
-    using Line = Label<FileTransfersLine<Tag>>;
+    using Line = CopyLine<FileTransfersLine<Tag>>;
 
 public:
     using tag = Tag;
@@ -194,6 +195,37 @@ public:
         diff_first_ = first;
         diff_second_ = second;
         say("Finding what differs. Escape stops it.");
+    }
+
+    // Sets when these last changed to now. It stops at the first that cannot be, and both panes look again.
+    constexpr void touch(std::span<const std::string> paths) {
+        if (say_if_busy()) return;
+        std::size_t done = 0;
+        for (const std::string& path : paths) {
+            if (auto touched = source_.touch(path); !touched) {
+                ++changes_;
+                say("Stopped: " + touched.error().message + ". Touched " + decimal_text(done, false) + " of " + decimal_text(paths.size(), false));
+                return;
+            }
+            ++done;
+        }
+        ++changes_;
+        say("Touched " + (paths.size() == 1 ? std::string{last_name_of(paths.front())} : detail::count_with_plural(paths.size(), "thing")));
+    }
+
+    // Opens a terminal showing or editing these. It goes on by itself, so whatever else is going on here may go on too. A pane does not see what it changes until it looks again.
+    constexpr void open_in_terminal(TerminalTool tool, std::span<const std::string> paths) {
+        const auto command = terminal_tool_command(tool, paths, source_.editor());
+        if (!command) {
+            say(command.error().message);
+            return;
+        }
+        if (auto opened = source_.run_in_terminal(parent_of_path(paths.front()), *command); !opened) {
+            say(opened.error().message);
+            return;
+        }
+        const std::string names = paths.size() == 1 ? std::string{last_name_of(paths.front())} : detail::count_with_plural(paths.size(), "file");
+        say((tool == TerminalTool::Cat ? "Showing " : "Editing ") + names + " in a terminal");
     }
 
     // How the last diff came out, once. Empty until it has ended.

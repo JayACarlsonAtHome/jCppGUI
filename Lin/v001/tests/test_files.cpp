@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
@@ -20,12 +21,14 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "check.hpp"
 #include "file_io.hpp"
 #include "files_ui.hpp"
 #include "jCppGUI/v001/local_files.hpp"
+#include "jCppGUI/v001/program_arguments.hpp"
 #include "monitor_helpers.hpp"
 #include "test_access.hpp"
 
@@ -88,6 +91,11 @@ struct FakeDisk {
     bool step_fails{};
     bool start_fails{};
     bool delete_fails{};
+    bool touch_fails{};
+    bool no_terminal{};
+    std::string editor{};
+    std::vector<std::string> touched{};
+    std::vector<std::vector<std::string>> terminals{};
 };
 
 struct FakeJob {
@@ -141,6 +149,19 @@ struct FakeFiles {
     FakeDisk* disk{};
 
     [[nodiscard]] constexpr std::expected<FakeCountJob, Error> start_count(const std::string& path) const { return FakeCountJob{path}; }
+    [[nodiscard]] constexpr std::string editor() const { return disk == nullptr ? std::string{} : disk->editor; }
+    [[nodiscard]] constexpr std::expected<void, Error> touch(const std::string& path) const {
+        if (disk->touch_fails) return make_error(ErrorCode::System, "cannot touch it");
+        disk->touched.push_back(path);
+        return {};
+    }
+    [[nodiscard]] constexpr std::expected<void, Error> run_in_terminal(const std::string& folder, std::span<const std::string> command) const {
+        if (disk->no_terminal) return make_error(ErrorCode::System, "no terminal");
+        std::vector<std::string> what{folder};
+        what.insert(what.end(), command.begin(), command.end());
+        disk->terminals.push_back(std::move(what));
+        return {};
+    }
     [[nodiscard]] constexpr std::expected<void, Error> move_to_trash(const std::string& path) const {
         if (disk->delete_fails) return make_error(ErrorCode::System, "cannot delete it");
         disk->gone.push_back(path);
@@ -1301,6 +1322,175 @@ static_assert(path_is_in_a_trash("/h/.local/share/Trash/files/a", "/h/.local/sha
 static_assert(path_is_in_a_trash("/disk/d/.Trash-1000/files/a", "/h/T") && path_is_in_a_trash("/disk/d/.Trash", "/h/T"));
 static_assert(!path_is_in_a_trash("/disk/d/.Trashy/a", "/h/T") && !path_is_in_a_trash("/h/.local/share/Trash2", "/h/.local/share/Trash") && !path_is_in_a_trash("/disk/d/a", "/h/T"));
 
+// --- Cat, Edit and Touch, on the made-up disk ---
+
+using Words = std::vector<std::string>;
+static_assert(editor_words("") == Words{"vim"} && editor_words("  \t ") == Words{"vim"}, "nothing set, and vim is there even when only a terminal works");
+static_assert(editor_words("nano") == Words{"nano"} && editor_words("  emacs   -nw\t--foo ") == Words{"emacs", "-nw", "--foo"});
+static_assert(!editor_words("sh -c 'x'") && !editor_words("a\"b") && !editor_words("a\\b"), "what would need a shell to read is refused");
+static_assert(*terminal_tool_command(TerminalTool::Edit, Words{"/a b"}, "emacs -nw") == Words{"emacs", "-nw", "--", "/a b"}, "the name stays one word, after where options end");
+static_assert(*terminal_tool_command(TerminalTool::Edit, Words{"/a"}, "") == Words{"vim", "--", "/a"});
+static_assert(terminal_tool_command(TerminalTool::Cat, Words{"/a"}, "'bad")->front() == "sh", "Cat does not care what EDITOR says");
+
+static_assert(terminal_arguments(TerminalStyle{"ptyxis", {"--"}, 1}, std::vector<std::string>{"vim", "--", "/a b"}) == std::vector<std::string>{"ptyxis", "--", "vim", "--", "/a b"});
+static_assert(terminal_arguments(TerminalStyle{"foot", {}, 0}, std::vector<std::string>{"vim"}) == std::vector<std::string>{"foot", "vim"});
+
+[[nodiscard]] constexpr bool cat_and_edit_open_a_terminal() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    auto& pane = tree.template get<Left_>();
+    click_on<decltype(tree), FilePaneCatButton<Left_>>(tree);
+    if (!disk.terminals.empty() || pane.status() != "Select a file first") return false;
+    // A folder is refused, by name.
+    tree.template get<GridOf<Left_>>().select_row(GridRow{0});
+    click_on<decltype(tree), FilePaneEditButton<Left_>>(tree);
+    if (!disk.terminals.empty() || pane.status() != "Only files can be shown or edited, and one is not one") return false;
+    tree.template get<GridOf<Left_>>().select_row(GridRow{2});
+    click_on<decltype(tree), FilePaneCatButton<Left_>>(tree);
+    if (disk.terminals.size() != 1 || disk.terminals[0] != std::vector<std::string>{"/top", "sh", "-c", std::string{cat_and_wait_script}, "sh", "/top/note.txt"}) return false;
+    if (transfers_of(tree).line() != "Showing note.txt in a terminal") return false;
+    click_on<decltype(tree), FilePaneEditButton<Left_>>(tree);
+    if (disk.terminals.size() != 2 || disk.terminals[1] != std::vector<std::string>{"/top", "vim", "--", "/top/note.txt"} || transfers_of(tree).line() != "Editing note.txt in a terminal") return false;
+    disk.editor = "emacs -nw";
+    click_on<decltype(tree), FilePaneEditButton<Left_>>(tree);
+    if (disk.terminals.size() != 3 || disk.terminals[2] != std::vector<std::string>{"/top", "emacs", "-nw", "--", "/top/note.txt"}) return false;
+    disk.editor = "sh -c 'x'";
+    click_on<decltype(tree), FilePaneEditButton<Left_>>(tree);
+    if (disk.terminals.size() != 3 || !transfers_of(tree).line().starts_with("EDITOR holds a quote")) return false;
+    disk.editor.clear();
+    disk.no_terminal = true;
+    click_on<decltype(tree), FilePaneEditButton<Left_>>(tree);
+    return disk.terminals.size() == 3 && transfers_of(tree).line() == "no terminal";
+}
+static_assert(cat_and_edit_open_a_terminal());
+
+[[nodiscard]] constexpr bool touch_touches_what_is_selected() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    click_on<decltype(tree), FilePaneTouchButton<Left_>>(tree);
+    if (!disk.touched.empty() || tree.template get<Left_>().status() != "Select something to touch first") return false;
+    tree.template get<GridOf<Left_>>().select_rows(std::vector<std::uint32_t>{0, 2}, GridRow{0});
+    tree.template get<GridOf<Right_>>().select_row(GridRow{1});  // the other side's is left alone
+    click_on<decltype(tree), FilePaneTouchButton<Left_>>(tree);
+    if (disk.touched != std::vector<std::string>{"/top/one", "/top/note.txt"} || transfers_of(tree).line() != "Touched 2 things") return false;
+    disk.touch_fails = true;
+    click_on<decltype(tree), FilePaneTouchButton<Left_>>(tree);
+    if (disk.touched.size() != 2 || transfers_of(tree).line() != "Stopped: cannot touch it. Touched 0 of 2") return false;
+    // Not while something else is going on.
+    disk.touch_fails = false;
+    transfers_of(tree).copy({"/top/note.txt"});
+    transfers_of(tree).paste_into("/other");
+    click_on<decltype(tree), FilePaneTouchButton<Left_>>(tree);
+    return disk.touched.size() == 2 && transfers_of(tree).line() == "A copy is still going. Escape stops it.";
+}
+static_assert(touch_touches_what_is_selected());
+
+// --- A line of text that can be copied ---
+
+// A click on a status line asks for all of it to be copied, long or not, and shows it did until the text changes. A press elsewhere asks nothing.
+[[nodiscard]] constexpr bool status_lines_can_be_copied() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    auto& line = tree.template get<FileTransfersLine<files::Transfers>>();
+    auto& status = tree.template get<FilePaneStatus<Left_>>();
+    auto& path = tree.template get<FilePanePath<Right_>>();
+    const auto take = [&] { return detail::TestAccess::take_requests(tree); };
+    static_cast<void>(take());
+    const std::string long_message(3000, 'x');
+    transfers_of(tree).tell(long_message);
+    static_cast<void>(lay_out(tree));
+    click_on<decltype(tree), FileTransfersLine<files::Transfers>>(tree);
+    const WindowRequests first = take();
+    if (!first.copy || first.copy->text.view() != long_message || !line.just_copied()) return false;
+    transfers_of(tree).tell("Something new");
+    if (line.just_copied()) return false;
+    click_on<decltype(tree), FilePaneStatus<Left_>>(tree);
+    const WindowRequests second = take();
+    if (!second.copy || second.copy->text.view() != "3 things, and 1 with a name that cannot be shown" || !status.just_copied()) return false;
+    click_on<decltype(tree), FilePanePath<Right_>>(tree);
+    const WindowRequests third = take();
+    if (!third.copy || third.copy->text.view() != "/top" || !path.just_copied()) return false;
+    // Going off it stops showing that it was copied, and nothing is asked again.
+    jgui_test::dispatch(tree, PointerMove{Point{Left{1}, Top{1}}});
+    if (path.just_copied() || take().copy) return false;
+    // A press on anything else asks nothing.
+    click_on<decltype(tree), FilePaneReloadButton<Left_>>(tree);
+    return !take().copy;
+}
+static_assert(status_lines_can_be_copied());
+
+// --- The sanitizer ---
+
+[[nodiscard]] constexpr ClipboardFindings found_in(std::string_view text) { return inspect_clipboard_text(text).found; }
+[[nodiscard]] constexpr std::string cleaned(std::string_view text) { return std::string{inspect_clipboard_text(text).text.view()}; }
+
+static_assert(found_in("").none() && found_in("Moved to the trash: 1 file, 0 folders, 10 bytes").none() && found_in("/disk/a b/c-d_e.txt (1)").none(), "ordinary messages and paths are left alone");
+static_assert(found_in("\xC3\xA9t\xC3\xA9 \xE2\x82\xAC \xF0\x9F\x98\x80").none() && cleaned("\xC3\xA9t\xC3\xA9") == "\xC3\xA9t\xC3\xA9", "letters and an emoji");
+static_assert(found_in("\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9").none(), "a joiner, which emoji and some languages need");
+static_assert(found_in("rm -rf ~; x").shell == 1 && cleaned("rm -rf ~; x") == "rm -rf ~; x", "a shell character is named and kept");
+static_assert(found_in("$(x) `y` a|b a&b a<b a>b").shell == 7);
+static_assert(found_in("a\nb").control == 1 && cleaned("a\nb") == "a\xEF\xBF\xBD" "b", "a newline could press Enter");
+static_assert(found_in("a\rb").control == 1 && found_in("a\tb").control == 1);
+static_assert(found_in("\x1B[31m").control == 1 && !cleaned("\x1B[31m").contains('\x1B'), "a terminal escape");
+static_assert(found_in("\x7F").control == 1 && found_in("\xC2\x85").control == 1 && found_in("\xE2\x80\xA8").control == 1, "DEL, a C1 control and a line separator");
+static_assert(found_in("x\xE2\x80\xAEy").direction == 1 && found_in("\xE2\x81\xA6").direction == 1 && found_in("\xE2\x80\x8F").direction == 1 && found_in("\xD8\x9C").direction == 1, "what changes the order text shows in");
+static_assert(found_in("\xE2\x80\x8B").invisible == 1 && found_in("\xEF\xBB\xBF").invisible == 1 && found_in("\xC2\xAD").invisible == 1 && found_in("\xF3\xA0\x80\x81").invisible == 1, "what does not show, Unicode tags too");
+static_assert(found_in("a\xFF" "b").not_text == 1 && found_in("\xC0\x80").not_text == 2 && found_in("\xE2\x82").not_text == 2 && found_in("\xED\xA0\x80").not_text == 3, "bytes that are not text, a cut character and a surrogate");
+static_assert(valid_utf8(cleaned("a\xFF\xC0\xE2\x82 b")), "what comes out is always text");
+static_assert(found_in(std::string(4096, 'x')).none() && found_in(std::string(4097, 'x')).cut && cleaned(std::string(5000, 'x')).size() == 4096, "the limit");
+static_assert(valid_utf8(cleaned(std::string(4095, 'x') + "\xC3\xA9")) && found_in(std::string(4095, 'x') + "\xC3\xA9").cut, "cut on a whole character");
+static_assert(clipboard_findings_text(found_in("a;b\n"))== "Characters a shell would act on, such as ; | & $: 1; Control characters, such as a newline or a terminal escape: 1");
+
+template <class Tree>
+[[nodiscard]] constexpr auto& clipboard_popup_of(Tree& tree) { return tree.template get<files::ClipboardPopup>(); }
+
+// Text with something in it does not reach the clipboard until the popup's Continue is clicked, and then only as cleaned. Every key and Abort stop it there.
+[[nodiscard]] constexpr bool the_user_decides_before_it_goes() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    auto& line = tree.template get<FileTransfersLine<files::Transfers>>();
+    const auto take = [&] { return detail::TestAccess::take_requests(tree); };
+    const auto ask = [&] {
+        transfers_of(tree).tell("name; rm \xE2\x80\xAE x");
+        static_cast<void>(lay_out(tree));
+        click_on<decltype(tree), FileTransfersLine<files::Transfers>>(tree);
+        turn(tree);
+    };
+    ask();
+    if (!clipboard_popup_of(tree).is_open() || take().copy || line.just_copied()) return false;
+    if (!clipboard_popup_of(tree).found_text().contains("shell") || !clipboard_popup_of(tree).found_text().contains("order") || !clipboard_popup_of(tree).text_shown().contains("rm") || clipboard_popup_of(tree).text_shown().contains("\xE2\x80\xAE")) return false;
+    for (const Keysym key : {Key::Return, Key::Escape}) {
+        jgui_test::dispatch(tree, KeyEvent{key, {}, true});
+        if (clipboard_popup_of(tree).is_open() || take().copy || transfers_of(tree).line() != "Nothing was copied") return false;
+        ask();
+    }
+    // No other key does anything, and nothing behind it can be reached.
+    jgui_test::dispatch(tree, KeyEvent{Key::LowerA, {}, true});
+    if (!clipboard_popup_of(tree).is_open() || take().copy) return false;
+    click_on<decltype(tree), FilePaneReloadButton<Left_>>(tree);
+    if (!clipboard_popup_of(tree).is_open() || take().copy) return false;
+    static_cast<void>(lay_out(tree));
+    click_on<decltype(tree), FileClipboardPopupAbort<files::ClipboardPopup>>(tree);
+    if (clipboard_popup_of(tree).is_open() || take().copy || transfers_of(tree).line() != "Nothing was copied") return false;
+    ask();
+    static_cast<void>(lay_out(tree));
+    click_on<decltype(tree), FileClipboardPopupContinue<files::ClipboardPopup>>(tree);
+    const WindowRequests went = take();
+    if (clipboard_popup_of(tree).is_open() || !went.copy || !went.copy->text.view().contains("; rm") || went.copy->text.view().contains("\xE2\x80\xAE")) return false;
+    // Asked once, it is not asked again, and the next clean line goes straight through.
+    turn(tree);
+    if (clipboard_popup_of(tree).is_open() || take().copy) return false;
+    transfers_of(tree).tell("plain");
+    static_cast<void>(lay_out(tree));
+    click_on<decltype(tree), FileTransfersLine<files::Transfers>>(tree);
+    return take().copy.has_value() && line.just_copied();
+}
+static_assert(the_user_decides_before_it_goes());
+
 // --- Diffing lines ---
 
 static_assert(shown_line("plain\n") == "plain");
@@ -2143,6 +2333,73 @@ void moves_real_things_to_the_trash() {
     check(::unsetenv("XDG_DATA_HOME") == 0, "that is undone");
 }
 
+void touches_real_things() {
+    const jgui_test::TemporaryDirectory directory;
+    const std::filesystem::path top = std::filesystem::canonical(directory.path());
+    put_text(top / "file.txt", "unchanged");
+    std::filesystem::create_symlink(top / "file.txt", top / "link");
+    const auto long_ago = std::filesystem::file_time_type::clock::now() - std::chrono::hours{24 * 400};
+    std::filesystem::last_write_time(top / "file.txt", long_ago);
+    const auto recent = [&](const std::filesystem::path& path) { return std::filesystem::last_write_time(path) > long_ago + std::chrono::hours{24 * 399}; };
+    check(touch_local_file((top / "link").string()).has_value(), "a link can be touched");
+    check(!recent(top / "file.txt"), "and what it points to keeps its time");
+    check(touch_local_file((top / "file.txt").string()).has_value() && recent(top / "file.txt"), "a file gets the time of now");
+    check(whole_text_of(top / "file.txt") == "unchanged", "and what is in it stays");
+    check(!touch_local_file((top / "missing").string()) && !std::filesystem::exists(top / "missing"), "and what is not there is refused and not made");
+    check(!touch_local_file("/") && !touch_local_file("relative"), "as is what is not a plain path");
+}
+
+[[nodiscard]] std::string wait_for_text(const std::filesystem::path& path, std::string_view wanted) {
+    std::string text;
+    for (int i = 0; i < 1000; ++i) {
+        std::error_code missing;
+        if (std::filesystem::exists(path, missing)) {
+            text = whole_text_of(path);
+            if (text.contains(wanted)) return text;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    }
+    return text;
+}
+
+// This program stands in for a terminal, named by TERMINAL: see the start of main. Each argument is what was asked for, in full, whatever a name holds, and no shell has read a name as a command.
+void opens_a_real_terminal(const std::filesystem::path& this_program) {
+    const jgui_test::TemporaryDirectory directory;
+    const std::filesystem::path top = std::filesystem::canonical(directory.path());
+    const std::filesystem::path log = top / "arguments";
+    const std::filesystem::path shown = top / "shown";
+    const std::filesystem::path bait = top / "ran";
+    const std::string awkward = "$(touch ran); `id` 'x' \"y\" ; -rf";
+    put_text(top / awkward, "first contents\n");
+    put_text(top / "second", "second contents\n");
+    check(::setenv("TERMINAL", this_program.c_str(), 1) == 0 && ::setenv("JGUI_TEST_TERMINAL_LOG", log.c_str(), 1) == 0 && ::setenv("JGUI_TEST_TERMINAL_OUT", shown.c_str(), 1) == 0, "the stand-in is told where to write");
+
+    const std::vector<std::string> cat_names{(top / awkward).string(), (top / "second").string()};
+    check(run_in_local_terminal(top.string(), *terminal_tool_command(TerminalTool::Cat, cat_names, "")).has_value(), "a terminal starts");
+    const std::string text = wait_for_text(shown, "Press Return");
+    check(text.contains("first contents\nsecond contents\n"), "and cat shows the files, whatever they are called");
+    check(!std::filesystem::exists(bait), "and nothing in a name ran");
+    const std::string arguments = wait_for_text(log, "second");
+    check(arguments.contains("-e\nsh\n-c\n") && arguments.contains("\n" + (top / awkward).string() + "\n"), "and the name went as one argument");
+    check(arguments.contains("folder=" + top.string() + "\n"), "and it started in the file's folder");
+
+    // The editor is only recorded: the stand-in does not run it.
+    std::filesystem::remove(log);
+    check(::setenv("JGUI_TEST_TERMINAL_RECORD_ONLY", "1", 1) == 0, "only recorded");
+    check(::setenv("EDITOR", "my-editor -x", 1) == 0 && local_editor() == "my-editor -x", "EDITOR is read");
+    check(run_in_local_terminal(top.string(), *terminal_tool_command(TerminalTool::Edit, cat_names, local_editor())).has_value(), "a terminal starts for the editor");
+    const std::string editor_arguments = wait_for_text(log, "second");
+    check(editor_arguments.contains("-e\nmy-editor\n-x\n--\n" + (top / awkward).string() + "\n"), "with the editor told where options end, so a name cannot be one");
+    check(::unsetenv("EDITOR") == 0 && local_editor().empty(), "and with none it says so");
+
+    // No terminal anywhere is said, rather than nothing happening.
+    const std::string path_was = std::getenv("PATH") == nullptr ? std::string{} : std::string{std::getenv("PATH")};
+    check(::setenv("TERMINAL", "jcppgui-no-such-terminal", 1) == 0 && ::setenv("PATH", top.c_str(), 1) == 0, "nothing to find");
+    const auto none = run_in_local_terminal(top.string(), *terminal_tool_command(TerminalTool::Edit, cat_names, ""));
+    check(!none && none.error().message.contains("terminal"), "no terminal is an error");
+    check(::setenv("PATH", path_was.c_str(), 1) == 0 && ::unsetenv("TERMINAL") == 0 && ::unsetenv("JGUI_TEST_TERMINAL_RECORD_ONLY") == 0, "that is undone");
+}
+
 void diffs_real_things() {
     const jgui_test::TemporaryDirectory directory;
     const std::filesystem::path top = std::filesystem::canonical(directory.path());
@@ -2217,9 +2474,8 @@ void diffs_agree_with_the_slow_way() {
     check(the_search_has_a_limit(), "too many changes ends the search");
 }
 
-}  // namespace
-
-int main() {
+// Asked to, this program is a terminal for opens_a_real_terminal: it writes down what it was given and where it is, and runs the command with its output in a file and no input, so a read for Return ends at once.
+[[nodiscard]] int run_everything(const std::filesystem::path& this_program) {
     reads_a_real_folder();
     copies_real_things();
     checks_what_it_copied();
@@ -2227,7 +2483,37 @@ int main() {
     matches_real_things();
     counts_real_things();
     moves_real_things_to_the_trash();
+    touches_real_things();
+    opens_a_real_terminal(this_program);
     diffs_real_things();
     diffs_agree_with_the_slow_way();
     return check.finish();
+}
+
+[[nodiscard]] int stand_in_for_a_terminal(std::vector<std::string> arguments) {
+    std::string text;
+    std::array<char, 4096> folder{};
+    if (::getcwd(folder.data(), folder.size()) != nullptr) text.append("folder=").append(folder.data()).append("\n");
+    for (const std::string& argument : arguments) text.append(argument).append("\n");
+    const std::filesystem::path log{std::getenv("JGUI_TEST_TERMINAL_LOG")};
+    put_text(log, text);
+    if (std::getenv("JGUI_TEST_TERMINAL_RECORD_ONLY") != nullptr) return 0;
+    const int out = ::open(std::getenv("JGUI_TEST_TERMINAL_OUT"), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, S_IRUSR | S_IWUSR);
+    // Input that ends at once, so a read for Return does.
+    std::array<int, 2> no_input{-1, -1};
+    if (out < 0 || ::dup2(out, STDOUT_FILENO) < 0 || ::pipe(no_input.data()) != 0 || ::close(no_input[1]) != 0 || ::dup2(no_input[0], STDIN_FILENO) < 0) return 126;
+    std::vector<char*> pointers;
+    for (std::size_t i = 1; i < arguments.size(); ++i) pointers.push_back(arguments[i].data());
+    pointers.push_back(nullptr);
+    ::execvp(pointers.front(), pointers.data());
+    return 127;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    auto given = program_arguments(argc, argv);
+    if (!given || given->empty()) return 2;
+    if (given->size() > 2 && given->at(1) == "-e") return stand_in_for_a_terminal(std::vector<std::string>(given->begin() + 1, given->end()));
+    return run_everything(std::filesystem::absolute(given->front()));
 }

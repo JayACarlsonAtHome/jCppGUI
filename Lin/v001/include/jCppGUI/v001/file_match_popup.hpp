@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "button.hpp"
+#include "copy_line.hpp"
 #include "datagrid.hpp"
 #include "file_transfers.hpp"
 #include "label.hpp"
@@ -70,8 +71,8 @@ struct FileMatchPopupClose {
 
 template <class Tag, class Transfers>
 class FileMatchPopup {
-    using Heading = Label<FileMatchPopupHeading<Tag>>;
-    using Detail = Label<FileMatchPopupDetail<Tag>>;
+    using Heading = CopyLine<FileMatchPopupHeading<Tag>>;
+    using Detail = CopyLine<FileMatchPopupDetail<Tag>>;
     using Grid = DataGrid<FileMatchPopupGrid<Tag>, MatchFinding, NoGridMessage, Column<"Where", &MatchFinding::where, 400>, Column<"What was found", &MatchFinding::why, 540>>;
     using OkButton = Button<FileMatchPopupButton<Tag>, detail::FileMatchPopupClose<Tag>>;
 

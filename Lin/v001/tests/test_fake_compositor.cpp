@@ -2985,6 +2985,105 @@ struct FilesDelete {
     }
 };
 
+// A click on the line that says what is going on puts all of it on the clipboard, off the wire: types offered, the text read back through a pipe as another program would, a reader that has gone does not end
+// the program, and an offer from another program is only destroyed. Then the clipboard goes to another program, and the source is destroyed.
+struct FilesCopyLine {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool files_program = true;
+    static constexpr bool left_exists = true;
+    enum class Step : std::uint8_t { First, Clicked, Reading, Taken, Done };
+    FilesState state{};
+    Step step{Step::First};
+    int waits{};
+    std::optional<ObjectId> source_id{};
+    int reader{-1};  // a script is copied when it is handed over, before this is set
+    std::string got{};
+    bool source_destroyed{};
+
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const KeyboardCreated&) { send_valid_keymap(session); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session&, const SourceDestroyed&) { source_destroyed = true; }
+    void on(Session& session, const SelectionSet& selection) {
+        source_id = selection.source;
+        const std::vector<std::string>& types = session.offered_types();
+        if (std::ranges::find(types, std::string{"text/plain;charset=utf-8"}) == types.end() || std::ranges::find(types, std::string{"UTF8_STRING"}) == types.end()) session.violation("the usual text types were not offered");
+        // First to a reader that has already gone, which raises SIGPIPE in a program that does not guard against it.
+        std::array<int, 2> gone{-1, -1};
+        std::array<int, 2> ends{-1, -1};
+        if (::pipe2(gone.data(), O_CLOEXEC) != 0 || ::pipe2(ends.data(), O_CLOEXEC) != 0) {
+            session.violation("no pipe");
+            return;
+        }
+        static_cast<void>(::close(gone[0]));
+        session.queue_with_fd(event::data_source_send(selection.source, "text/plain"), jgui::detail::UniqueFd{gone[1]});
+        reader = ends[0];
+        session.queue_with_fd(event::data_source_send(selection.source, "text/plain;charset=utf-8"), jgui::detail::UniqueFd{ends[1]});
+        step = Step::Reading;
+        waits = 0;
+    }
+    void fail(Session& session, const std::string& why) {
+        session.violation(why);
+        session.close_window();
+        step = Step::Done;
+    }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.pointer() || !session.keyboard() || step == Step::Done) return;
+        ++waits;
+        switch (step) {
+            case Step::First: {
+                FilesReference reference{jgui::starting_folder(state.left), jgui::starting_folder(state.right), viewer_width, viewer_height};
+                const jgui::Rect line = reference.get<jgui::FileTransfersLine<files::Transfers>>().bounds();
+                const std::int32_t x = jgui_test::number(line.left()) + 40;
+                const std::int32_t y = jgui_test::number(line.top()) + 3;
+                pointer_enter(session, x, y);
+                left_click(session, x, y);
+                step = Step::Clicked;
+                waits = 0;
+                return;
+            }
+            case Step::Clicked:
+                if (waits > 400) fail(session, "a click on the line did not take the clipboard");
+                return;
+            case Step::Reading: {
+                std::array<char, 8192> bytes{};
+                if (::fcntl(reader, F_SETFL, O_NONBLOCK) != 0) return;
+                const auto read = jgui::detail::read_stream<char>(reader, std::span<char>{bytes});
+                if (!read) {
+                    if (waits > 400) fail(session, "nothing came through the pipe");
+                    return;
+                }
+                got.append(bytes.data(), *read);
+                if (*read != 0) return;
+                static_cast<void>(::close(reader));
+                if (got != "Select something and press Copy, then Paste on either side. Or drag it to copy it.") {
+                    fail(session, "another text came through the pipe: " + got);
+                    return;
+                }
+                // Another program takes the clipboard, and shows an offer on the way.
+                const ObjectId offer{0xFF000000U};  // the first of the compositor's own range, which libwayland insists on
+                session.add_server_object(offer, wire::Kind::DataOffer);
+                session.queue(event::data_device_data_offer(*session.data_device(), offer));
+                session.queue(event::data_device_selection(*session.data_device(), offer));
+                session.queue(event::data_source_cancelled(*source_id));
+                step = Step::Taken;
+                waits = 0;
+                return;
+            }
+            case Step::Taken:
+                if (!source_destroyed || session.offers_destroyed() != 1) {
+                    if (waits > 400) fail(session, "the source or the offer was kept");
+                    return;
+                }
+                step = Step::Done;
+                session.close_window();
+                return;
+            case Step::Done:
+            default: return;
+        }
+    }
+};
+
 template <class Script>
 [[nodiscard]] bool run_files_scenario() {
     const char* built = std::getenv("JGUI_TEST_FILES");
@@ -3156,6 +3255,7 @@ constexpr auto scenarios = std::tuple{
     Named<FilesCopyAndDrag>{"files_copy_and_drag"},
     Named<FilesSeveral>{"files_several"},
     Named<FilesDelete>{"files_delete"},
+    Named<FilesCopyLine>{"files_copy_line"},
 };
 
 }  // namespace
