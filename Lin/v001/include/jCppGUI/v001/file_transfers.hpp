@@ -302,6 +302,25 @@ public:
         open_question_ = OpenQuestion{path, programs_for(family_of_name(last_name_of(path)), most_open_choices, installed), std::move(reason)};
     }
 
+    // Starts OBS, which records what it has been set up to record, from the home folder. It goes on by itself, so whatever else is going on here may go on too. What it records and where it saves are OBS's own settings.
+    constexpr void record_desktop() {
+        if (!source_.program_installed(std::string{recording_program})) {
+            say("Nothing is recording: OBS is not installed");
+            return;
+        }
+        const auto pictures = source_.picture_folder();
+        if (!pictures) {
+            say("Nothing is recording: " + pictures.error().message);
+            return;
+        }
+        const ProgramCommand command = recording_command();
+        if (auto started = source_.start_program(parent_of_path(*pictures), command.words); !started) {
+            say("Nothing is recording: " + started.error().message);
+            return;
+        }
+        say("OBS started, to record. Stop it in OBS's window");
+    }
+
     // Once, for whatever asks the person.
     [[nodiscard]] constexpr std::optional<OpenQuestion> take_open_question() { return std::exchange(open_question_, std::nullopt); }
 

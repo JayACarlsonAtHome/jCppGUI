@@ -13,7 +13,7 @@ set -eu
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 RECIPES="$ROOT/Setup/recipes.conf"
-COMPONENTS="gcc clang compiler_rt cmake ninja pkgconfig wayland wayland_protocols xkbcommon freetype harfbuzz fontconfig vim"
+COMPONENTS="gcc clang compiler_rt cmake ninja pkgconfig wayland wayland_protocols xkbcommon freetype harfbuzz fontconfig vim obs"
 
 ASSUME_YES=0
 WANT_DEMO=1

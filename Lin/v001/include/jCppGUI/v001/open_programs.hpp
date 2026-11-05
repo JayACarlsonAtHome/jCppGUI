@@ -23,6 +23,10 @@ struct ProgramCommand {
     friend constexpr bool operator==(const ProgramCommand&, const ProgramCommand&) = default;
 };
 
+// OBS, told to start recording. It is not told to hide in the tray: not every desktop shows a tray, and OBS has no option to stop from outside, so its window has to stay where the person can stop it.
+inline constexpr std::string_view recording_program = "obs";
+[[nodiscard]] constexpr ProgramCommand recording_command() { return ProgramCommand{{std::string{recording_program}, "--startrecording"}, false}; }
+
 enum class FileFamily : std::uint8_t { Office, Image, Text, Other };
 
 inline constexpr std::array<std::string_view, 19> office_extensions{"odt", "ods", "odp", "odg", "ott", "ots", "otp", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "rtf", "csv", "tsv", "fodt", "fods", "fodp"};

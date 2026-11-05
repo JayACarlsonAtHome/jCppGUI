@@ -3153,6 +3153,47 @@ struct FilesOpen {
     }
 };
 
+// The Record button, off the wire, starts OBS with no shell. A stand-in, first on PATH, says what it was given.
+struct FilesRecord {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool files_program = true;
+    static constexpr bool left_exists = true;
+    static constexpr bool opens_programs = true;
+    static constexpr bool takes_pictures = true;
+    enum class Step : std::uint8_t { First, Started, Done };
+    FilesState state{};
+    Step step{Step::First};
+    int waits{};
+
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.pointer() || step == Step::Done) return;
+        const std::filesystem::path record = std::filesystem::path{state.left}.parent_path() / "bin" / "obs.words";
+        ++waits;
+        if (step == Step::First) {
+            FilesReference reference{jgui::starting_folder(state.left), jgui::starting_folder(state.right), viewer_width, viewer_height};
+            const jgui::Rect button = reference.get<files::RecordButton>().bounds();
+            pointer_enter(session, jgui_test::number(button.left()) + 3, jgui_test::number(button.top()) + 3);
+            left_click(session, jgui_test::number(button.left()) + 3, jgui_test::number(button.top()) + 3);
+            step = Step::Started;
+            waits = 0;
+            return;
+        }
+        if (!std::filesystem::exists(record)) {
+            if (waits > 1000) {
+                session.violation("OBS was not started");
+                step = Step::Done;
+                session.close_window();
+            }
+            return;
+        }
+        if (read_text_file(record.string()) != "--startrecording\n") session.violation("it was not told to record: " + read_text_file(record.string()));
+        step = Step::Done;
+        session.close_window();
+    }
+};
+
 // The red, green and blue of a PNG of stored blocks, as png.hpp writes it, walked by its own lengths, or nothing if it is not one. Python's zlib and Pillow have checked the format itself in test_files.
 [[nodiscard]] std::vector<std::uint8_t> rows_in_stored_png(const std::vector<std::uint8_t>& png) {
     constexpr std::size_t idat_length_at = 33;  // the signature and a whole IHDR
@@ -3405,6 +3446,8 @@ template <class Script>
         put_file(top / "data" / "applications" / "stand-in.desktop", "[Desktop Entry]\nExec=stand-in-opener --given %f\n");
         std::filesystem::permissions(bin / "xdg-mime", std::filesystem::perms::owner_all);
         std::filesystem::permissions(bin / "stand-in-opener", std::filesystem::perms::owner_all);
+        std::filesystem::copy_file(bin / "stand-in-opener", bin / "obs");
+        std::filesystem::permissions(bin / "obs", std::filesystem::perms::owner_all);
         const char* path_was = std::getenv("PATH");
         const std::string path_before = path_was == nullptr ? std::string{} : std::string{path_was};
         if (::setenv("PATH", (bin.string() + ":" + path_before).c_str(), 1) != 0) return false;
@@ -3567,6 +3610,7 @@ constexpr auto scenarios = std::tuple{
     Named<FilesTouchRename>{"files_touch_rename"},
     Named<FilesScreenShot>{"files_screenshot"},
     Named<FilesOpen>{"files_open"},
+    Named<FilesRecord>{"files_record"},
     Named<FilesCopyLine>{"files_copy_line"},
 };
 

@@ -315,7 +315,7 @@ set(JGUI_FAKE_SCENARIOS
   viewer_first_frame viewer_section_switch viewer_wheel_scroll viewer_resize viewer_missing_file viewer_malformed_file viewer_refused_symlink viewer_path_not_text viewer_copy_with_no_base viewer_file_in_its_base viewer_65536_rows
   settings_demo_records settings_demo_both_flags settings_demo_no_base
   settings_viewer_items settings_viewer_bad_row settings_viewer_missing_file settings_viewer_only_settings settings_viewer_malformed_file settings_viewer_files_in_its_base
-  files_open_on_the_left files_missing_folder files_copy_and_drag files_several files_delete files_touch_rename files_screenshot files_open files_copy_line)
+  files_open_on_the_left files_missing_folder files_copy_and_drag files_several files_delete files_touch_rename files_screenshot files_open files_record files_copy_line)
 foreach(scenario ${JGUI_FAKE_SCENARIOS})
   add_test(NAME fake_${scenario} COMMAND test_fake_compositor ${scenario})
   set_tests_properties(fake_${scenario} PROPERTIES TIMEOUT 300
@@ -329,7 +329,7 @@ foreach(scenario viewer_first_frame viewer_section_switch viewer_wheel_scroll vi
   set_property(TEST fake_${scenario} APPEND PROPERTY ENVIRONMENT "JGUI_TEST_VIEWER=$<TARGET_FILE:jcppgui-viewer>")
 endforeach()
 # These start the real file manager itself, against the same compositor.
-set_property(TEST fake_files_open_on_the_left fake_files_missing_folder fake_files_copy_and_drag fake_files_several fake_files_delete fake_files_touch_rename fake_files_screenshot fake_files_open fake_files_copy_line APPEND PROPERTY ENVIRONMENT "JGUI_TEST_FILES=$<TARGET_FILE:jcppgui-files>")
+set_property(TEST fake_files_open_on_the_left fake_files_missing_folder fake_files_copy_and_drag fake_files_several fake_files_delete fake_files_touch_rename fake_files_screenshot fake_files_open fake_files_record fake_files_copy_line APPEND PROPERTY ENVIRONMENT "JGUI_TEST_FILES=$<TARGET_FILE:jcppgui-files>")
 # One C call failing at a time, through the real implementation. It goes against the compositor above.
 jgui_test(test_injection)
 target_include_directories(test_injection PRIVATE src src/wayland)

@@ -1716,6 +1716,32 @@ static_assert(open_starts_the_default_with_the_file());
 }
 static_assert(with_no_default_open_asks_what_program());
 
+[[nodiscard]] constexpr bool record_starts_obs_recording() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    const auto click_record = [&] {
+        click_on<decltype(tree), files::RecordButton>(tree);
+        turn(tree);
+    };
+    // Not installed: nothing starts, and the line says so.
+    click_record();
+    if (!disk.started.empty() || transfers_of(tree).line() != "Nothing is recording: OBS is not installed") return false;
+    disk.installed = {"obs"};
+    disk.no_picture_folder = true;
+    click_record();
+    if (!disk.started.empty() || transfers_of(tree).line() != "Nothing is recording: there is no home") return false;
+    disk.no_picture_folder = false;
+    disk.program_refuses = {"obs"};
+    click_record();
+    if (!disk.started.empty() || transfers_of(tree).line() != "Nothing is recording: cannot start obs") return false;
+    disk.program_refuses = {};
+    click_record();
+    if (disk.started != std::vector<std::vector<std::string>>{{"/", "obs", "--startrecording"}} || !disk.terminals.empty()) return false;
+    return transfers_of(tree).line() == "OBS started, to record. Stop it in OBS's window";
+}
+static_assert(record_starts_obs_recording());
+
 // --- A screenshot ---
 
 static_assert(png_crc32(std::array<std::uint8_t, 4>{'I', 'E', 'N', 'D'}) == 0xAE426082U, "the well-known checksum of a PNG's last chunk");
