@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -17,6 +18,7 @@
 
 #include "cell_text.hpp"
 #include "error.hpp"
+#include "open_programs.hpp"
 #include "text.hpp"
 
 namespace jgui::inline v001 {
@@ -269,6 +271,9 @@ concept FileSource = FileCopyJob<typename S::CopyJob> && FileMatchJob<typename S
     { source.read_text(path) } -> std::same_as<std::expected<std::string, Error>>;
     { source.touch(path, path) } -> std::same_as<std::expected<TouchOutcome, Error>>;
     { source.rename(path, path) } -> std::same_as<std::expected<void, Error>>;
+    { source.default_program(path) } -> std::same_as<std::optional<ProgramCommand>>;
+    { source.program_installed(path) } -> std::same_as<bool>;
+    { source.start_program(path, std::span<const std::string>{}) } -> std::same_as<std::expected<void, Error>>;
     { source.picture_folder() } -> std::same_as<std::expected<std::string, Error>>;
     { source.save_picture(path, path, std::span<const std::uint8_t>{}) } -> std::same_as<std::expected<std::string, Error>>;
     { source.editor() } -> std::same_as<std::string>;

@@ -94,6 +94,10 @@ struct FakeDisk {
     bool touch_fails{};
     bool no_terminal{};
     std::string editor{};
+    std::optional<ProgramCommand> default_program{};
+    std::vector<std::string> installed{};
+    std::vector<std::string> program_refuses{};
+    std::vector<std::vector<std::string>> started{};
     bool no_picture_folder{};
     bool picture_fails{};
     std::vector<std::vector<std::uint8_t>> pictures{};
@@ -167,6 +171,15 @@ struct FakeFiles {
         if (there && std::ranges::contains(there->entries, new_name, &FileEntry::name)) return make_error(ErrorCode::System, new_name + " is already there");
         disk->gone.push_back(path);
         disk->arrived.push_back(child_of_path(parent_of_path(path), new_name));
+        return {};
+    }
+    [[nodiscard]] constexpr std::optional<ProgramCommand> default_program(const std::string&) const { return disk->default_program; }
+    [[nodiscard]] constexpr bool program_installed(const std::string& program) const { return std::ranges::contains(disk->installed, program); }
+    [[nodiscard]] constexpr std::expected<void, Error> start_program(const std::string& folder, std::span<const std::string> command) const {
+        if (std::ranges::contains(disk->program_refuses, command.front())) return make_error(ErrorCode::System, "cannot start " + command.front());
+        std::vector<std::string> what{folder};
+        what.insert(what.end(), command.begin(), command.end());
+        disk->started.push_back(std::move(what));
         return {};
     }
     [[nodiscard]] constexpr std::expected<std::string, Error> picture_folder() const {
@@ -1569,6 +1582,140 @@ static_assert(touch_needs_a_folder());
 }
 static_assert(rename_takes_one_thing_and_starts_from_its_name());
 
+// --- Open ---
+
+static_assert(family_of_name("a.odt") == FileFamily::Office && family_of_name("A.DOCX") == FileFamily::Office && family_of_name("x.y.xlsx") == FileFamily::Office);
+static_assert(family_of_name("p.png") == FileFamily::Image && family_of_name("p.JPeG") == FileFamily::Image);
+static_assert(family_of_name("n.txt") == FileFamily::Text && family_of_name("c.cpp") == FileFamily::Text);
+static_assert(family_of_name("x.zzz") == FileFamily::Other && family_of_name("noname") == FileFamily::Other && family_of_name(".png") == FileFamily::Other && family_of_name("") == FileFamily::Other, "a hidden file's whole name is not an extension");
+
+[[nodiscard]] constexpr std::size_t count_for(FileFamily family, std::size_t most) {
+    return programs_for(family, most, [](std::string_view) { return true; }).size();
+}
+static_assert(count_for(FileFamily::Office, 99) == 4 && count_for(FileFamily::Image, 99) == 6 && count_for(FileFamily::Text, 99) == 7);
+static_assert(count_for(FileFamily::Other, 99) == common_programs.size(), "a family it does not know is offered everything");
+static_assert(count_for(FileFamily::Other, 12) == 12, "and no more than there are places for");
+static_assert(programs_for(FileFamily::Office, 9, [](std::string_view name) { return name == "gnumeric"; }).front().program == "gnumeric", "only what is installed is offered");
+static_assert(programs_for(FileFamily::Image, 9, [](std::string_view) { return false; }).empty());
+static_assert(most_open_choices >= 12);
+
+using Command = ProgramCommand;
+inline constexpr std::string_view a_file = "/a b/c.txt";
+static_assert(desktop_command_for("[Desktop Entry]\nName=X\nExec=gnome-text-editor %U\n", a_file) == Command{{"gnome-text-editor", "/a b/c.txt"}, false}, "the path stays one word, spaces and all");
+static_assert(desktop_command_for("[Desktop Entry]\nExec=libreoffice --writer %U\n", a_file) == Command{{"libreoffice", "--writer", "/a b/c.txt"}, false});
+static_assert(desktop_command_for("[Desktop Entry]\nExec=prog\n", a_file) == Command{{"prog", "/a b/c.txt"}, false}, "with no code for the file, it still gets the file");
+static_assert(desktop_command_for("[Desktop Entry]\nExec=prog --file=%f %i %c %k --pct=100%%\n", a_file) == Command{{"prog", "--file=/a b/c.txt", "--pct=100%"}, false}, "in a word, and the entry's own codes go");
+static_assert(desktop_command_for("[Desktop Entry]\nTerminal=true\nExec=vim %F\n", a_file) == Command{{"vim", "/a b/c.txt"}, true});
+static_assert(desktop_command_for("[Desktop Entry]\nExec=flatpak run --file-forwarding org.x @@u %U @@\n", a_file) == Command{{"flatpak", "run", "--file-forwarding", "org.x", "@@u", "/a b/c.txt", "@@"}, false});
+static_assert(desktop_command_for("[Desktop Entry]\nExec=first %f\n[Desktop Action New]\nExec=second\nTerminal=true\n", a_file) == Command{{"first", "/a b/c.txt"}, false}, "an action's lines are not the entry's");
+static_assert(desktop_command_for("[Other]\nExec=x\n", a_file) == std::nullopt && desktop_command_for("[Desktop Entry]\nName=X\n", a_file) == std::nullopt && desktop_command_for("[Desktop Entry]\nExec=  \n", a_file) == std::nullopt && desktop_command_for("", a_file) == std::nullopt);
+static_assert(desktop_command_for("[Desktop Entry]\nExec=sh -c \"x %f\"\n", a_file) == std::nullopt && desktop_command_for("[Desktop Entry]\nExec=a 'b'\n", a_file) == std::nullopt && desktop_command_for("[Desktop Entry]\nExec=a; rm b\n", a_file) == std::nullopt, "what a shell would read is refused");
+static_assert(desktop_command_for("[Desktop Entry]\nExec=a $HOME\n", a_file) == std::nullopt && desktop_command_for("[Desktop Entry]\nExec=a `b`\n", a_file) == std::nullopt && desktop_command_for("[Desktop Entry]\nExec=a|b\n", a_file) == std::nullopt);
+static_assert(desktop_command_for("[Desktop Entry]\nExec=a %z\n", a_file) == std::nullopt && desktop_command_for("[Desktop Entry]\nExec=a %\n", a_file) == std::nullopt, "a code it does not know");
+// A path that looks like a code stays what it is, because the path is not read again.
+static_assert(desktop_command_for("[Desktop Entry]\nExec=a %f\n", "/%u/;x") == Command{{"a", "/%u/;x"}, false});
+
+template <class Tree>
+[[nodiscard]] constexpr auto& open_popup_of(Tree& tree) {
+    return tree.template get<files::OpenPopup>();
+}
+
+template <class Tree>
+constexpr void click_open(Tree& tree) {
+    click_on<Tree, files::OpenButton>(tree);
+    turn(tree);
+}
+
+[[nodiscard]] constexpr bool open_starts_the_default_with_the_file() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    auto& popup = open_popup_of(tree);
+    click_open(tree);
+    if (popup.is_open() || !disk.started.empty() || transfers_of(tree).line() != "Select one file to open") return false;
+    // A folder is refused, by name.
+    tree.template get<GridOf<Left_>>().select_row(GridRow{0});
+    click_open(tree);
+    if (popup.is_open() || !disk.started.empty() || transfers_of(tree).line() != "Only a file can be opened, and one is not one") return false;
+    // One each side is two.
+    tree.template get<GridOf<Left_>>().select_row(GridRow{2});
+    tree.template get<GridOf<Right_>>().select_row(GridRow{2});
+    click_open(tree);
+    if (!disk.started.empty() || transfers_of(tree).line() != "Select one file to open") return false;
+    tree.template get<GridOf<Right_>>().select_rows({}, std::nullopt);
+    disk.default_program = ProgramCommand{{"some-editor", "--new", "/top/note.txt"}, false};
+    click_open(tree);
+    if (popup.is_open() || disk.started != std::vector<std::vector<std::string>>{{"/top", "some-editor", "--new", "/top/note.txt"}} || transfers_of(tree).line() != "Opened note.txt with some-editor") return false;
+    // One that wants a terminal gets one.
+    disk.default_program = ProgramCommand{{"vim", "/top/note.txt"}, true};
+    click_open(tree);
+    if (disk.started.size() != 1 || disk.terminals != std::vector<std::vector<std::string>>{{"/top", "vim", "/top/note.txt"}}) return false;
+    // It may start with something else going on, because it goes on by itself.
+    disk.default_program = ProgramCommand{{"p", "/top/note.txt"}, false};
+    transfers_of(tree).copy({"/top/note.txt"});
+    transfers_of(tree).paste_into("/other");
+    click_open(tree);
+    return disk.started.size() == 2;
+}
+static_assert(open_starts_the_default_with_the_file());
+
+[[nodiscard]] constexpr bool with_no_default_open_asks_what_program() {
+    FakeDisk disk;
+    disk.installed = {"gedit", "vim", "libreoffice", "gimp"};
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    auto& popup = open_popup_of(tree);
+    tree.template get<GridOf<Left_>>().select_row(GridRow{2});  // note.txt
+    click_open(tree);
+    if (!popup.is_open() || popup.choice_count() != 2 || popup.what_text() != "note.txt in /top" || !disk.started.empty()) return false;
+    // The list holds what suits it, in the table's order, and what the list does not reach cannot be pressed.
+    if (tree.template get<FileOpenPopupChoice<files::OpenPopup, 0>>().caption() != "gedit" || tree.template get<FileOpenPopupChoice<files::OpenPopup, 1>>().caption() != "Vim") return false;
+    if (!tree.template get<FileOpenPopupChoice<files::OpenPopup, 2>>().bounds().empty()) return false;
+    // A click on the list starts that one with the file, in a terminal if it wants one.
+    click_on<decltype(tree), FileOpenPopupChoice<files::OpenPopup, 1>>(tree);
+    if (popup.is_open() || disk.terminals != std::vector<std::vector<std::string>>{{"/top", "vim", "/top/note.txt"}} || transfers_of(tree).line() != "Opened note.txt with vim") return false;
+    click_open(tree);
+    click_on<decltype(tree), FileOpenPopupChoice<files::OpenPopup, 0>>(tree);
+    if (popup.is_open() || disk.started != std::vector<std::vector<std::string>>{{"/top", "gedit", "/top/note.txt"}}) return false;
+    // A program that will not start stays open to choose another.
+    disk.program_refuses = {"gedit"};
+    click_open(tree);
+    click_on<decltype(tree), FileOpenPopupChoice<files::OpenPopup, 0>>(tree);
+    if (!popup.is_open() || popup.problem() != "cannot start gedit") return false;
+    // Typing: nothing is refused, a name not installed is refused, quotes are refused, and options stay separate words.
+    key(tree, Key::Return);
+    if (!popup.is_open() || popup.problem() != "Click a program, or type one") return false;
+    type_in(tree, "aaa");
+    key(tree, Key::Return);
+    if (!popup.is_open() || popup.problem() != "aaa is not installed") return false;
+    for (int i = 0; i < 3; ++i) key(tree, Key::BackSpace);
+    type_in(tree, "a'b");
+    key(tree, Key::Return);
+    if (!popup.is_open() || !popup.problem().starts_with("A quote")) return false;
+    for (int i = 0; i < 3; ++i) key(tree, Key::BackSpace);
+    disk.installed.push_back("zed");
+    type_in(tree, "zed -n");
+    key(tree, Key::Return);
+    if (popup.is_open() || disk.started.back() != std::vector<std::string>{"/top", "zed", "-n", "/top/note.txt"}) return false;
+    // Escape starts nothing.
+    const std::size_t before = disk.started.size();
+    click_open(tree);
+    key(tree, Key::Escape);
+    if (popup.is_open() || disk.started.size() != before || transfers_of(tree).line() != "Nothing was opened") return false;
+    // A default that does not start says so, and asks.
+    disk.default_program = ProgramCommand{{"broken", "/top/note.txt"}, false};
+    disk.program_refuses = {"broken"};
+    click_open(tree);
+    if (!popup.is_open() || popup.problem() != "Its default program did not start: cannot start broken" || popup.choice_count() != 2) return false;
+    key(tree, Key::Escape);
+    // With nothing installed for it the list is empty, and a name can still be typed.
+    disk.default_program.reset();
+    disk.installed = {"zed"};
+    click_open(tree);
+    return popup.is_open() && popup.choice_count() == 0;
+}
+static_assert(with_no_default_open_asks_what_program());
+
 // --- A screenshot ---
 
 static_assert(png_crc32(std::array<std::uint8_t, 4>{'I', 'E', 'N', 'D'}) == 0xAE426082U, "the well-known checksum of a PNG's last chunk");
@@ -2627,6 +2774,82 @@ void touches_real_things() {
     check(!touch_local_file((top / "folder_link").string(), "x") && !std::filesystem::exists(top / "real_folder" / "x"), "a link standing where the folder should be is not followed");
 }
 
+[[nodiscard]] std::string wait_for_text(const std::filesystem::path& path, std::string_view wanted);
+
+void opens_with_real_programs() {
+    const jgui_test::TemporaryDirectory directory;
+    const std::filesystem::path top = std::filesystem::canonical(directory.path());
+    const std::filesystem::path bin = top / "bin";
+    std::filesystem::create_directories(bin);
+    // With no first line naming an interpreter, execvp gives these to the system's sh.
+    const auto put_script = [&](const char* name, std::string_view text) {
+        put_text(bin / name, text);
+        std::filesystem::permissions(bin / name, std::filesystem::perms::owner_all);
+    };
+
+    // What a program prints, and what is not used.
+    put_script("says", "printf 'one\\ntwo\\n'\n");
+    put_script("fails", "printf 'text\\n'\nexit 3\n");
+    put_script("hangs", "exec sleep 30\n");
+    put_script("floods", "while :; do printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; done\n");
+    const auto output_of = [&](const char* name, std::chrono::milliseconds most) { return read_program_output(Words{(bin / name).string()}, most); };
+    check(output_of("says", std::chrono::seconds{5}) == "one\ntwo\n", "what it prints comes back");
+    check(!output_of("fails", std::chrono::seconds{5}), "what a failing program printed is not used");
+    const auto started = std::chrono::steady_clock::now();
+    check(!output_of("hangs", std::chrono::milliseconds{200}), "one that hangs gives nothing");
+    check(std::chrono::steady_clock::now() - started < std::chrono::seconds{5}, "and does not hold things up");
+    check(!output_of("floods", std::chrono::seconds{5}), "one that says too much gives nothing");
+    check(!read_program_output(Words{"jcppgui-no-such-program"}, std::chrono::seconds{5}), "what is not there gives nothing");
+    check(!read_program_output(Words{}, std::chrono::seconds{5}), "and nothing to run gives nothing");
+
+    check(local_program_is_installed((bin / "says").string()), "a program can be found by its path");
+    check(!local_program_is_installed((top / "not_there").string()) && !local_program_is_installed(top.string()), "a path to nothing or to a folder is not one");
+
+    // Starting one: it goes on by itself, in the file's folder, and an awkward name stays one argument.
+    put_script("opener", "pwd > \"$0.folder\"\nfor word in \"$@\"; do printf '%s\\n' \"$word\" >> \"$0.words\"; done\nprintf done >> \"$0.done\"\n");
+    const std::filesystem::path bait = top / "ran_a_name";
+    const std::filesystem::path awkward = top / ("a b; touch " + bait.filename().string());
+    put_text(awkward, "x");
+    check(start_local_program(top.string(), Words{(bin / "opener").string(), "--flag", awkward.string()}).has_value(), "a program starts");
+    static_cast<void>(wait_for_text(bin / "opener.done", "done"));
+    check(whole_text_of(bin / "opener.words") == "--flag\n" + awkward.string() + "\n", "with the name as one argument");
+    check(whole_text_of(bin / "opener.folder") == top.string() + "\n", "in the folder it was told");
+    check(!std::filesystem::exists(bait), "and nothing in a name ran");
+    const auto missing = start_local_program(top.string(), Words{"jcppgui-no-such-program", "x"});
+    check(!missing && missing.error().message.contains("jcppgui-no-such-program"), "one that cannot start says which");
+    check(!start_local_program(top.string(), Words{}) && !start_local_program("relative", Words{"x"}), "nothing to start, or a folder that is no plain path, is refused");
+
+    // The default, through a stand-in for xdg-mime. It knows one kind of file.
+    put_script("xdg-mime", "case \"$2:$3\" in\n  *.known) printf 'text/x-known\\n' ;;\n  *.badentry) printf 'text/x-badentry\\n' ;;\n  *.none) printf 'text/x-none\\n' ;;\n  *.traversal) printf 'text/x-traversal\\n' ;;\n  default:text/x-known) printf 'my.desktop\\n' ;;\n  default:text/x-badentry) printf 'bad.desktop\\n' ;;\n  default:text/x-traversal) printf '../my.desktop\\n' ;;\n  default:*) printf '\\n' ;;\n  *) exit 4 ;;\nesac\n");
+    const std::filesystem::path personal = top / "personal";
+    const std::filesystem::path shared = top / "shared";
+    std::filesystem::create_directories(personal / "applications");
+    std::filesystem::create_directories(shared / "applications");
+    put_text(shared / "applications" / "my.desktop", "[Desktop Entry]\nExec=my-prog --flag %f\n");
+    put_text(shared / "applications" / "bad.desktop", "[Desktop Entry]\nExec=sh -c \"x\"\n");
+    const std::string path_was = std::getenv("PATH") == nullptr ? std::string{} : std::string{std::getenv("PATH")};
+    const char* data_home_was = std::getenv("XDG_DATA_HOME");
+    const std::string data_home_before = data_home_was == nullptr ? std::string{} : std::string{data_home_was};
+    const char* data_dirs_was = std::getenv("XDG_DATA_DIRS");
+    const std::string data_dirs_before = data_dirs_was == nullptr ? std::string{} : std::string{data_dirs_was};
+    check(::setenv("PATH", (bin.string() + ":" + path_was).c_str(), 1) == 0 && ::setenv("XDG_DATA_HOME", personal.c_str(), 1) == 0 && ::setenv("XDG_DATA_DIRS", (shared.string() + "/:relative").c_str(), 1) == 0, "the stand-ins are set up");
+    check(local_program_is_installed("xdg-mime"), "a name is found on PATH");
+    const auto known = local_default_program((top / "a b.known").string());
+    check(known == ProgramCommand{{"my-prog", "--flag", (top / "a b.known").string()}, false}, "the entry's command comes back, with the file");
+    put_text(personal / "applications" / "my.desktop", "[Desktop Entry]\nTerminal=true\nExec=personal-prog\n");
+    check(local_default_program((top / "x.known").string()) == ProgramCommand{{"personal-prog", (top / "x.known").string()}, true}, "and a person's own comes first");
+    std::filesystem::remove(personal / "applications" / "my.desktop");
+    check(!local_default_program((top / "x.none").string()), "no default is nothing");
+    check(!local_default_program((top / "x.badentry").string()), "an entry that would need a shell is nothing");
+    check(!local_default_program((top / "x.traversal").string()), "an entry's name cannot climb out of the folder");
+    check(!local_default_program((top / "x.other").string()), "xdg-mime failing is nothing");
+    check(!local_default_program("relative.known"), "and so is what is no plain path");
+    check(::setenv("PATH", top.c_str(), 1) == 0 && !local_default_program((top / "x.known").string()), "with no xdg-mime installed it is nothing");
+    check(::setenv("PATH", path_was.c_str(), 1) == 0, "PATH is put back");
+    check((data_home_was == nullptr ? ::unsetenv("XDG_DATA_HOME") : ::setenv("XDG_DATA_HOME", data_home_before.c_str(), 1)) == 0, "XDG_DATA_HOME is put back");
+    check((data_dirs_was == nullptr ? ::unsetenv("XDG_DATA_DIRS") : ::setenv("XDG_DATA_DIRS", data_dirs_before.c_str(), 1)) == 0, "XDG_DATA_DIRS is put back");
+}
+
 void saves_real_pictures() {
     const jgui_test::TemporaryDirectory directory;
     const std::filesystem::path top = std::filesystem::canonical(directory.path());
@@ -2840,6 +3063,7 @@ void diffs_agree_with_the_slow_way() {
     touches_real_things();
     renames_real_things();
     saves_real_pictures();
+    opens_with_real_programs();
     opens_a_real_terminal(this_program);
     diffs_real_things();
     diffs_agree_with_the_slow_way();

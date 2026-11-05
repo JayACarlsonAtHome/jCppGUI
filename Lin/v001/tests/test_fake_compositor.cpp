@@ -3094,6 +3094,65 @@ struct FilesTouchRename {
     }
 };
 
+// Open, off the wire: the real program asks a stand-in for xdg-mime, reads a real desktop entry, and starts a stand-in program with the selected file as its argument.
+struct FilesOpen {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool files_program = true;
+    static constexpr bool left_exists = true;
+    static constexpr bool opens_programs = true;
+    enum class Step : std::uint8_t { First, Click, Started, Done };
+    FilesState state{};
+    Step step{Step::First};
+    int waits{};
+
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const KeyboardCreated&) { send_valid_keymap(session); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.pointer() || !session.keyboard() || step == Step::Done) return;
+        const std::filesystem::path left{state.left};
+        const std::filesystem::path record = left.parent_path() / "bin" / "stand-in-opener.words";
+        FilesReference reference{jgui::starting_folder(state.left), jgui::starting_folder(state.right), viewer_width, viewer_height};
+        auto& grid = reference.get<jgui::FilePaneGrid<files::LeftPane>>();
+        ++waits;
+        switch (step) {
+            case Step::First: {
+                const std::int32_t x = jgui_test::number(grid.column_left(jgui::file_name_column)) + 60;
+                const std::int32_t y = jgui_test::number(grid.body_area().top()) + jgui_test::number(grid.row_height()) + 3;
+                pointer_enter(session, x, y);
+                session.queue(event::keyboard_enter(*session.keyboard(), session.next_serial(), *session.window_surface()));
+                left_click(session, x, y);  // plain.txt, with sub above it
+                step = Step::Click;
+                waits = 0;
+                return;
+            }
+            case Step::Click: {
+                if (waits < 20) return;
+                const jgui::Rect button = reference.get<files::OpenButton>().bounds();
+                left_click(session, jgui_test::number(button.left()) + 3, jgui_test::number(button.top()) + 3);
+                step = Step::Started;
+                waits = 0;
+                return;
+            }
+            case Step::Started:
+                if (!std::filesystem::exists(record)) {
+                    if (waits > 1000) {
+                        session.violation("the program was not started");
+                        session.close_window();
+                        step = Step::Done;
+                    }
+                    return;
+                }
+                if (read_text_file(record.string()) != "--given\n" + (left / "plain.txt").string() + "\n") session.violation("it was not given the file: " + read_text_file(record.string()));
+                step = Step::Done;
+                session.close_window();
+                return;
+            case Step::Done:
+            default: return;
+        }
+    }
+};
+
 // The red, green and blue of a PNG of stored blocks, as png.hpp writes it, walked by its own lengths, or nothing if it is not one. Python's zlib and Pillow have checked the format itself in test_files.
 [[nodiscard]] std::vector<std::uint8_t> rows_in_stored_png(const std::vector<std::uint8_t>& png) {
     constexpr std::size_t idat_length_at = 33;  // the signature and a whole IHDR
@@ -3336,6 +3395,20 @@ template <class Script>
     put_file(right / "only.txt", "only");
     // The program under test never reaches the person's real trash.
     if (::setenv("XDG_DATA_HOME", (top / "data").c_str(), 1) != 0) return false;
+    // The program under test starts nothing of the person's: stand-ins are first on PATH, written with no first line, so execvp gives them to sh, and it finds only this entry.
+    if constexpr (requires { requires Script::opens_programs; }) {
+        const std::filesystem::path bin = top / "bin";
+        std::filesystem::create_directories(bin);
+        std::filesystem::create_directories(top / "data" / "applications");
+        put_file(bin / "xdg-mime", "case \"$2\" in\n  filetype) printf 'text/x-stand-in\\n' ;;\n  default) printf 'stand-in.desktop\\n' ;;\nesac\n");
+        put_file(bin / "stand-in-opener", "for word in \"$@\"; do printf '%s\\n' \"$word\" >> \"$0.partial\"; done\nmv \"$0.partial\" \"$0.words\"\n");
+        put_file(top / "data" / "applications" / "stand-in.desktop", "[Desktop Entry]\nExec=stand-in-opener --given %f\n");
+        std::filesystem::permissions(bin / "xdg-mime", std::filesystem::perms::owner_all);
+        std::filesystem::permissions(bin / "stand-in-opener", std::filesystem::perms::owner_all);
+        const char* path_was = std::getenv("PATH");
+        const std::string path_before = path_was == nullptr ? std::string{} : std::string{path_was};
+        if (::setenv("PATH", (bin.string() + ":" + path_before).c_str(), 1) != 0) return false;
+    }
     // Nor the person's real ScreenShots folder.
     if constexpr (requires { requires Script::takes_pictures; }) {
         std::filesystem::create_directories(top / "home");
@@ -3493,6 +3566,7 @@ constexpr auto scenarios = std::tuple{
     Named<FilesDelete>{"files_delete"},
     Named<FilesTouchRename>{"files_touch_rename"},
     Named<FilesScreenShot>{"files_screenshot"},
+    Named<FilesOpen>{"files_open"},
     Named<FilesCopyLine>{"files_copy_line"},
 };
 

@@ -21,6 +21,7 @@
 #include "file_listing.hpp"
 #include "copy_line.hpp"
 #include "line_diff.hpp"
+#include "open_programs.hpp"
 #include "png.hpp"
 #include "terminal_command.hpp"
 #include "timer.hpp"
@@ -100,6 +101,15 @@ struct NameQuestion {
     NameAsk ask{NameAsk::Touch};
     std::string folder{};
     std::string current{};
+};
+
+inline constexpr std::size_t most_open_choices = 12;
+
+// A file with no default that could be started: the common programs that are installed for it, and why, when starting one failed.
+struct OpenQuestion {
+    std::string path{};
+    std::vector<CommonProgram> choices{};
+    std::string reason{};
 };
 
 // Where the next picture of the window goes.
@@ -278,6 +288,35 @@ public:
         }
         const std::string names = paths.size() == 1 ? std::string{last_name_of(paths.front())} : detail::count_with_plural(paths.size(), "file");
         say((tool == TerminalTool::Cat ? "Showing " : "Editing ") + names + " in a terminal");
+    }
+
+    // Starts the file's default program with the file as its argument, or asks what program to use. The program goes on by itself, so whatever else is going on here may go on too.
+    constexpr void open_file(const std::string& path) {
+        std::string reason;
+        if (const auto program = source_.default_program(path); program) {
+            auto started = start_for(path, *program);
+            if (started) return;
+            reason = "Its default program did not start: " + started.error().message;
+        }
+        const auto installed = [&](std::string_view name) { return source_.program_installed(std::string{name}); };
+        open_question_ = OpenQuestion{path, programs_for(family_of_name(last_name_of(path)), most_open_choices, installed), std::move(reason)};
+    }
+
+    // Once, for whatever asks the person.
+    [[nodiscard]] constexpr std::optional<OpenQuestion> take_open_question() { return std::exchange(open_question_, std::nullopt); }
+
+    [[nodiscard]] constexpr std::expected<void, Error> open_with_choice(const std::string& path, const CommonProgram& choice) {
+        return start_for(path, ProgramCommand{{std::string{choice.program}, path}, choice.in_terminal});
+    }
+
+    // A program and plain options, read as EDITOR is, with no shell.
+    [[nodiscard]] constexpr std::expected<void, Error> open_with_typed(const std::string& path, std::string_view typed) {
+        if (typed.find_first_not_of(" \t") == std::string_view::npos) return make_error(ErrorCode::System, "Click a program, or type one");
+        auto words = editor_words(typed);
+        if (!words) return make_error(ErrorCode::System, "A quote or a backslash cannot be used here. Type a program and plain options");
+        if (!source_.program_installed(words->front())) return make_error(ErrorCode::System, words->front() + " is not installed");
+        words->push_back(path);
+        return start_for(path, ProgramCommand{std::move(*words), false});
     }
 
     // How the last diff came out, once. Empty until it has ended.
@@ -470,6 +509,15 @@ public:
     }
 
 private:
+    // In the file's own folder, and the line says what started it.
+    [[nodiscard]] constexpr std::expected<void, Error> start_for(const std::string& path, const ProgramCommand& command) {
+        const std::string folder = parent_of_path(path);
+        auto started = command.in_terminal ? source_.run_in_terminal(folder, command.words) : source_.start_program(folder, command.words);
+        if (!started) return std::unexpected(std::move(started.error()));
+        say("Opened " + std::string{last_name_of(path)} + " with " + std::string{last_name_of(command.words.front())});
+        return {};
+    }
+
     // Refused while the person can still correct it, if the name is already taken. Saving makes the file with O_EXCL anyway, so this only says so sooner, and a folder not there yet holds nothing.
     [[nodiscard]] constexpr std::expected<void, Error> name_the_picture(const std::string& folder, std::string file) {
         if (auto checked = check_given_name(folder, file); !checked) return std::unexpected(std::move(checked.error()));
@@ -772,6 +820,7 @@ private:
     std::optional<DiffReport> diff_done_{};
     std::optional<NameQuestion> name_question_{};
     std::optional<PictureTarget> picture_target_{};
+    std::optional<OpenQuestion> open_question_{};
 };
 
 template <class Tag, class Source>

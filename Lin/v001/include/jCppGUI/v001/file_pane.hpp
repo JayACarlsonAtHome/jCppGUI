@@ -395,6 +395,11 @@ public:
         return paths;
     }
 
+    // True when nothing selected on this side is anything but a file or a link.
+    [[nodiscard]] constexpr bool selected_are_files() const noexcept {
+        return std::ranges::all_of(grid().selected_rows(), [&](std::uint32_t row) { return rows()[row].kind == FileKind::File || rows()[row].kind == FileKind::Link; });
+    }
+
     // Paste: into the selected folder, or the folder the selected row is in, or with nothing selected the folder at the top.
     template <class U>
     constexpr void paste_here(U& ui) {
@@ -809,6 +814,26 @@ constexpr void compare_panes(U& ui) {
     text.append(decimal_text(on_left.differ, false)).append(" different, ");
     text.append(decimal_text(on_left.same, false)).append(" same size and time. Contents were not read. To match by contents, select two or more first.");
     transfers.tell(text);
+}
+
+// Exactly one selected, on either side, and that one a file or a link to one.
+template <class LeftTag, class RightTag, class TransfersTag, class U>
+constexpr void open_from_panes(U& ui) {
+    auto& left = ui.template get<LeftTag>();
+    auto& right = ui.template get<RightTag>();
+    auto& transfers = ui.template get<TransfersTag>();
+    std::vector<std::string> selected = left.selected_paths();
+    const std::vector<std::string> on_right = right.selected_paths();
+    selected.insert(selected.end(), on_right.begin(), on_right.end());
+    if (selected.size() != 1) {
+        transfers.tell("Select one file to open");
+        return;
+    }
+    if (!left.selected_are_files() || !right.selected_are_files()) {
+        transfers.tell("Only a file can be opened, and " + std::string{last_name_of(selected.front())} + " is not one");
+        return;
+    }
+    transfers.open_file(selected.front());
 }
 
 // Exactly two selected, on either side, the left pane's first.

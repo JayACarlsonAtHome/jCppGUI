@@ -3,9 +3,12 @@
 //          descriptors stays out of this header, as WaylandImpl does, behind one concrete type with a stateless deleter.
 #pragma once
 
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -107,6 +110,19 @@ private:
 // then those in known_terminals. It goes on by itself when this program ends. Refused when no terminal can be started.
 [[nodiscard]] std::expected<void, Error> run_in_local_terminal(const std::string& folder, std::span<const std::string> command);
 
+// Starts this command in this folder, each word one argument with no shell between, and returns without waiting. It goes on by itself when this program ends. Refused when it cannot be started.
+[[nodiscard]] std::expected<void, Error> start_local_program(const std::string& folder, std::span<const std::string> command);
+
+// As far as can be told from here. A name with a slash is that path, and any other is looked for in the absolute folders of PATH.
+[[nodiscard]] bool local_program_is_installed(const std::string& program);
+
+// What a program prints, when it ends well within this time, of at most most_program_output_bytes. Nothing otherwise, and one that runs over is killed. It is for asking a quick question of a system tool.
+inline constexpr std::size_t most_program_output_bytes = 4096;
+[[nodiscard]] std::optional<std::string> read_program_output(std::span<const std::string> command, std::chrono::milliseconds most_time);
+
+// The command the desktop says opens this file, with the file as its argument: the system's xdg-mime is asked, and its entry read from the applications folders under XDG_DATA_HOME and XDG_DATA_DIRS. Nothing when any of that has no answer, which is not an error, because a person is then asked.
+[[nodiscard]] std::optional<ProgramCommand> local_default_program(const std::string& path);
+
 // What EDITOR says, or nothing when it is not set or names a program that is not installed, so that Edit falls back to Vim rather than opening a terminal that shuts at once.
 [[nodiscard]] std::string local_editor();
 
@@ -116,6 +132,9 @@ struct LocalFiles {
     using CountJob = LocalCountJob;
     [[nodiscard]] std::expected<TouchOutcome, Error> touch(const std::string& folder, const std::string& name) const { return touch_local_file(folder, name); }
     [[nodiscard]] std::expected<void, Error> rename(const std::string& path, const std::string& new_name) const { return rename_local_file(path, new_name); }
+    [[nodiscard]] std::optional<ProgramCommand> default_program(const std::string& path) const { return local_default_program(path); }
+    [[nodiscard]] bool program_installed(const std::string& program) const { return local_program_is_installed(program); }
+    [[nodiscard]] std::expected<void, Error> start_program(const std::string& folder, std::span<const std::string> command) const { return start_local_program(folder, command); }
     [[nodiscard]] std::expected<std::string, Error> picture_folder() const { return local_picture_folder(); }
     [[nodiscard]] std::expected<std::string, Error> save_picture(const std::string& folder, const std::string& name, std::span<const std::uint8_t> png) const { return save_local_picture(folder, name, png); }
     [[nodiscard]] std::string editor() const { return local_editor(); }
