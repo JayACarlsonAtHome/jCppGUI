@@ -269,6 +269,8 @@ concept FileSource = FileCopyJob<typename S::CopyJob> && FileMatchJob<typename S
     { source.read_text(path) } -> std::same_as<std::expected<std::string, Error>>;
     { source.touch(path, path) } -> std::same_as<std::expected<TouchOutcome, Error>>;
     { source.rename(path, path) } -> std::same_as<std::expected<void, Error>>;
+    { source.picture_folder() } -> std::same_as<std::expected<std::string, Error>>;
+    { source.save_picture(path, path, std::span<const std::uint8_t>{}) } -> std::same_as<std::expected<std::string, Error>>;
     { source.editor() } -> std::same_as<std::string>;
     { source.run_in_terminal(path, std::span<const std::string>{}) } -> std::same_as<std::expected<void, Error>>;
 };
@@ -319,6 +321,15 @@ inline constexpr std::size_t most_file_name_bytes = 255;   // the longest name L
 [[nodiscard]] constexpr bool path_is_inside(std::string_view path, std::string_view folder) noexcept {
     if (folder == "/") return path.starts_with('/');
     return path == folder || (path.starts_with(folder) && path.size() > folder.size() && path[folder.size()] == '/');
+}
+
+inline constexpr std::string_view picture_suffix = ".png";
+
+// The file a typed name comes to. One that already says it is a PNG is not told twice.
+[[nodiscard]] constexpr std::string picture_file_name(std::string_view typed) {
+    std::string name{typed};
+    if (!typed.ends_with(picture_suffix)) name.append(picture_suffix);
+    return name;
 }
 
 // Whether a person's typed name can be used in this folder, saying why not. The source itself says whether the name is taken.

@@ -1,5 +1,5 @@
 // File: include/jCppGUI/v001/file_name_popup.hpp
-// Purpose: FileNamePopup<Tag, Transfers>: asks a person to type a name, for Touch and Rename. Return and OK use it, and Escape and Cancel change nothing. Unlike the popups that guard a delete, Return may say yes here, because neither of these can replace or remove
+// Purpose: FileNamePopup<Tag, Transfers>: asks a person to type a name, for Touch, Rename and ScreenShot. Return and OK use it, and Escape and Cancel change nothing. Unlike the popups that guard a delete, Return may say yes here, because none of these can replace or remove
 //          anything. A name that is refused stays in the box with the reason under it, to be corrected. jgui.hpp does not include it.
 #pragma once
 
@@ -51,6 +51,15 @@ struct FileNamePopupSayYes {
     }
 };
 
+[[nodiscard]] constexpr std::string_view file_name_heading(NameAsk ask) noexcept {
+    switch (ask) {
+        case NameAsk::Touch: return "Touch: type a name. A new file is made, or a name already there gets the time of now.";
+        case NameAsk::Rename: return "Rename: type the new name. A name already there is refused.";
+        case NameAsk::ScreenShot:
+        default: return "ScreenShot: type a name for the picture of this window. A name already there is refused.";
+    }
+}
+
 }  // namespace detail
 
 template <class Tag, class Transfers>
@@ -85,7 +94,7 @@ public:
 
     constexpr void open_with(NameQuestion question) {
         // Words of our own, a path that could be shown cut to what a line holds, and a name that was in a row, so these are not refused.
-        static_cast<void>(std::get<Heading>(children_).set_text(question.ask == NameAsk::Touch ? "Touch: type a name. A new file is made, or a name already there gets the time of now." : "Rename: type the new name. A name already there is refused."));
+        static_cast<void>(std::get<Heading>(children_).set_text(detail::file_name_heading(question.ask)));
         static_cast<void>(std::get<Where>(children_).set_text(utf8_prefix("In " + question.folder, max_caption_bytes)));
         static_cast<void>(std::get<Entry>(children_).set_text(question.current));
         static_cast<void>(std::get<Problem>(children_).set_text(""));
@@ -105,6 +114,8 @@ public:
         if (!question_) return;
         auto given = ui.template get<Transfers>().give_name(*question_, std::get<Entry>(children_).text());
         if (given) {
+            // This popup closes first, so the next frame, which is the one the picture is of, does not show it.
+            if (question_->ask == NameAsk::ScreenShot) ui.request_picture();
             close();
             return;
         }

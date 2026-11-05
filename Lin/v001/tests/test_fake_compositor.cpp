@@ -3094,6 +3094,128 @@ struct FilesTouchRename {
     }
 };
 
+// The red, green and blue of a PNG of stored blocks, as png.hpp writes it, walked by its own lengths, or nothing if it is not one. Python's zlib and Pillow have checked the format itself in test_files.
+[[nodiscard]] std::vector<std::uint8_t> rows_in_stored_png(const std::vector<std::uint8_t>& png) {
+    constexpr std::size_t idat_length_at = 33;  // the signature and a whole IHDR
+    constexpr std::size_t blocks_at = idat_length_at + 4 + 4 + 2;  // its length, its type and zlib's two bytes
+    std::vector<std::uint8_t> rows;
+    bool ended = false;
+    std::size_t at = blocks_at;
+    while (!ended && at + 5 <= png.size()) {
+        ended = png[at] == 1;
+        const std::size_t length = std::size_t{png[at + 1]} | (std::size_t{png[at + 2]} << 8U);
+        at += 5;
+        if (at + length > png.size()) {
+            ended = false;
+            break;
+        }
+        rows.insert(rows.end(), png.begin() + static_cast<std::ptrdiff_t>(at), png.begin() + static_cast<std::ptrdiff_t>(at + length));
+        at += length;
+    }
+    if (!ended) rows.clear();
+    return rows;
+}
+
+// ScreenShot, off the wire: it asks for a name, a real letter is typed, and what lands on the disk is the window as it was, without the question in it.
+struct FilesScreenShot {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool files_program = true;
+    static constexpr bool left_exists = true;
+    static constexpr bool takes_pictures = true;
+    static constexpr std::uint32_t key_a = 30;  // the evdev code, 8 under xkb's <AC01>
+    enum class Step : std::uint8_t { First, Ask, Type, Saved, Done };
+    FilesState state{};
+    Step step{Step::First};
+    int waits{};
+    std::vector<std::uint32_t> before{};
+
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const KeyboardCreated&) { send_valid_keymap(session); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void fail(Session& session, const std::string& why) {
+        session.violation(why);
+        session.close_window();
+        step = Step::Done;
+    }
+    void tap(Session& session, std::uint32_t key) {
+        session.queue(event::keyboard_key(*session.keyboard(), session.next_serial(), 0, key, 1));
+        session.queue(event::keyboard_key(*session.keyboard(), session.next_serial(), 0, key, 0));
+    }
+    void check_picture(Session& session, const std::filesystem::path& file) {
+        std::string text = read_text_file(file.string());
+        const std::vector<std::uint8_t> png(text.begin(), text.end());
+        const std::vector<std::uint8_t> rows = rows_in_stored_png(png);
+        const auto columns = static_cast<std::size_t>(viewer_width);
+        const auto lines = static_cast<std::size_t>(viewer_height);
+        if (rows.size() != (columns * 3 + 1) * lines) {
+            session.violation("the picture does not hold the whole window");
+            return;
+        }
+        // The press on the button may show, and nothing else, so nearly all of it is the window from before. The question would be far more than this allows.
+        std::size_t same = 0;
+        for (std::size_t y = 0; y < lines; ++y) {
+            for (std::size_t x = 0; x < columns; ++x) {
+                const std::uint32_t pixel = before[y * columns + x];
+                const std::size_t start = y * (columns * 3 + 1) + 1 + x * 3;
+                if (rows[start] == ((pixel >> 16U) & 0xFFU) && rows[start + 1] == ((pixel >> 8U) & 0xFFU) && rows[start + 2] == (pixel & 0xFFU)) ++same;
+            }
+        }
+        if (same < columns * lines / 100 * 99) session.violation("the picture is not the window as it was");
+    }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.pointer() || !session.keyboard() || step == Step::Done) return;
+        const std::filesystem::path shots = std::filesystem::path{state.left}.parent_path() / "home" / "ScreenShots";
+        FilesReference reference{jgui::starting_folder(state.left), jgui::starting_folder(state.right), viewer_width, viewer_height};
+        ++waits;
+        switch (step) {
+            case Step::First: {
+                const jgui::Rect button = reference.get<files::ScreenShotButton>().bounds();
+                pointer_enter(session, jgui_test::number(button.left()) + 3, jgui_test::number(button.top()) + 3);
+                session.queue(event::keyboard_enter(*session.keyboard(), session.next_serial(), *session.window_surface()));
+                step = Step::Ask;
+                waits = 0;
+                return;
+            }
+            case Step::Ask: {
+                if (waits < 20) return;
+                before = state.picture(session);
+                const jgui::Rect button = reference.get<files::ScreenShotButton>().bounds();
+                left_click(session, jgui_test::number(button.left()) + 3, jgui_test::number(button.top()) + 3);
+                step = Step::Type;
+                waits = 0;
+                return;
+            }
+            case Step::Type:
+                if (state.picture(session) == before) {
+                    if (waits > 200) fail(session, "the name was not asked for");
+                    return;
+                }
+                if (waits < 20) return;
+                if (std::filesystem::exists(shots)) {
+                    fail(session, "something was saved before it had a name");
+                    return;
+                }
+                tap(session, key_a);
+                tap(session, key_return);
+                step = Step::Saved;
+                waits = 0;
+                return;
+            case Step::Saved:
+                if (!std::filesystem::exists(shots / "a.png")) {
+                    if (waits > 400) fail(session, "the picture was not saved");
+                    return;
+                }
+                if (waits < 20) return;
+                check_picture(session, shots / "a.png");
+                step = Step::Done;
+                session.close_window();
+                return;
+            case Step::Done:
+            default: return;
+        }
+    }
+};
+
 // A click on the line that says what is going on puts all of it on the clipboard, off the wire: types offered, the text read back through a pipe as another program would, a reader that has gone does not end
 // the program, and an offer from another program is only destroyed. Then the clipboard goes to another program, and the source is destroyed.
 struct FilesCopyLine {
@@ -3214,6 +3336,11 @@ template <class Script>
     put_file(right / "only.txt", "only");
     // The program under test never reaches the person's real trash.
     if (::setenv("XDG_DATA_HOME", (top / "data").c_str(), 1) != 0) return false;
+    // Nor the person's real ScreenShots folder.
+    if constexpr (requires { requires Script::takes_pictures; }) {
+        std::filesystem::create_directories(top / "home");
+        if (::setenv("HOME", (top / "home").c_str(), 1) != 0) return false;
+    }
     Script script{};
     script.state.left = left.string();
     script.state.right = right.string();
@@ -3365,6 +3492,7 @@ constexpr auto scenarios = std::tuple{
     Named<FilesSeveral>{"files_several"},
     Named<FilesDelete>{"files_delete"},
     Named<FilesTouchRename>{"files_touch_rename"},
+    Named<FilesScreenShot>{"files_screenshot"},
     Named<FilesCopyLine>{"files_copy_line"},
 };
 

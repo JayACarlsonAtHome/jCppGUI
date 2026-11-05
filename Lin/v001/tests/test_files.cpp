@@ -94,6 +94,9 @@ struct FakeDisk {
     bool touch_fails{};
     bool no_terminal{};
     std::string editor{};
+    bool no_picture_folder{};
+    bool picture_fails{};
+    std::vector<std::vector<std::uint8_t>> pictures{};
     std::vector<std::string> touched{};
     std::vector<std::vector<std::string>> terminals{};
 };
@@ -166,6 +169,16 @@ struct FakeFiles {
         disk->arrived.push_back(child_of_path(parent_of_path(path), new_name));
         return {};
     }
+    [[nodiscard]] constexpr std::expected<std::string, Error> picture_folder() const {
+        if (disk->no_picture_folder) return make_error(ErrorCode::System, "there is no home");
+        return std::string{"/shots"};
+    }
+    [[nodiscard]] constexpr std::expected<std::string, Error> save_picture(const std::string& folder, const std::string& name, std::span<const std::uint8_t> png) const {
+        if (disk->picture_fails) return make_error(ErrorCode::System, "the disk is full");
+        disk->pictures.emplace_back(png.begin(), png.end());
+        disk->arrived.push_back(child_of_path(folder, name));
+        return child_of_path(folder, name);
+    }
     [[nodiscard]] constexpr std::expected<void, Error> run_in_terminal(const std::string& folder, std::span<const std::string> command) const {
         if (disk->no_terminal) return make_error(ErrorCode::System, "no terminal");
         std::vector<std::string> what{folder};
@@ -201,6 +214,7 @@ struct FakeFiles {
         if (path == "/top/one/inner") return DirectoryListing{{file("f2", 2)}, 0};
         if (path == "/top/two") return DirectoryListing{{file("f3", 3)}, 0};
         if (path == "/other") return DirectoryListing{{file("g1", 7)}, 0};
+        if (path == "/shots") return DirectoryListing{{}, 0};
         return make_error(ErrorCode::System, "cannot open " + path);
     }
 
@@ -1555,6 +1569,93 @@ static_assert(touch_needs_a_folder());
 }
 static_assert(rename_takes_one_thing_and_starts_from_its_name());
 
+// --- A screenshot ---
+
+static_assert(png_crc32(std::array<std::uint8_t, 4>{'I', 'E', 'N', 'D'}) == 0xAE426082U, "the well-known checksum of a PNG's last chunk");
+static_assert(png_adler32(std::array<std::uint8_t, 9>{'W', 'i', 'k', 'i', 'p', 'e', 'd', 'i', 'a'}) == 0x11E60398U, "the example the checksum's own description gives");
+static_assert(picture_file_name("shot") == "shot.png" && picture_file_name("shot.png") == "shot.png" && picture_file_name("a.txt") == "a.txt.png");
+
+[[nodiscard]] constexpr WindowPicture one_pixel_picture() {
+    std::array<std::uint32_t, 1> pixels{0xFF123456U};
+    return PixelBuffer::create(pixels, Size{Width{1}, Height{1}}, 4)->picture();
+}
+
+// One pixel, whole file. These bytes came from Python's own zlib, and Pillow read them back as that colour, so they do not depend on what they test.
+inline constexpr std::array<std::uint8_t, 72> one_pixel_png{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0F, 0x49, 0x44, 0x41, 0x54, 0x78, 0x01, 0x01, 0x04, 0x00, 0xFB, 0xFF, 0x00, 0x12, 0x34, 0x56, 0x00, 0xF8, 0x00, 0x9D, 0xF8, 0xD7, 0x64, 0x8C, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82};
+
+[[nodiscard]] constexpr bool same_bytes(std::span<const std::uint8_t> a, std::span<const std::uint8_t> b) { return std::ranges::equal(a, b); }
+
+static_assert(same_bytes(*png_of(one_pixel_picture()), one_pixel_png));
+
+// A gap between rows is not part of a picture, and nothing at all cannot be a PNG.
+[[nodiscard]] constexpr bool a_picture_leaves_out_the_gaps() {
+    std::array<std::uint32_t, 6> pixels{1, 2, 99, 3, 4, 99};
+    const auto buffer = PixelBuffer::create(pixels, Size{Width{2}, Height{2}}, 12);
+    const WindowPicture picture = buffer->picture();
+    if (picture.columns() != 2 || picture.rows() != 2 || !std::ranges::equal(picture.argb(), std::array<std::uint32_t, 4>{1, 2, 3, 4})) return false;
+    const auto empty = PixelBuffer::create(std::span<std::uint32_t>{}, Size{}, 0);
+    return !png_of(empty->picture());
+}
+static_assert(a_picture_leaves_out_the_gaps());
+
+[[nodiscard]] constexpr bool a_screenshot_asks_for_a_name_first() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    auto& popup = name_popup_of(tree);
+    const auto asked_for_a_picture = [&] { return detail::TestAccess::take_requests(tree).picture; };
+    const auto click_it = [&] {
+        click_on<decltype(tree), files::ScreenShotButton>(tree);
+        turn(tree);
+    };
+    // Nothing is taken until there is a name, so the question is not in the picture.
+    click_it();
+    if (!popup.is_open() || popup.where() != "In /shots" || !popup.typed().empty() || asked_for_a_picture()) return false;
+    key(tree, Key::Return);
+    if (!popup.is_open() || popup.problem() != "Type a name first" || asked_for_a_picture()) return false;
+    type_in(tree, "a/b");
+    key(tree, Key::Return);
+    if (!popup.is_open() || popup.problem() != "A name cannot hold a slash" || asked_for_a_picture()) return false;
+    key(tree, Key::BackSpace);
+    key(tree, Key::BackSpace);
+    key(tree, Key::BackSpace);
+    type_in(tree, "shot");
+    key(tree, Key::Return);
+    if (popup.is_open() || !asked_for_a_picture() || !disk.pictures.empty()) return false;
+    // A frame later, it is saved under that name, and the panes keep what a comparison marked.
+    const std::uint64_t changes_before = transfers_of(tree).changes();
+    detail::TestAccess::keep_picture(tree, one_pixel_picture());
+    turn(tree);
+    if (disk.pictures.size() != 1 || !same_bytes(disk.pictures[0], one_pixel_png) || disk.arrived != std::vector<std::string>{"/shots/shot.png"}) return false;
+    if (transfers_of(tree).line() != "Saved a screenshot of this window to /shots/shot.png" || transfers_of(tree).changes() != changes_before) return false;
+    // A picture no one named goes nowhere.
+    detail::TestAccess::keep_picture(tree, one_pixel_picture());
+    turn(tree);
+    if (disk.pictures.size() != 1) return false;
+    // A name that is taken stays open to be corrected, with or without the suffix.
+    click_it();
+    type_in(tree, "shot");
+    key(tree, Key::Return);
+    if (!popup.is_open() || popup.problem() != "shot.png is already there, and nothing was replaced" || asked_for_a_picture()) return false;
+    // Escape takes nothing.
+    key(tree, Key::Escape);
+    if (popup.is_open() || asked_for_a_picture() || transfers_of(tree).line() != "Nothing was changed") return false;
+    // The name given with .png is not told twice, and a disk that fails says so.
+    disk.picture_fails = true;
+    click_it();
+    type_in(tree, "two.png");
+    key(tree, Key::Return);
+    if (popup.is_open() || !asked_for_a_picture()) return false;
+    detail::TestAccess::keep_picture(tree, one_pixel_picture());
+    turn(tree);
+    if (disk.pictures.size() != 1 || transfers_of(tree).line() != "No screenshot was saved: the disk is full") return false;
+    // With nowhere to put it, nothing is asked.
+    disk.no_picture_folder = true;
+    click_it();
+    return !popup.is_open() && transfers_of(tree).line() == "No screenshot was saved: there is no home";
+}
+static_assert(a_screenshot_asks_for_a_name_first());
+
 // --- A line of text that can be copied ---
 
 // A click on a status line asks for all of it to be copied, long or not, and shows it did until the text changes. A press elsewhere asks nothing.
@@ -2526,6 +2627,34 @@ void touches_real_things() {
     check(!touch_local_file((top / "folder_link").string(), "x") && !std::filesystem::exists(top / "real_folder" / "x"), "a link standing where the folder should be is not followed");
 }
 
+void saves_real_pictures() {
+    const jgui_test::TemporaryDirectory directory;
+    const std::filesystem::path top = std::filesystem::canonical(directory.path());
+    const std::filesystem::path shots = top / "ScreenShots";
+    const std::string folder = shots.string();
+    const std::array<std::uint8_t, 3> bytes{1, 2, 3};
+    const auto mode_of = [](const std::filesystem::path& path) { return std::filesystem::status(path).permissions(); };
+    const auto saved = save_local_picture(folder, "a.png", bytes);
+    check(saved == (shots / "a.png").string() && whole_text_of(shots / "a.png") == std::string{"\x01\x02\x03"}, "the folder is made, and the file holds the bytes");
+    check(mode_of(shots) == std::filesystem::perms::owner_all, "the folder is private, because a picture can show private names");
+    check(mode_of(shots / "a.png") == (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write), "and so is the file");
+    const std::array<std::uint8_t, 1> other{9};
+    const auto taken = save_local_picture(folder, "a.png", other);
+    check(!taken && taken.error().message.contains("already there") && whole_text_of(shots / "a.png") == std::string{"\x01\x02\x03"}, "a name that is taken is refused and replaces nothing");
+    std::filesystem::create_symlink(top / "outside", shots / "link.png");
+    check(!save_local_picture(folder, "link.png", bytes) && !std::filesystem::exists(top / "outside"), "a link standing at the name is not followed");
+    check(!save_local_picture(folder, "a/b.png", bytes) && !save_local_picture(folder, "../b.png", bytes) && !std::filesystem::exists(top / "b.png"), "a name cannot leave the folder");
+    put_text(top / "a_file", "x");
+    check(!save_local_picture((top / "a_file").string(), "c.png", bytes), "a file standing where the folder should be is refused");
+
+    const char* home_was = std::getenv("HOME");
+    const std::string home_before = home_was == nullptr ? std::string{} : std::string{home_was};
+    check(::setenv("HOME", top.c_str(), 1) == 0 && local_picture_folder() == folder, "the folder is ScreenShots under HOME");
+    check(::setenv("HOME", "relative", 1) == 0 && !local_picture_folder(), "a HOME that is not absolute is not used");
+    check(::unsetenv("HOME") == 0 && !local_picture_folder(), "and neither is none");
+    check(::setenv("HOME", home_before.c_str(), 1) == 0, "HOME is put back");
+}
+
 void renames_real_things() {
     const jgui_test::TemporaryDirectory directory;
     const std::filesystem::path top = std::filesystem::canonical(directory.path());
@@ -2710,6 +2839,7 @@ void diffs_agree_with_the_slow_way() {
     moves_real_things_to_the_trash();
     touches_real_things();
     renames_real_things();
+    saves_real_pictures();
     opens_a_real_terminal(this_program);
     diffs_real_things();
     diffs_agree_with_the_slow_way();

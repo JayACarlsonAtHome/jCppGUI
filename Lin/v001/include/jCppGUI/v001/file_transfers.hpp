@@ -5,6 +5,7 @@
 //          same motion, because a flood of motion can arrive as one event.
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <expected>
@@ -20,6 +21,7 @@
 #include "file_listing.hpp"
 #include "copy_line.hpp"
 #include "line_diff.hpp"
+#include "png.hpp"
 #include "terminal_command.hpp"
 #include "timer.hpp"
 #include "widget.hpp"
@@ -91,13 +93,19 @@ struct DeleteQuestion {
     DeleteCount count{};
 };
 
-enum class NameAsk : std::uint8_t { Touch, Rename };
+enum class NameAsk : std::uint8_t { Touch, Rename, ScreenShot };
 
 // A name a person must type. current is what the box starts with: the name a rename starts from, and nothing for a touch.
 struct NameQuestion {
     NameAsk ask{NameAsk::Touch};
     std::string folder{};
     std::string current{};
+};
+
+// Where the next picture of the window goes.
+struct PictureTarget {
+    std::string folder{};
+    std::string name{};
 };
 
 // How a diff came out, for whatever shows it.
@@ -222,6 +230,16 @@ public:
         name_question_ = NameQuestion{NameAsk::Rename, parent_of_path(path), std::string{last_name_of(path)}};
     }
 
+    // Asks what to call a screenshot. It may be asked with something else going on, because all it does is add a file of its own.
+    constexpr void ask_picture() {
+        auto folder = source_.picture_folder();
+        if (!folder) {
+            say("No screenshot was saved: " + folder.error().message);
+            return;
+        }
+        name_question_ = NameQuestion{NameAsk::ScreenShot, std::move(*folder), {}};
+    }
+
     // Once, for whatever asks the person.
     [[nodiscard]] constexpr std::optional<NameQuestion> take_name_question() { return std::exchange(name_question_, std::nullopt); }
 
@@ -229,6 +247,7 @@ public:
     [[nodiscard]] constexpr std::expected<void, Error> give_name(const NameQuestion& question, std::string_view name) {
         if (auto checked = check_given_name(question.folder, name); !checked) return std::unexpected(std::move(checked.error()));
         const std::string typed{name};
+        if (question.ask == NameAsk::ScreenShot) return name_the_picture(question.folder, picture_file_name(typed));
         if (question.ask == NameAsk::Touch) {
             auto touched = source_.touch(question.folder, typed);
             if (!touched) return std::unexpected(std::move(touched.error()));
@@ -410,6 +429,7 @@ public:
     template <class U>
     constexpr void notify(const TreeKey& key, U& ui, const TimersDue& timers) {
         detail::notify_all(children_, key, ui, timers);
+        if (auto picture = ui.take_window_picture(); picture && picture_target_) save_picture(*picture);
         if (matching_) {
             step_match(ui, timers);
             return;
@@ -450,6 +470,27 @@ public:
     }
 
 private:
+    // Refused while the person can still correct it, if the name is already taken. Saving makes the file with O_EXCL anyway, so this only says so sooner, and a folder not there yet holds nothing.
+    [[nodiscard]] constexpr std::expected<void, Error> name_the_picture(const std::string& folder, std::string file) {
+        if (auto checked = check_given_name(folder, file); !checked) return std::unexpected(std::move(checked.error()));
+        const auto there = source_.read(folder);
+        if (there && std::ranges::contains(there->entries, file, &FileEntry::name)) return make_error(ErrorCode::System, file + " is already there, and nothing was replaced");
+        picture_target_ = PictureTarget{folder, std::move(file)};
+        return {};
+    }
+
+    // The panes are not told to look again, because that would take away the marks a comparison left, which may be what the picture is of.
+    constexpr void save_picture(const WindowPicture& picture) {
+        const PictureTarget target = *std::exchange(picture_target_, std::nullopt);
+        const auto png = png_of(picture);
+        if (!png) {
+            say("No screenshot was saved: " + png.error().message);
+            return;
+        }
+        const auto saved = source_.save_picture(target.folder, target.name, *png);
+        say(saved ? "Saved a screenshot of this window to " + *saved : "No screenshot was saved: " + saved.error().message);
+    }
+
     // What can be refused from the paths alone is refused before anything is made. A name taken in the folder is found by the source when that one's turn comes, and it stops there,
     // with what went before still there.
     constexpr void start_copying(std::vector<std::string> from, const std::string& into) {
@@ -730,6 +771,7 @@ private:
     std::string diff_second_{};
     std::optional<DiffReport> diff_done_{};
     std::optional<NameQuestion> name_question_{};
+    std::optional<PictureTarget> picture_target_{};
 };
 
 template <class Tag, class Source>

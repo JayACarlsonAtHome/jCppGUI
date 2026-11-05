@@ -431,6 +431,7 @@ struct WindowRequests {
     std::optional<CursorShape> cursor{};
     bool close{};
     std::optional<CopyRequest> copy{};
+    bool picture{};
 };
 
 // The root of a tree. Callbacks receive it as their "u", and can reach only what is public: widgets by tag,
@@ -494,6 +495,9 @@ public:
     [[nodiscard]] constexpr std::optional<ClipboardQuestion> take_clipboard_question() { return std::exchange(clipboard_question_, std::nullopt); }
     // What a person said to go on with, and only that: it can only be text that has been through the sanitizer.
     constexpr void copy_after_question(Serial serial, SafeClipboardText text) { requests_.copy = CopyRequest{serial, std::move(text)}; }
+    // Asks for a copy of the next frame as it is painted. It is ready for take_window_picture on the turn after that frame, and in a window where nothing takes it, it is only memory until the next one.
+    constexpr void request_picture() noexcept { requests_.picture = true; }
+    [[nodiscard]] constexpr std::optional<WindowPicture> take_window_picture() { return std::exchange(picture_, std::nullopt); }
     constexpr void request_cursor(CursorShape shape) noexcept { requests_.cursor = shape; }
     // The same, unless something has already asked during this delivery.
     constexpr void suggest_cursor(CursorShape shape) noexcept {
@@ -579,6 +583,7 @@ private:
     [[nodiscard]] constexpr bool delivering() const noexcept { return dispatch_depth_ != 0; }
     constexpr void set_size(Size size) noexcept { size_ = size; }
     [[nodiscard]] constexpr WindowRequests take_requests() noexcept { return std::exchange(requests_, WindowRequests{}); }
+    constexpr void keep_picture(WindowPicture picture) { picture_ = std::move(picture); }
 
     class DispatchScope {
     public:
@@ -599,6 +604,7 @@ private:
     std::size_t dispatch_depth_{};
     WindowRequests requests_{};
     std::optional<ClipboardQuestion> clipboard_question_{};
+    std::optional<WindowPicture> picture_{};
     std::optional<MonotonicTime> wake_{};
     Size size_{};
 };

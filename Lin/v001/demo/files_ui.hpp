@@ -1,5 +1,5 @@
 // File: demo/files_ui.hpp
-// Purpose: The file manager's window: a bar with Compare and Diff, a line saying what is on its way, and two panes side by side, each with a folder of its own. The tests include this too, so they check the real tree.
+// Purpose: The file manager's window: a bar with Compare, Diff and ScreenShot, a line saying what is on its way, and two panes side by side, each with a folder of its own. The tests include this too, so they check the real tree.
 #pragma once
 
 #include <expected>
@@ -24,6 +24,7 @@ struct Panes;
 struct Transfers;
 struct CompareButton;
 struct DiffButton;
+struct ScreenShotButton;
 struct Layer;
 struct DeleteLayer;
 struct DiffLayer;
@@ -53,7 +54,8 @@ template <jgui::FileSource Source>
     start_in(left, left_folder);
     start_in(right, right_folder);
     auto bar = jgui::menu_bar(jgui::button<CompareButton>("Compare", [](auto& u) -> void { jgui::compare_panes<LeftPane, RightPane, Transfers>(u); }),
-                              jgui::button<DiffButton>("Diff", [](auto& u) -> void { jgui::diff_panes<LeftPane, RightPane, Transfers>(u); }));
+                              jgui::button<DiffButton>("Diff", [](auto& u) -> void { jgui::diff_panes<LeftPane, RightPane, Transfers>(u); }),
+                              jgui::button<ScreenShotButton>("ScreenShot", [](auto& u) -> void { u.template get<Transfers>().ask_picture(); }));
     // The transfers come first in the tree, so what they finish is seen by both panes and each popup in the same turn. Only one thing goes at a time, so only one of those popups is open, with the clipboard's on top of it, because a line inside a popup can be copied too.
     auto content = jgui::popup_layer<DiffLayer>(jgui::FileDiffPopup<DiffPopup, Transfers>{}, std::move(bar), jgui::file_transfers<Transfers>(std::move(source)), jgui::two_panes<Panes>(std::move(left), std::move(right)));
     auto below = jgui::popup_layer<Layer>(jgui::FileMatchPopup<MatchPopup, Transfers>{}, jgui::popup_layer<DeleteLayer>(jgui::FileDeletePopup<DeletePopup, Transfers>{}, std::move(content)));

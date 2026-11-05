@@ -3,6 +3,7 @@
 //          descriptors stays out of this header, as WaylandImpl does, behind one concrete type with a stateless deleter.
 #pragma once
 
+#include <cstdint>
 #include <expected>
 #include <memory>
 #include <span>
@@ -96,6 +97,12 @@ private:
 // Gives one thing a new name in the folder it is in. The kernel refuses a name that is taken, so nothing is ever replaced, and a disk that cannot promise that is refused rather than risked.
 [[nodiscard]] std::expected<void, Error> rename_local_file(const std::string& path, const std::string& new_name);
 
+// The ScreenShots folder under HOME, which is not made until something is saved in it.
+[[nodiscard]] std::expected<std::string, Error> local_picture_folder();
+
+// Puts these bytes in a new file of this name, in this folder, made if it is not there, private to this user, and answers with its path. A name that is taken is refused and nothing is replaced, and a file not finished is removed.
+[[nodiscard]] std::expected<std::string, Error> save_local_picture(const std::string& folder, const std::string& name, std::span<const std::uint8_t> png);
+
 // Opens a terminal in this folder running this command, each word of it one argument with no shell between, and returns without waiting. The first terminal that can be started is used: TERMINAL's if that is set,
 // then those in known_terminals. It goes on by itself when this program ends. Refused when no terminal can be started.
 [[nodiscard]] std::expected<void, Error> run_in_local_terminal(const std::string& folder, std::span<const std::string> command);
@@ -109,6 +116,8 @@ struct LocalFiles {
     using CountJob = LocalCountJob;
     [[nodiscard]] std::expected<TouchOutcome, Error> touch(const std::string& folder, const std::string& name) const { return touch_local_file(folder, name); }
     [[nodiscard]] std::expected<void, Error> rename(const std::string& path, const std::string& new_name) const { return rename_local_file(path, new_name); }
+    [[nodiscard]] std::expected<std::string, Error> picture_folder() const { return local_picture_folder(); }
+    [[nodiscard]] std::expected<std::string, Error> save_picture(const std::string& folder, const std::string& name, std::span<const std::uint8_t> png) const { return save_local_picture(folder, name, png); }
     [[nodiscard]] std::string editor() const { return local_editor(); }
     [[nodiscard]] std::expected<void, Error> run_in_terminal(const std::string& folder, std::span<const std::string> command) const { return run_in_local_terminal(folder, command); }
     [[nodiscard]] std::expected<LocalCountJob, Error> start_count(const std::string& path) const { return start_local_count(path); }

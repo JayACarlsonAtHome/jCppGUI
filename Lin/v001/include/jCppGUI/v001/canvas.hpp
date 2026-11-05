@@ -10,6 +10,7 @@
 #include <expected>
 #include <span>
 #include <utility>
+#include <vector>
 
 #include "error.hpp"
 #include "geometry.hpp"
@@ -40,6 +41,22 @@ private:
     std::uint64_t latest_{};
 };
 }  // namespace detail
+
+// A copy of a whole frame as it was painted, with rows following each other and no gap. Only a PixelBuffer can make one, so its size and its pixels always agree.
+class WindowPicture {
+public:
+    [[nodiscard]] constexpr std::uint32_t columns() const noexcept { return columns_; }
+    [[nodiscard]] constexpr std::uint32_t rows() const noexcept { return rows_; }
+    [[nodiscard]] constexpr std::span<const std::uint32_t> argb() const noexcept { return argb_; }
+
+private:
+    friend class PixelBuffer;
+    constexpr WindowPicture(std::uint32_t columns, std::uint32_t rows, std::vector<std::uint32_t> argb) noexcept : columns_{columns}, rows_{rows}, argb_{std::move(argb)} {}
+
+    std::uint32_t columns_;
+    std::uint32_t rows_;
+    std::vector<std::uint32_t> argb_;
+};
 
 class PixelBuffer {
     class Validated {
@@ -105,6 +122,18 @@ public:
             }
         }
         return hash;
+    }
+
+    [[nodiscard]] constexpr WindowPicture picture() const {
+        const auto columns = static_cast<std::size_t>(size_.width().value_);
+        const auto rows = static_cast<std::size_t>(size_.height().value_);
+        const auto stride = static_cast<std::size_t>(stride_bytes_ / 4);
+        std::vector<std::uint32_t> copied;
+        copied.reserve(columns * rows);
+        for (std::size_t row = 0; row < rows; ++row) {
+            for (const std::uint32_t pixel : pixels_.subspan(row * stride, columns)) copied.push_back(pixel);
+        }
+        return WindowPicture{static_cast<std::uint32_t>(columns), static_cast<std::uint32_t>(rows), std::move(copied)};
     }
 
 private:

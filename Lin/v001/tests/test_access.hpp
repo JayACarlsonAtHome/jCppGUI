@@ -80,6 +80,10 @@ struct TestAccess {
     [[nodiscard]] static constexpr WindowRequests take_requests(Window<C...>& window) noexcept {
         return window.take_requests();
     }
+    template <class... C>
+    static constexpr void keep_picture(Window<C...>& window, WindowPicture picture) {
+        window.keep_picture(std::move(picture));
+    }
 };
 
 }  // namespace jgui::inline v001::detail

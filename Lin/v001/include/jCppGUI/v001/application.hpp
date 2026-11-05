@@ -173,6 +173,7 @@ private:
         if (asked.move) backend_.begin_move(*asked.move);
         if (asked.resize) backend_.begin_resize(asked.resize->serial, asked.resize->edge);
         if (asked.cursor) show_cursor(*asked.cursor);
+        if (asked.picture) picture_wanted_ = true;
         if (asked.close) on(CloseEvent{});
     }
 
@@ -220,7 +221,7 @@ private:
             return std::unexpected(std::move(error));
         }
         if (closed_ || !have_size_) return {};
-        if (!damaged_ && !root_.damaged()) return {};
+        if (!damaged_ && !picture_wanted_ && !root_.damaged()) return {};
         if (!backend_.can_present(root_.size())) {
             monitor_.deferred(redraw_reason(), root_.size());
             return {};
@@ -259,6 +260,11 @@ private:
         if (!pixels) return std::unexpected(std::move(pixels.error()));
         monitor_.acquired();
         paint(*pixels, whole);
+        // What the display is about to show, and this program's own, so nothing has to be asked of the display.
+        if (picture_wanted_) {
+            root_.keep_picture(pixels->picture());
+            picture_wanted_ = false;
+        }
         monitor_.painted(*pixels);
         if (auto presented = backend_.present(std::move(*frame), whole); !presented) return std::unexpected(std::move(presented.error()));
         monitor_.presented();
@@ -281,6 +287,7 @@ private:
     bool have_size_{};
     bool closed_{};
     bool damaged_{};
+    bool picture_wanted_{};
     bool entered_{};
     // Last, and taking no room when it is empty, so a core with no monitor is as it would be with no member at all.
     [[no_unique_address]] Monitor monitor_;
