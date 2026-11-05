@@ -253,9 +253,12 @@ concept FileCountJob = std::movable<J> && requires(J& job, const J& constant) {
     { constant.counted() } -> std::same_as<DeleteCount>;
 };
 
+// What Touch came to: a file that was not there, or a new time on what was.
+enum class TouchOutcome : std::uint8_t { Made, TimeSet };
+
 // Where files come from and go to. Each pane holds one, of its own type, so a source that reaches another machine is a type of its own and nothing is erased.
-// A copy leaves the original alone and may not replace what is already there: a name that is taken is refused. Nothing here removes anything for good. move_to_trash is the one way something leaves where it
-// is, and only FileTransfers calls it, after a person has been told the count and has said yes.
+// A copy leaves the original alone and may not replace what is already there: a name that is taken is refused. Nothing here removes anything for good. move_to_trash is the one way something leaves its
+// folder, and only FileTransfers calls it, after a person has been told the count and has said yes. A rename stays in its folder and may not replace anything either.
 template <class S>
 concept FileSource = FileCopyJob<typename S::CopyJob> && FileMatchJob<typename S::MatchJob> && FileCountJob<typename S::CountJob> && requires(const S& source, const std::string& path) {
     { source.read(path) } -> std::same_as<std::expected<DirectoryListing, Error>>;
@@ -264,25 +267,14 @@ concept FileSource = FileCopyJob<typename S::CopyJob> && FileMatchJob<typename S
     { source.start_count(path) } -> std::same_as<std::expected<typename S::CountJob, Error>>;
     { source.move_to_trash(path) } -> std::same_as<std::expected<void, Error>>;
     { source.read_text(path) } -> std::same_as<std::expected<std::string, Error>>;
-    { source.touch(path) } -> std::same_as<std::expected<void, Error>>;
+    { source.touch(path, path) } -> std::same_as<std::expected<TouchOutcome, Error>>;
+    { source.rename(path, path) } -> std::same_as<std::expected<void, Error>>;
     { source.editor() } -> std::same_as<std::string>;
     { source.run_in_terminal(path, std::span<const std::string>{}) } -> std::same_as<std::expected<void, Error>>;
 };
 
 inline constexpr std::size_t most_file_path_bytes = 4096;  // the longest path Linux takes in one call
 inline constexpr std::size_t most_file_name_bytes = 255;   // the longest name Linux has
-
-// False for invalid UTF-8, and for a control character of either range, so no name can break a line or a display.
-[[nodiscard]] constexpr bool text_can_show(std::string_view text) noexcept {
-    if (!valid_utf8(text)) return false;
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        const auto byte = static_cast<unsigned char>(text[i]);
-        if (byte < 0x20U || byte == 0x7FU) return false;
-        // Valid UTF-8, so a C2 always has a next byte. U+0080 to U+009F are the second range.
-        if (byte == 0xC2U && static_cast<unsigned char>(text[i + 1]) < 0xA0U) return false;
-    }
-    return true;
-}
 
 // A name a listing may hold: not empty, not a way to climb out of the folder, no slash in it, within the limit, and text that can be shown.
 [[nodiscard]] constexpr bool file_name_can_show(std::string_view name) noexcept {
@@ -327,6 +319,16 @@ inline constexpr std::size_t most_file_name_bytes = 255;   // the longest name L
 [[nodiscard]] constexpr bool path_is_inside(std::string_view path, std::string_view folder) noexcept {
     if (folder == "/") return path.starts_with('/');
     return path == folder || (path.starts_with(folder) && path.size() > folder.size() && path[folder.size()] == '/');
+}
+
+// Whether a person's typed name can be used in this folder, saying why not. The source itself says whether the name is taken.
+[[nodiscard]] constexpr std::expected<void, Error> check_given_name(std::string_view folder, std::string_view name) {
+    if (name.empty()) return make_error(ErrorCode::System, "Type a name first");
+    if (name.contains('/')) return make_error(ErrorCode::System, "A name cannot hold a slash");
+    if (name == "." || name == "..") return make_error(ErrorCode::System, "That name means a folder that is already there");
+    if (!file_name_can_show(name)) return make_error(ErrorCode::System, "That name cannot be used");
+    if (!file_path_can_show(folder) || child_of_path(folder, name).size() > most_file_path_bytes) return make_error(ErrorCode::SizeLimit, "That path would be too long");
+    return {};
 }
 
 // Whether something can go into this folder, as far as the text says. The source itself says whether the name is taken.

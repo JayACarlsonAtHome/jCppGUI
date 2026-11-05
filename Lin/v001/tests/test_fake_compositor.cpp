@@ -2985,6 +2985,115 @@ struct FilesDelete {
     }
 };
 
+// Touch and Rename, off the wire: a real key through the real keymap types a real letter, Return makes the file in the folder the selection is in, and a rename adds to the name the box starts with. The disk is what is checked.
+struct FilesTouchRename {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool files_program = true;
+    static constexpr bool left_exists = true;
+    static constexpr std::uint32_t key_a = 30;  // the evdev code, 8 under xkb's <AC01>
+    enum class Step : std::uint8_t { First, AskTouch, TypeTouch, Made, AskRename, TypeRename, Renamed, Done };
+    FilesState state{};
+    Step step{Step::First};
+    int waits{};
+    std::vector<std::uint32_t> before{};
+
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const KeyboardCreated&) { send_valid_keymap(session); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void fail(Session& session, const std::string& why) {
+        session.violation(why);
+        session.close_window();
+        step = Step::Done;
+    }
+    void tap(Session& session, std::uint32_t key) {
+        session.queue(event::keyboard_key(*session.keyboard(), session.next_serial(), 0, key, 1));
+        session.queue(event::keyboard_key(*session.keyboard(), session.next_serial(), 0, key, 0));
+    }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.pointer() || !session.keyboard() || step == Step::Done) return;
+        const std::filesystem::path left{state.left};
+        FilesReference reference{jgui::starting_folder(state.left), jgui::starting_folder(state.right), viewer_width, viewer_height};
+        auto& grid = reference.get<jgui::FilePaneGrid<files::LeftPane>>();
+        const auto click_button = [&](const jgui::Rect& area) { left_click(session, jgui_test::number(area.left()) + 3, jgui_test::number(area.top()) + 3); };
+        ++waits;
+        switch (step) {
+            case Step::First: {
+                const std::int32_t x = jgui_test::number(grid.column_left(jgui::file_name_column)) + 60;
+                const std::int32_t y = jgui_test::number(grid.body_area().top()) + jgui_test::number(grid.row_height()) + 3;
+                pointer_enter(session, x, y);
+                session.queue(event::keyboard_enter(*session.keyboard(), session.next_serial(), *session.window_surface()));
+                left_click(session, x, y);  // plain.txt, with sub above it
+                step = Step::AskTouch;
+                waits = 0;
+                return;
+            }
+            case Step::AskTouch:
+                if (waits < 20) return;
+                before = state.picture(session);
+                click_button(reference.get<jgui::FilePaneTouchButton<files::LeftPane>>().bounds());
+                step = Step::TypeTouch;
+                waits = 0;
+                return;
+            case Step::TypeTouch:
+                if (state.picture(session) == before) {
+                    if (waits > 200) fail(session, "the name was not asked for");
+                    return;
+                }
+                if (waits < 20) return;
+                if (std::filesystem::exists(left / "a")) {
+                    fail(session, "it was made before a name was given");
+                    return;
+                }
+                tap(session, key_a);
+                tap(session, key_return);
+                step = Step::Made;
+                waits = 0;
+                return;
+            case Step::Made:
+                if (!std::filesystem::exists(left / "a")) {
+                    if (waits > 400) fail(session, "the typed name was not made");
+                    return;
+                }
+                if (!std::filesystem::is_regular_file(left / "a") || std::filesystem::file_size(left / "a") != 0) {
+                    fail(session, "what was made is not an empty file");
+                    return;
+                }
+                step = Step::AskRename;
+                waits = 0;
+                return;
+            case Step::AskRename:
+                if (waits < 20) return;
+                before = state.picture(session);
+                click_button(reference.get<jgui::FilePaneRenameButton<files::LeftPane>>().bounds());
+                step = Step::TypeRename;
+                waits = 0;
+                return;
+            case Step::TypeRename:
+                if (state.picture(session) == before) {
+                    if (waits > 200) fail(session, "the new name was not asked for");
+                    return;
+                }
+                if (waits < 20) return;
+                tap(session, key_a);
+                tap(session, key_return);
+                step = Step::Renamed;
+                waits = 0;
+                return;
+            case Step::Renamed:
+                if (!std::filesystem::exists(left / "plain.txta")) {
+                    if (waits > 400) fail(session, "the rename did not happen");
+                    return;
+                }
+                if (std::filesystem::exists(left / "plain.txt") || read_text_file((left / "plain.txta").string()) != "plain") session.violation("the renamed file is not what it was");
+                step = Step::Done;
+                session.close_window();
+                return;
+            case Step::Done:
+            default: return;
+        }
+    }
+};
+
 // A click on the line that says what is going on puts all of it on the clipboard, off the wire: types offered, the text read back through a pipe as another program would, a reader that has gone does not end
 // the program, and an offer from another program is only destroyed. Then the clipboard goes to another program, and the source is destroyed.
 struct FilesCopyLine {
@@ -3255,6 +3364,7 @@ constexpr auto scenarios = std::tuple{
     Named<FilesCopyAndDrag>{"files_copy_and_drag"},
     Named<FilesSeveral>{"files_several"},
     Named<FilesDelete>{"files_delete"},
+    Named<FilesTouchRename>{"files_touch_rename"},
     Named<FilesCopyLine>{"files_copy_line"},
 };
 

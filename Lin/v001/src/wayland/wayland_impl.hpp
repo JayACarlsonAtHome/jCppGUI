@@ -52,6 +52,7 @@ static_assert(WireAccess::number(Key::Plus) == XKB_KEY_plus && WireAccess::numbe
 static_assert(WireAccess::number(Key::LowerC) == XKB_KEY_c && WireAccess::number(Key::UpperC) == XKB_KEY_C && WireAccess::number(Key::LowerV) == XKB_KEY_v && WireAccess::number(Key::UpperV) == XKB_KEY_V);
 static_assert(WireAccess::number(Key::LowerA) == XKB_KEY_a && WireAccess::number(Key::UpperA) == XKB_KEY_A);
 static_assert(WireAccess::number(Key::Escape) == XKB_KEY_Escape);
+static_assert(WireAccess::number(Key::KeypadEnter) == XKB_KEY_KP_Enter && WireAccess::number(Key::Delete) == XKB_KEY_Delete);
 static_assert(WireAccess::number(Key::KeypadPlus) == XKB_KEY_KP_Add && WireAccess::number(Key::KeypadMinus) == XKB_KEY_KP_Subtract);
 static_assert(keymap_format_xkb_v1 == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1);
 static_assert(keymap_format_none == WL_KEYBOARD_KEYMAP_FORMAT_NO_KEYMAP);
@@ -792,7 +793,12 @@ void BasicWaylandImpl<Api>::on_key(wl_keyboard*, std::uint32_t, std::uint32_t, s
     const std::optional<std::uint32_t> code = evdev_to_xkb(key);
     if (!code) return;
     const std::uint32_t keysym = xkb_state_key_get_one_sym(xkb_state_object.get(), *code);
-    record(KeyEvent{WireAccess::make<Keysym>(keysym), held_modifiers(), state == WL_KEYBOARD_KEY_STATE_PRESSED});
+    const bool pressed = state == WL_KEYBOARD_KEY_STATE_PRESSED;
+    // What it would type, only on the way down. The answer is how long the text is, whether it fitted or not, and text that did not fit is nothing.
+    std::array<char, most_key_text_bytes + 1> typed{};
+    const int typed_length = pressed ? xkb_state_key_get_utf8(xkb_state_object.get(), *code, typed.data(), typed.size()) : 0;
+    const KeyText text = typed_length > 0 && std::cmp_less(typed_length, typed.size()) ? KeyText::of(std::string_view{typed.data(), static_cast<std::size_t>(typed_length)}) : KeyText{};
+    record(KeyEvent{WireAccess::make<Keysym>(keysym), held_modifiers(), pressed, text});
 }
 
 template <class Api>

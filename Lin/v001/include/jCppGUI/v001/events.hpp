@@ -4,8 +4,11 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 #include "geometry.hpp"
 
@@ -149,10 +152,35 @@ struct PointerScroll {
     ScrollAcross across{};
 };
 
+inline constexpr std::size_t most_key_text_bytes = 16;
+
+// What a key would type, as bytes a keymap said. A keymap is untrusted, so whatever takes this checks it as text first. More than this holds is nothing at all, never a part.
+class KeyText {
+public:
+    constexpr KeyText() noexcept = default;
+
+    [[nodiscard]] static constexpr KeyText of(std::string_view text) noexcept {
+        KeyText made;
+        if (text.size() > most_key_text_bytes) return made;
+        std::ranges::copy(text, made.bytes_.begin());
+        made.size_ = text.size();
+        return made;
+    }
+
+    [[nodiscard]] constexpr std::string_view view() const noexcept { return std::string_view{bytes_}.substr(0, size_); }
+
+    friend constexpr bool operator==(const KeyText&, const KeyText&) = default;
+
+private:
+    std::array<char, most_key_text_bytes> bytes_{};
+    std::size_t size_{};
+};
+
 struct KeyEvent {
     Keysym keysym;
     ModifierMask modifiers{};
     bool pressed{};
+    KeyText text{};
 };
 
 namespace MouseButton {
@@ -190,6 +218,8 @@ inline constexpr Keysym Down{0xff54};
 inline constexpr Keysym PageUp{0xff55};
 inline constexpr Keysym PageDown{0xff56};
 inline constexpr Keysym End{0xff57};
+inline constexpr Keysym KeypadEnter{0xff8d};
+inline constexpr Keysym Delete{0xffff};
 }  // namespace Key
 
 // --- Sent through the tree by the toolkit ---

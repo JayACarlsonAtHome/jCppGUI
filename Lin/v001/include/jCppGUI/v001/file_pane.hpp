@@ -97,6 +97,8 @@ template <class Pane>
 struct FilePaneTouchButton;
 template <class Pane>
 struct FilePaneEditButton;
+template <class Pane>
+struct FilePaneRenameButton;
 
 inline constexpr std::size_t file_name_column = 0;
 inline constexpr std::size_t file_size_column = 1;
@@ -167,7 +169,14 @@ template <class Pane>
 struct FilePaneTouch {
     template <class U>
     constexpr void operator()(U& u) const {
-        u.template get<Pane>().touch_selected(u);
+        u.template get<Pane>().touch_here(u);
+    }
+};
+template <class Pane>
+struct FilePaneRename {
+    template <class U>
+    constexpr void operator()(U& u) const {
+        u.template get<Pane>().rename_selected(u);
     }
 };
 
@@ -189,18 +198,19 @@ class FilePane {
     using CatButton = Button<FilePaneCatButton<Tag>, detail::FilePaneCat<Tag>>;
     using TouchButton = Button<FilePaneTouchButton<Tag>, detail::FilePaneTouch<Tag>>;
     using EditButton = Button<FilePaneEditButton<Tag>, detail::FilePaneEdit<Tag>>;
+    using RenameButton = Button<FilePaneRenameButton<Tag>, detail::FilePaneRename<Tag>>;
     using PathLabel = CopyLine<FilePanePath<Tag>>;
     using StatusLabel = CopyLine<FilePaneStatus<Tag>>;
     using Grid = FileGrid<Tag>;
 
 public:
     using tag = Tag;
-    using children_type = std::tuple<UpButton, OpenButton, ReloadButton, CopyButton, PasteButton, DeleteButton, CatButton, TouchButton, EditButton, PathLabel, StatusLabel, Grid>;
+    using children_type = std::tuple<UpButton, OpenButton, ReloadButton, CopyButton, PasteButton, DeleteButton, RenameButton, CatButton, TouchButton, EditButton, PathLabel, StatusLabel, Grid>;
 
     constexpr explicit FilePane(Source source)
         : source_{std::move(source)},
           children_{UpButton{"Up", detail::FilePaneGoUp<Tag>{}}, OpenButton{"Show this folder", detail::FilePaneOpenSelected<Tag>{}}, ReloadButton{"Reload", detail::FilePaneReload<Tag>{}},
-                    CopyButton{"Copy", detail::FilePaneCopy<Tag>{}}, PasteButton{"Paste", detail::FilePanePaste<Tag>{}}, DeleteButton{"Delete", detail::FilePaneDelete<Tag>{}},
+                    CopyButton{"Copy", detail::FilePaneCopy<Tag>{}}, PasteButton{"Paste", detail::FilePanePaste<Tag>{}}, DeleteButton{"Delete", detail::FilePaneDelete<Tag>{}}, RenameButton{"Rename", detail::FilePaneRename<Tag>{}},
                     CatButton{"Cat", detail::FilePaneCat<Tag>{}}, TouchButton{"Touch", detail::FilePaneTouch<Tag>{}}, EditButton{"Edit", detail::FilePaneEdit<Tag>{}},
                     PathLabel{"No folder"}, StatusLabel{"Nothing read yet"}, Grid{}} {
         // The column is there, so this is not refused.
@@ -348,15 +358,27 @@ public:
         ui.template get<Transfers>().open_in_terminal(tool, paths);
     }
 
-    // Touch: what is selected on this side, folders too, but not what is in them.
+    // Touch: asks for a name, for the same folder a paste would go into.
     template <class U>
-    constexpr void touch_selected(U& ui) {
-        const std::vector<std::string> paths = selected_paths();
-        if (paths.empty()) {
-            say("Select something to touch first");
+    constexpr void touch_here(U& ui) {
+        const std::optional<GridRow> row = grid().selected();
+        std::string into = row ? folder_for_row(row->index) : folder_;
+        if (into.empty()) {
+            say("This side has no folder to touch in");
             return;
         }
-        ui.template get<Transfers>().touch(paths);
+        ui.template get<Transfers>().ask_touch(std::move(into));
+    }
+
+    // Rename: exactly one thing selected on this side, because several cannot take one name.
+    template <class U>
+    constexpr void rename_selected(U& ui) {
+        const std::span<const std::uint32_t> chosen = grid().selected_rows();
+        if (chosen.size() != 1) {
+            say("Select one thing to rename");
+            return;
+        }
+        ui.template get<Transfers>().ask_rename(path_of(chosen.front()));
     }
 
     // What is selected, in tree order. Something inside a selected folder is left out, because it goes with that folder.
@@ -408,6 +430,7 @@ public:
         place_button(std::get<CopyButton>(children_));
         place_button(std::get<PasteButton>(children_));
         place_button(std::get<DeleteButton>(children_));
+        place_button(std::get<RenameButton>(children_));
         place_button(std::get<CatButton>(children_));
         place_button(std::get<TouchButton>(children_));
         place_button(std::get<EditButton>(children_));

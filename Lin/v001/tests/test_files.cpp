@@ -150,9 +150,20 @@ struct FakeFiles {
 
     [[nodiscard]] constexpr std::expected<FakeCountJob, Error> start_count(const std::string& path) const { return FakeCountJob{path}; }
     [[nodiscard]] constexpr std::string editor() const { return disk == nullptr ? std::string{} : disk->editor; }
-    [[nodiscard]] constexpr std::expected<void, Error> touch(const std::string& path) const {
+    [[nodiscard]] constexpr std::expected<TouchOutcome, Error> touch(const std::string& folder, const std::string& name) const {
         if (disk->touch_fails) return make_error(ErrorCode::System, "cannot touch it");
+        const std::string path = child_of_path(folder, name);
         disk->touched.push_back(path);
+        const auto there = this->read(folder);
+        if (there && std::ranges::contains(there->entries, name, &FileEntry::name)) return TouchOutcome::TimeSet;
+        disk->arrived.push_back(path);
+        return TouchOutcome::Made;
+    }
+    [[nodiscard]] constexpr std::expected<void, Error> rename(const std::string& path, const std::string& new_name) const {
+        const auto there = this->read(parent_of_path(path));
+        if (there && std::ranges::contains(there->entries, new_name, &FileEntry::name)) return make_error(ErrorCode::System, new_name + " is already there");
+        disk->gone.push_back(path);
+        disk->arrived.push_back(child_of_path(parent_of_path(path), new_name));
         return {};
     }
     [[nodiscard]] constexpr std::expected<void, Error> run_in_terminal(const std::string& folder, std::span<const std::string> command) const {
@@ -1332,6 +1343,10 @@ static_assert(*terminal_tool_command(TerminalTool::Edit, Words{"/a b"}, "emacs -
 static_assert(*terminal_tool_command(TerminalTool::Edit, Words{"/a"}, "") == Words{"vim", "--", "/a"});
 static_assert(terminal_tool_command(TerminalTool::Cat, Words{"/a"}, "'bad")->front() == "sh", "Cat does not care what EDITOR says");
 
+static_assert(absolute_path_folders("/a:/b c:/d") == Words{"/a", "/b c", "/d"});
+static_assert(absolute_path_folders("").empty() && absolute_path_folders("::").empty() && absolute_path_folders(".:bin:./x").empty(), "nothing and relative folders are not looked in");
+static_assert(absolute_path_folders(":/a::rel:/b:") == Words{"/a", "/b"});
+
 static_assert(terminal_arguments(TerminalStyle{"ptyxis", {"--"}, 1}, std::vector<std::string>{"vim", "--", "/a b"}) == std::vector<std::string>{"ptyxis", "--", "vim", "--", "/a b"});
 static_assert(terminal_arguments(TerminalStyle{"foot", {}, 0}, std::vector<std::string>{"vim"}) == std::vector<std::string>{"foot", "vim"});
 
@@ -1365,27 +1380,180 @@ static_assert(terminal_arguments(TerminalStyle{"foot", {}, 0}, std::vector<std::
 }
 static_assert(cat_and_edit_open_a_terminal());
 
-[[nodiscard]] constexpr bool touch_touches_what_is_selected() {
+// --- Typing a name ---
+
+struct EntryTag;
+
+[[nodiscard]] constexpr KeyEvent typing(std::string_view text) { return KeyEvent{Key::Space, {}, true, KeyText::of(text)}; }
+[[nodiscard]] constexpr KeyEvent pressing(Keysym key) { return KeyEvent{key, {}, true}; }
+
+[[nodiscard]] constexpr bool an_entry_edits_by_whole_characters() {
+    TextEntry<EntryTag> entry{5};
+    if (!entry.take_key(typing("a")) || !entry.take_key(typing("é")) || entry.text() != "aé" || entry.caret() != 3) return false;
+    // Backwards over the two bytes of one character, and forwards again, and one typed goes where the caret is.
+    if (!entry.take_key(pressing(Key::Left)) || entry.caret() != 1 || !entry.take_key(pressing(Key::Right)) || entry.caret() != 3) return false;
+    static_cast<void>(entry.take_key(pressing(Key::Home)));
+    if (!entry.take_key(typing("b")) || entry.text() != "baé" || entry.caret() != 1) return false;
+    if (!entry.take_key(pressing(Key::Delete)) || entry.text() != "bé") return false;
+    static_cast<void>(entry.take_key(pressing(Key::End)));
+    if (!entry.take_key(pressing(Key::BackSpace)) || entry.text() != "b" || entry.caret() != 1) return false;
+    // At either end these do nothing, and are still its keys.
+    if (!entry.take_key(pressing(Key::Delete)) || entry.text() != "b") return false;
+    static_cast<void>(entry.take_key(pressing(Key::Home)));
+    return entry.take_key(pressing(Key::BackSpace)) && entry.text() == "b" && entry.caret() == 0;
+}
+static_assert(an_entry_edits_by_whole_characters());
+
+[[nodiscard]] constexpr bool an_entry_takes_only_what_can_show() {
+    TextEntry<EntryTag> entry{4};
+    // A control character, a backspace's own byte, invalid UTF-8 and nothing at all.
+    for (const std::string_view bad : {std::string_view{"\n"}, std::string_view{"\b"}, std::string_view{"\x7f"}, std::string_view{"\xC2\x85"}, std::string_view{"\xFF"}, std::string_view{"\xC3"}, std::string_view{""}}) {
+        if (entry.take_key(typing(bad)) || !entry.text().empty()) return false;
+    }
+    if (entry.set_text("a\nb") || entry.set_text("12345") || !entry.text().empty()) return false;
+    // A character that does not fit is not cut.
+    if (!entry.set_text("abc") || entry.take_key(typing("é")) || entry.text() != "abc" || !entry.take_key(typing("d")) || entry.take_key(typing("e")) || entry.text() != "abcd") return false;
+    // A key held with a command types nothing, and letting go of one does nothing.
+    TextEntry<EntryTag> other{9};
+    static_cast<void>(other.take_key(KeyEvent{Key::LowerC, Modifier::Ctrl, true, KeyText::of("c")}));
+    static_cast<void>(other.take_key(KeyEvent{Key::LowerC, Modifier::Alt, true, KeyText::of("c")}));
+    static_cast<void>(other.take_key(KeyEvent{Key::LowerC, Modifier::Super, true, KeyText::of("c")}));
+    static_cast<void>(other.take_key(KeyEvent{Key::LowerC, {}, false, KeyText::of("c")}));
+    if (!other.text().empty()) return false;
+    if (!other.take_key(KeyEvent{Key::UpperC, Modifier::Shift, true, KeyText::of("C")}) || other.text() != "C") return false;
+    // More than a key can carry is nothing, never a part.
+    return KeyText::of(std::string(most_key_text_bytes + 1, 'x')).view().empty() && KeyText::of(std::string(most_key_text_bytes, 'x')).view().size() == most_key_text_bytes;
+}
+static_assert(an_entry_takes_only_what_can_show());
+
+static_assert(check_given_name("/top", "a b.txt") && check_given_name("/", "-rf"), "a name that looks like an option is still a name, because no shell reads it");
+static_assert(check_given_name("/top", "").error().message == "Type a name first");
+static_assert(check_given_name("/top", "a/b").error().message == "A name cannot hold a slash" && check_given_name("/top", "/").error().message == "A name cannot hold a slash");
+static_assert(!check_given_name("/top", ".") && !check_given_name("/top", "..") && !check_given_name("/top", "a\nb") && !check_given_name("/top", "\xFF"));
+static_assert(!check_given_name("/top", std::string(most_file_name_bytes + 1, 'x')) && check_given_name("/top", std::string(most_file_name_bytes, 'x')));
+static_assert(!check_given_name("relative", "a") && !check_given_name("/" + std::string(most_file_path_bytes - 2, 'x'), "ab"), "a folder no pane could hold, and a path over the limit");
+
+template <class Tree>
+[[nodiscard]] constexpr auto& name_popup_of(Tree& tree) {
+    return tree.template get<files::NamePopup>();
+}
+
+template <class Tree>
+constexpr void type_in(Tree& tree, std::string_view text) {
+    for (std::size_t at = 0; at < text.size(); ++at) {
+        jgui_test::dispatch(tree, typing(text.substr(at, 1)));
+        static_cast<void>(lay_out(tree));
+    }
+}
+
+[[nodiscard]] constexpr bool touch_asks_for_a_name_and_makes_the_file() {
     FakeDisk disk;
     auto tree = ui_on(disk);
     if (!lay_out(tree)) return false;
+    auto& popup = name_popup_of(tree);
+    if (popup.is_open()) return false;
+    // With nothing selected, the folder at the top, and nothing is done until it is given a name.
     click_on<decltype(tree), FilePaneTouchButton<Left_>>(tree);
-    if (!disk.touched.empty() || tree.template get<Left_>().status() != "Select something to touch first") return false;
-    tree.template get<GridOf<Left_>>().select_rows(std::vector<std::uint32_t>{0, 2}, GridRow{0});
-    tree.template get<GridOf<Right_>>().select_row(GridRow{1});  // the other side's is left alone
+    turn(tree);
+    if (!popup.is_open() || !disk.touched.empty() || !popup.typed().empty() || popup.where() != "In /top") return false;
+    key(tree, Key::Return);
+    if (!popup.is_open() || popup.problem() != "Type a name first" || !disk.touched.empty()) return false;
+    type_in(tree, "a/b");
+    if (!popup.problem().empty()) return false;  // what is typed clears the reason
+    key(tree, Key::Return);
+    if (!popup.is_open() || popup.problem() != "A name cannot hold a slash" || !disk.touched.empty()) return false;
+    key(tree, Key::BackSpace);
+    key(tree, Key::BackSpace);
+    key(tree, Key::BackSpace);
+    type_in(tree, "new.txt");
+    // The keys went to the box and nothing behind it: the pane's own Backspace would have gone up.
+    if (tree.template get<Left_>().folder() != "/top") return false;
+    key(tree, Key::Return);
+    if (popup.is_open() || disk.touched != std::vector<std::string>{"/top/new.txt"} || transfers_of(tree).line() != "Made new.txt") return false;
+    turn(tree);
+    if (!std::ranges::contains(names_of(tree.template get<Left_>()), "new.txt") || !std::ranges::contains(names_of(tree.template get<Right_>()), "new.txt")) return false;
+    // A name already there gets the time of now, as touch does. The keypad's Enter says yes too.
     click_on<decltype(tree), FilePaneTouchButton<Left_>>(tree);
-    if (disk.touched != std::vector<std::string>{"/top/one", "/top/note.txt"} || transfers_of(tree).line() != "Touched 2 things") return false;
+    turn(tree);
+    if (!popup.typed().empty()) return false;  // what was typed last time is gone
+    type_in(tree, "note.txt");
+    key(tree, Key::KeypadEnter);
+    if (popup.is_open() || disk.touched.back() != "/top/note.txt" || transfers_of(tree).line() != "Set the time of note.txt") return false;
+    // In a selected folder, or the folder a selected row is in.
+    tree.template get<GridOf<Left_>>().select_row(GridRow{0});
+    click_on<decltype(tree), FilePaneTouchButton<Left_>>(tree);
+    turn(tree);
+    if (popup.where() != "In /top/one") return false;
+    // Escape changes nothing.
+    type_in(tree, "x");
+    const std::size_t before = disk.touched.size();
+    key(tree, Key::Escape);
+    if (popup.is_open() || disk.touched.size() != before || transfers_of(tree).line() != "Nothing was changed") return false;
+    // What the source refuses stays open, to be corrected.
     disk.touch_fails = true;
     click_on<decltype(tree), FilePaneTouchButton<Left_>>(tree);
-    if (disk.touched.size() != 2 || transfers_of(tree).line() != "Stopped: cannot touch it. Touched 0 of 2") return false;
+    turn(tree);
+    type_in(tree, "y");
+    key(tree, Key::Return);
+    if (!popup.is_open() || popup.problem() != "cannot touch it") return false;
+    key(tree, Key::Escape);
     // Not while something else is going on.
     disk.touch_fails = false;
     transfers_of(tree).copy({"/top/note.txt"});
     transfers_of(tree).paste_into("/other");
     click_on<decltype(tree), FilePaneTouchButton<Left_>>(tree);
-    return disk.touched.size() == 2 && transfers_of(tree).line() == "A copy is still going. Escape stops it.";
+    if (transfers_of(tree).line() != "A copy is still going. Escape stops it.") return false;
+    turn(tree);
+    return !popup.is_open();
 }
-static_assert(touch_touches_what_is_selected());
+static_assert(touch_asks_for_a_name_and_makes_the_file());
+
+[[nodiscard]] constexpr bool touch_needs_a_folder() {
+    FakeDisk disk;
+    auto tree = ui_on(disk, std::unexpected(Error{ErrorCode::System, "no folder"}));
+    if (!lay_out(tree)) return false;
+    click_on<decltype(tree), FilePaneTouchButton<Left_>>(tree);
+    turn(tree);
+    return !name_popup_of(tree).is_open() && tree.template get<Left_>().status() == "This side has no folder to touch in";
+}
+static_assert(touch_needs_a_folder());
+
+[[nodiscard]] constexpr bool rename_takes_one_thing_and_starts_from_its_name() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    auto& popup = name_popup_of(tree);
+    auto& pane = tree.template get<Left_>();
+    click_on<decltype(tree), FilePaneRenameButton<Left_>>(tree);
+    turn(tree);
+    if (popup.is_open() || pane.status() != "Select one thing to rename") return false;
+    tree.template get<GridOf<Left_>>().select_rows(std::vector<std::uint32_t>{0, 2}, GridRow{0});
+    click_on<decltype(tree), FilePaneRenameButton<Left_>>(tree);
+    turn(tree);
+    if (popup.is_open() || pane.status() != "Select one thing to rename") return false;
+    tree.template get<GridOf<Left_>>().select_row(GridRow{2});
+    click_on<decltype(tree), FilePaneRenameButton<Left_>>(tree);
+    turn(tree);
+    if (!popup.is_open() || popup.typed() != "note.txt" || popup.where() != "In /top") return false;
+    // The name it has already changes nothing, and asks nothing of the disk.
+    key(tree, Key::Return);
+    if (popup.is_open() || !disk.gone.empty() || transfers_of(tree).line() != "Nothing was changed") return false;
+    // A name that is taken is refused, stays open, and nothing moves.
+    click_on<decltype(tree), FilePaneRenameButton<Left_>>(tree);
+    turn(tree);
+    for (int i = 0; i < 8; ++i) key(tree, Key::BackSpace);
+    type_in(tree, "one");
+    key(tree, Key::Return);
+    if (!popup.is_open() || popup.problem() != "one is already there" || !disk.gone.empty()) return false;
+    for (int i = 0; i < 3; ++i) key(tree, Key::BackSpace);
+    type_in(tree, "renamed.txt");
+    key(tree, Key::Return);
+    if (popup.is_open() || disk.gone != std::vector<std::string>{"/top/note.txt"} || disk.arrived != std::vector<std::string>{"/top/renamed.txt"}) return false;
+    if (transfers_of(tree).line() != "Renamed note.txt to renamed.txt") return false;
+    turn(tree);
+    return !std::ranges::contains(names_of(pane), "note.txt") && std::ranges::contains(names_of(pane), "renamed.txt");
+}
+static_assert(rename_takes_one_thing_and_starts_from_its_name());
 
 // --- A line of text that can be copied ---
 
@@ -2341,12 +2509,43 @@ void touches_real_things() {
     const auto long_ago = std::filesystem::file_time_type::clock::now() - std::chrono::hours{24 * 400};
     std::filesystem::last_write_time(top / "file.txt", long_ago);
     const auto recent = [&](const std::filesystem::path& path) { return std::filesystem::last_write_time(path) > long_ago + std::chrono::hours{24 * 399}; };
-    check(touch_local_file((top / "link").string()).has_value(), "a link can be touched");
+    const std::string folder = top.string();
+    check(touch_local_file(folder, "link") == TouchOutcome::TimeSet, "a link can be touched");
     check(!recent(top / "file.txt"), "and what it points to keeps its time");
-    check(touch_local_file((top / "file.txt").string()).has_value() && recent(top / "file.txt"), "a file gets the time of now");
+    check(touch_local_file(folder, "file.txt") == TouchOutcome::TimeSet && recent(top / "file.txt"), "a file gets the time of now");
     check(whole_text_of(top / "file.txt") == "unchanged", "and what is in it stays");
-    check(!touch_local_file((top / "missing").string()) && !std::filesystem::exists(top / "missing"), "and what is not there is refused and not made");
-    check(!touch_local_file("/") && !touch_local_file("relative"), "as is what is not a plain path");
+    check(touch_local_file(folder, "new file.txt") == TouchOutcome::Made && std::filesystem::is_regular_file(top / "new file.txt") && std::filesystem::file_size(top / "new file.txt") == 0, "a name that is not there is made, empty");
+    check(touch_local_file(folder, "new file.txt") == TouchOutcome::TimeSet, "and the second time only has its time set");
+    std::filesystem::create_symlink(top / "not_there_yet", top / "dangling");
+    check(touch_local_file(folder, "dangling") == TouchOutcome::TimeSet && !std::filesystem::exists(top / "not_there_yet"), "a link pointing nowhere makes nothing where it points");
+    check(!touch_local_file(folder, "a/b") && !touch_local_file(folder, "..") && !touch_local_file(folder, "") && !touch_local_file(folder, "a\nb"), "a name that could leave the folder or break a line is refused");
+    check(!touch_local_file(folder, "../outside") && !std::filesystem::exists(top.parent_path() / "outside"), "and nothing is made outside it");
+    check(!touch_local_file("relative", "x") && !touch_local_file((top / "missing").string(), "x") && !std::filesystem::exists(top / "missing"), "as is what is not a plain path, or a folder that is not there");
+    std::filesystem::create_directory(top / "real_folder");
+    std::filesystem::create_directory_symlink(top / "real_folder", top / "folder_link");
+    check(!touch_local_file((top / "folder_link").string(), "x") && !std::filesystem::exists(top / "real_folder" / "x"), "a link standing where the folder should be is not followed");
+}
+
+void renames_real_things() {
+    const jgui_test::TemporaryDirectory directory;
+    const std::filesystem::path top = std::filesystem::canonical(directory.path());
+    put_text(top / "file.txt", "first");
+    put_text(top / "taken.txt", "second");
+    std::filesystem::create_directories(top / "folder" / "inside");
+    std::filesystem::create_symlink("taken.txt", top / "link");
+    const auto named = [&](const char* name) { return (top / name).string(); };
+    check(rename_local_file(named("file.txt"), "new name.txt").has_value() && whole_text_of(top / "new name.txt") == "first" && !std::filesystem::exists(top / "file.txt"), "a file takes its new name");
+    check(rename_local_file(named("folder"), "moved").has_value() && std::filesystem::is_directory(top / "moved" / "inside"), "a folder goes whole");
+    check(rename_local_file(named("link"), "link2").has_value() && std::filesystem::read_symlink(top / "link2") == "taken.txt" && whole_text_of(top / "taken.txt") == "second", "a link is renamed itself, and what it points to stays");
+    const auto refused = rename_local_file(named("new name.txt"), "taken.txt");
+    check(!refused && refused.error().message.contains("already there"), "a name that is taken is refused");
+    check(whole_text_of(top / "taken.txt") == "second" && whole_text_of(top / "new name.txt") == "first", "and neither is changed");
+    check(!rename_local_file(named("new name.txt"), "moved") && !rename_local_file(named("moved"), "taken.txt"), "a folder's name or a file's, whichever way round");
+    check(!rename_local_file(named("new name.txt"), "moved/in") && !std::filesystem::exists(top / "moved" / "in"), "a rename cannot move something into another folder");
+    check(!rename_local_file(named("new name.txt"), "../out") && !std::filesystem::exists(top.parent_path() / "out"), "or out of this one");
+    check(!rename_local_file(named("new name.txt"), "") && !rename_local_file(named("new name.txt"), ".") && !rename_local_file(named("new name.txt"), "a\nb") && std::filesystem::exists(top / "new name.txt"), "a name that could not show is refused");
+    check(!rename_local_file(named("missing"), "x") && !std::filesystem::exists(top / "x"), "what is not there is refused");
+    check(!rename_local_file("/", "x") && !rename_local_file("relative", "x"), "as is the top of everything, and what is not a plain path");
 }
 
 [[nodiscard]] std::string wait_for_text(const std::filesystem::path& path, std::string_view wanted) {
@@ -2386,11 +2585,37 @@ void opens_a_real_terminal(const std::filesystem::path& this_program) {
     // The editor is only recorded: the stand-in does not run it.
     std::filesystem::remove(log);
     check(::setenv("JGUI_TEST_TERMINAL_RECORD_ONLY", "1", 1) == 0, "only recorded");
-    check(::setenv("EDITOR", "my-editor -x", 1) == 0 && local_editor() == "my-editor -x", "EDITOR is read");
+    check(::setenv("EDITOR", "sh -x", 1) == 0 && local_editor() == "sh -x", "EDITOR is read, when its program is installed");
     check(run_in_local_terminal(top.string(), *terminal_tool_command(TerminalTool::Edit, cat_names, local_editor())).has_value(), "a terminal starts for the editor");
     const std::string editor_arguments = wait_for_text(log, "second");
-    check(editor_arguments.contains("-e\nmy-editor\n-x\n--\n" + (top / awkward).string() + "\n"), "with the editor told where options end, so a name cannot be one");
+    check(editor_arguments.contains("-e\nsh\n-x\n--\n" + (top / awkward).string() + "\n"), "with the editor told where options end, so a name cannot be one");
     check(::unsetenv("EDITOR") == 0 && local_editor().empty(), "and with none it says so");
+
+    // One that is not installed gives way to Vim, whether named alone or by a path, and whatever else it was told.
+    const std::string path_before = std::getenv("PATH") == nullptr ? std::string{} : std::string{std::getenv("PATH")};
+    const auto editor_given = [](const std::string& setting) {
+        check(::setenv("EDITOR", setting.c_str(), 1) == 0, "an editor is set");
+        return local_editor();
+    };
+    check(editor_given("jcppgui-no-such-editor -x").empty(), "a name not on PATH is as good as none");
+    check(*terminal_tool_command(TerminalTool::Edit, cat_names, editor_given("jcppgui-no-such-editor")) == [&] { std::vector<std::string> words{"vim", "--"}; words.insert(words.end(), cat_names.begin(), cat_names.end()); return words; }(), "so Edit opens Vim");
+    check(editor_given((top / "not_there").string()).empty(), "and so is a path to nothing");
+    check(editor_given(top.string()).empty(), "or to a folder");
+    put_text(top / "plain_file", "not a program");
+    check(editor_given((top / "plain_file").string()).empty(), "or to a file that cannot run");
+    put_text(top / "my-editor", "");
+    std::filesystem::permissions(top / "my-editor", std::filesystem::perms::owner_all);
+    check(editor_given((top / "my-editor").string() + " -x") == (top / "my-editor").string() + " -x", "a path to one that can run stays");
+    check(::setenv("PATH", top.c_str(), 1) == 0 && editor_given("my-editor") == "my-editor", "as does a name in a folder of PATH");
+    // A folder on PATH that is not absolute is wherever the program happens to be, so it is not looked in.
+    const std::filesystem::path was_in = std::filesystem::current_path();
+    std::filesystem::current_path(top);
+    check(::setenv("PATH", ".:", 1) == 0 && editor_given("my-editor").empty(), "and a relative or empty folder of PATH is not looked in");
+    check(::unsetenv("PATH") == 0 && editor_given("my-editor").empty(), "nor is anywhere, with no PATH at all");
+    std::filesystem::current_path(was_in);
+    check(::setenv("PATH", path_before.c_str(), 1) == 0, "PATH is put back");
+    check(editor_given("a'b") == "a'b", "one that cannot be read stays, for Edit to refuse and say why");
+    check(::unsetenv("EDITOR") == 0, "that is undone");
 
     // No terminal anywhere is said, rather than nothing happening.
     const std::string path_was = std::getenv("PATH") == nullptr ? std::string{} : std::string{std::getenv("PATH")};
@@ -2484,6 +2709,7 @@ void diffs_agree_with_the_slow_way() {
     counts_real_things();
     moves_real_things_to_the_trash();
     touches_real_things();
+    renames_real_things();
     opens_a_real_terminal(this_program);
     diffs_real_things();
     diffs_agree_with_the_slow_way();

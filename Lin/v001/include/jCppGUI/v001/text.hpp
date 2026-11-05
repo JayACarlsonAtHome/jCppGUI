@@ -92,6 +92,18 @@ struct GlyphBitmap {
     return true;
 }
 
+// False for invalid UTF-8, and for a control character of either range, so no name can break a line or a display.
+[[nodiscard]] constexpr bool text_can_show(std::string_view text) noexcept {
+    if (!valid_utf8(text)) return false;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const auto byte = static_cast<unsigned char>(text[i]);
+        if (byte < 0x20U || byte == 0x7FU) return false;
+        // Valid UTF-8, so a C2 always has a next byte. U+0080 to U+009F are the second range.
+        if (byte == 0xC2U && static_cast<unsigned char>(text[i + 1]) < 0xA0U) return false;
+    }
+    return true;
+}
+
 // As much of the text as fits in this many bytes without cutting a character in two. It looks only at the bytes at the
 // cut, so what lies before them can still be invalid.
 [[nodiscard]] constexpr std::string_view utf8_prefix(std::string_view text, std::size_t most_bytes) noexcept {

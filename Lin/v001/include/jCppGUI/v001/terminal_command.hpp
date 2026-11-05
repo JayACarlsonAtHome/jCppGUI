@@ -62,6 +62,18 @@ inline constexpr std::string_view cat_and_wait_script = "cat -- \"$@\"; printf '
     return words;
 }
 
+// The folders PATH names that are absolute, in its order. An empty or relative one means wherever the program happens to be running, which could be a folder someone else filled, so it is not looked in.
+[[nodiscard]] constexpr std::vector<std::string> absolute_path_folders(std::string_view path) {
+    std::vector<std::string> folders;
+    while (true) {
+        const std::size_t colon = path.find(':');
+        const std::string_view folder = path.substr(0, colon);
+        if (folder.starts_with('/')) folders.emplace_back(folder);
+        if (colon == std::string_view::npos) return folders;
+        path.remove_prefix(colon + 1);
+    }
+}
+
 // What to run. editor is only used for Edit. "--" tells it where options end, so a name cannot be one.
 [[nodiscard]] constexpr std::expected<std::vector<std::string>, Error> terminal_tool_command(TerminalTool tool, std::span<const std::string> paths, std::string_view editor) {
     std::vector<std::string> command;

@@ -91,6 +91,15 @@ struct DeleteQuestion {
     DeleteCount count{};
 };
 
+enum class NameAsk : std::uint8_t { Touch, Rename };
+
+// A name a person must type. current is what the box starts with: the name a rename starts from, and nothing for a touch.
+struct NameQuestion {
+    NameAsk ask{NameAsk::Touch};
+    std::string folder{};
+    std::string current{};
+};
+
 // How a diff came out, for whatever shows it.
 struct DiffReport {
     std::string first{};
@@ -197,20 +206,44 @@ public:
         say("Finding what differs. Escape stops it.");
     }
 
-    // Sets when these last changed to now. It stops at the first that cannot be, and both panes look again.
-    constexpr void touch(std::span<const std::string> paths) {
+    // Asks for the name to touch in this folder. Nothing happens until it is given.
+    constexpr void ask_touch(std::string folder) {
         if (say_if_busy()) return;
-        std::size_t done = 0;
-        for (const std::string& path : paths) {
-            if (auto touched = source_.touch(path); !touched) {
-                ++changes_;
-                say("Stopped: " + touched.error().message + ". Touched " + decimal_text(done, false) + " of " + decimal_text(paths.size(), false));
-                return;
-            }
-            ++done;
+        name_question_ = NameQuestion{NameAsk::Touch, std::move(folder), {}};
+    }
+
+    // Asks for a new name for this one thing, starting from the name it has.
+    constexpr void ask_rename(const std::string& path) {
+        if (say_if_busy()) return;
+        if (!file_path_can_show(path) || path == "/") {
+            say("That path cannot be renamed");
+            return;
         }
+        name_question_ = NameQuestion{NameAsk::Rename, parent_of_path(path), std::string{last_name_of(path)}};
+    }
+
+    // Once, for whatever asks the person.
+    [[nodiscard]] constexpr std::optional<NameQuestion> take_name_question() { return std::exchange(name_question_, std::nullopt); }
+
+    // Does what was asked with the name typed. A refusal changes nothing, and is for whoever asked, to say beside the name so it can be corrected. Both panes look again after a change.
+    [[nodiscard]] constexpr std::expected<void, Error> give_name(const NameQuestion& question, std::string_view name) {
+        if (auto checked = check_given_name(question.folder, name); !checked) return std::unexpected(std::move(checked.error()));
+        const std::string typed{name};
+        if (question.ask == NameAsk::Touch) {
+            auto touched = source_.touch(question.folder, typed);
+            if (!touched) return std::unexpected(std::move(touched.error()));
+            ++changes_;
+            say((*touched == TouchOutcome::Made ? "Made " : "Set the time of ") + typed);
+            return {};
+        }
+        if (typed == question.current) {
+            say("Nothing was changed");
+            return {};
+        }
+        if (auto renamed = source_.rename(child_of_path(question.folder, question.current), typed); !renamed) return std::unexpected(std::move(renamed.error()));
         ++changes_;
-        say("Touched " + (paths.size() == 1 ? std::string{last_name_of(paths.front())} : detail::count_with_plural(paths.size(), "thing")));
+        say("Renamed " + question.current + " to " + typed);
+        return {};
     }
 
     // Opens a terminal showing or editing these. It goes on by itself, so whatever else is going on here may go on too. A pane does not see what it changes until it looks again.
@@ -696,6 +729,7 @@ private:
     std::string diff_first_{};
     std::string diff_second_{};
     std::optional<DiffReport> diff_done_{};
+    std::optional<NameQuestion> name_question_{};
 };
 
 template <class Tag, class Source>

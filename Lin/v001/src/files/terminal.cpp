@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <linux/close_range.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -27,6 +28,22 @@ namespace jgui::inline v001 {
 namespace {
 
 using detail::UniqueFd;
+
+[[nodiscard]] bool runs_as_a_program(const std::string& path) noexcept {
+    struct stat found {};
+    return ::stat(path.c_str(), &found) == 0 && S_ISREG(found.st_mode) && ::faccessat(AT_FDCWD, path.c_str(), X_OK, AT_EACCESS) == 0;
+}
+
+// As far as can be told from here. A name with a slash is that path, and any other is looked for in the absolute folders of PATH.
+[[nodiscard]] bool program_is_installed(const std::string& program) {
+    if (program.contains('/')) return runs_as_a_program(program);
+    const char* path = ::secure_getenv("PATH");
+    if (path == nullptr) return false;
+    for (const std::string& folder : absolute_path_folders(path)) {
+        if (runs_as_a_program(child_of_path(folder, program))) return true;
+    }
+    return false;
+}
 
 // Only what is safe after a fork happens from here on: no allocation, and no return to the caller.
 [[noreturn]] void become_a_terminal(const std::string& folder, std::span<std::vector<char*>> candidates, int report) noexcept {
@@ -53,7 +70,11 @@ using detail::UniqueFd;
 
 std::string local_editor() {
     const char* named = ::secure_getenv("EDITOR");
-    return named == nullptr ? std::string{} : std::string{named};
+    if (named == nullptr) return {};
+    // One that cannot be read is left for terminal_tool_command to say why, because that is the person's mistake to see.
+    const auto words = editor_words(named);
+    if (words && !program_is_installed(words->front())) return {};
+    return std::string{named};
 }
 
 std::expected<void, Error> run_in_local_terminal(const std::string& folder, std::span<const std::string> command) {
