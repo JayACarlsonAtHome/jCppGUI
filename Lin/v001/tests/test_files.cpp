@@ -1332,11 +1332,13 @@ static_assert(a_count_that_fails_deletes_nothing());
     if (transfers_of(tree).deleting() || transfers_of(tree).line() != "Stopped: cannot delete it. Moved 0 of 1 selected to the trash" || disk.gone.size() != 1) return false;
     disk.delete_fails = false;
     turn(tree);
-    // While one thing goes on, nothing else starts. One selected on each side, so Diff and Compare both get as far as asking.
+    // While one thing goes on, nothing else starts. One selected on each side, so Diff and Compare both get as far as asking, and Meld is there for Diff to ask for.
     grid.select_row(GridRow{0});
     tree.template get<GridOf<Right_>>().select_row(GridRow{1});
     say_yes();
+    disk.installed.emplace_back("meld");
     click_on<decltype(tree), files::DiffButton>(tree);
+    if (!disk.started.empty() || transfers_of(tree).line() != "A delete is still going. Escape stops it.") return false;
     click_on<decltype(tree), files::CompareButton>(tree);
     if (transfers_of(tree).matching() || transfers_of(tree).diffing() || transfers_of(tree).line() != "A delete is still going. Escape stops it.") return false;
     transfers_of(tree).copy({"/top/note.txt"});
@@ -2016,31 +2018,156 @@ constexpr void until_diffed(Tree& tree) {
     for (int i = 0; i < 40 && transfers_of(tree).diffing(); ++i) turn(tree);
 }
 
-[[nodiscard]] constexpr bool the_button_diffs_two_files() {
+template <class Tree>
+[[nodiscard]] constexpr auto& notice_of(Tree& tree) { return tree.template get<files::NoticePopup>(); }
+
+// The rows of /top with the folder one open, in a pane that has not had anything else opened: one, inner, f1, two, note.txt.
+inline constexpr std::uint32_t row_of_one = 0;
+inline constexpr std::uint32_t row_of_f1 = 2;
+inline constexpr std::uint32_t row_of_two = 3;
+
+// Selects these, by rows, on each side, and presses Diff. A search that starts has not taken a step yet.
+template <class Tree>
+constexpr void press_diff_with(Tree& tree, std::vector<std::uint32_t> on_left, std::vector<std::uint32_t> on_right) {
+    const std::optional<GridRow> left_at = on_left.empty() ? std::nullopt : std::optional<GridRow>{GridRow{on_left.front()}};
+    const std::optional<GridRow> right_at = on_right.empty() ? std::nullopt : std::optional<GridRow>{GridRow{on_right.front()}};
+    if (left_at) {
+        tree.template get<GridOf<Left_>>().select_rows(std::move(on_left), *left_at);
+    } else {
+        tree.template get<GridOf<Left_>>().select_row(std::nullopt);
+    }
+    if (right_at) {
+        tree.template get<GridOf<Right_>>().select_rows(std::move(on_right), *right_at);
+    } else {
+        tree.template get<GridOf<Right_>>().select_row(std::nullopt);
+    }
+    click_on<Tree, files::DiffButton>(tree);
+}
+
+// And a turn of the loop after it, which is when a popup opens.
+template <class Tree>
+constexpr void diff_with(Tree& tree, std::vector<std::uint32_t> on_left, std::vector<std::uint32_t> on_right) {
+    press_diff_with(tree, std::move(on_left), std::move(on_right));
+    turn(tree);
+}
+
+[[nodiscard]] constexpr bool nothing_was_changed(const FakeDisk& disk) { return disk.gone.empty() && disk.arrived.empty() && disk.touched.empty() && disk.pictures.empty() && disk.terminals.empty(); }
+
+// What Meld is told. Each word stays one word, whatever is in it.
+static_assert(visual_diff_program == "meld");
+static_assert(visual_diff_command("/a", "/b") == ProgramCommand{{"meld", "/a", "/b"}, false});
+static_assert(visual_diff_command("/b", "/a").words[1] == "/b", "the left first");
+static_assert(visual_diff_command("/a b/-x; rm", "/$(c)/`d`").words == std::vector<std::string>{"meld", "/a b/-x; rm", "/$(c)/`d`"}, "nothing in a name is read");
+static_assert(visual_diff_command("", "").words.size() == 3, "an empty path is still a word of its own");
+static_assert(!visual_diff_command("/a", "/b").in_terminal);
+
+// What counts as what.
+static_assert(diff_kind_of(FileKind::File) == DiffKind::File && diff_kind_of(FileKind::Link) == DiffKind::File && diff_kind_of(FileKind::Folder) == DiffKind::Folder);
+static_assert(diff_kind_of(FileKind::Other) == DiffKind::Neither && diff_kind_of(FileKind::Unknown) == DiffKind::Neither);
+
+using Things = std::vector<SelectedThing>;
+inline constexpr std::string_view one_on_each_side = "Select one file or folder on each side";
+static_assert(refusal_of_diff(Things{}, Things{}) == FileNotice{std::string{one_on_each_side}, "Selected: 0 on the left, 0 on the right"});
+static_assert(refusal_of_diff(Things{{"/a", FileKind::File}}, Things{})->detail == "Selected: 1 on the left, 0 on the right");
+static_assert(refusal_of_diff(Things{}, Things{{"/a", FileKind::File}})->detail == "Selected: 0 on the left, 1 on the right");
+static_assert(refusal_of_diff(Things{{"/a", FileKind::File}, {"/b", FileKind::File}}, Things{})->detail == "Selected: 2 on the left, 0 on the right");
+static_assert(refusal_of_diff(Things{{"/a", FileKind::File}, {"/b", FileKind::File}}, Things{{"/c", FileKind::File}})->detail == "Selected: 2 on the left, 1 on the right");
+static_assert(!refusal_of_diff(Things{{"/a", FileKind::File}}, Things{{"/b", FileKind::File}}) && !refusal_of_diff(Things{{"/a", FileKind::Folder}}, Things{{"/b", FileKind::Folder}}));
+static_assert(!refusal_of_diff(Things{{"/a", FileKind::Link}}, Things{{"/b", FileKind::File}}), "a link counts as a file");
+static_assert(refusal_of_diff(Things{{"/d/a", FileKind::File}}, Things{{"/d/b", FileKind::Folder}}) == FileNotice{"Select two files or two folders", "a is a file and b is a folder, and Meld cannot compare a file with a folder"});
+static_assert(refusal_of_diff(Things{{"/d/a", FileKind::Folder}}, Things{{"/d/b", FileKind::Link}}) == FileNotice{"Select two files or two folders", "b is a file and a is a folder, and Meld cannot compare a file with a folder"});
+static_assert(refusal_of_diff(Things{{"/d/pipe", FileKind::Other}}, Things{{"/d/b", FileKind::File}}) == FileNotice{"Only files and folders can be compared", "pipe is neither"});
+static_assert(refusal_of_diff(Things{{"/d/a", FileKind::Folder}}, Things{{"/d/gone", FileKind::Unknown}}) == FileNotice{"Only files and folders can be compared", "gone is neither"});
+static_assert(folders_need_meld(std::nullopt).detail == "Meld is not installed. The built-in diff only does files.");
+static_assert(folders_need_meld(std::string{"no"}).detail == "Meld did not start: no. The built-in diff only does files.");
+
+// Anything but one on each side opens the popup and starts nothing, Meld or not.
+[[nodiscard]] constexpr bool one_from_each_side_is_wanted(bool meld_there) {
+    FakeDisk disk;
+    if (meld_there) disk.installed.emplace_back("meld");
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    const std::string line_before{transfers_of(tree).line()};
+    const auto refused = [&](std::vector<std::uint32_t> on_left, std::vector<std::uint32_t> on_right, std::string_view said) {
+        diff_with(tree, std::move(on_left), std::move(on_right));
+        const bool right = notice_of(tree).is_open() && notice_of(tree).heading() == one_on_each_side && notice_of(tree).detail_text() == said && !transfers_of(tree).diffing() && disk.started.empty() && !diff_popup_of(tree).is_open() && transfers_of(tree).line() == line_before;
+        jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+        return right && !notice_of(tree).is_open();
+    };
+    return refused({}, {}, "Selected: 0 on the left, 0 on the right") && refused({2}, {}, "Selected: 1 on the left, 0 on the right") && refused({}, {2}, "Selected: 0 on the left, 1 on the right") &&
+           refused({0, 1}, {}, "Selected: 2 on the left, 0 on the right") && refused({}, {0, 1, 2}, "Selected: 0 on the left, 3 on the right") && refused({0, 2}, {1}, "Selected: 2 on the left, 1 on the right") && nothing_was_changed(disk);
+}
+static_assert(one_from_each_side_is_wanted(false));
+static_assert(one_from_each_side_is_wanted(true));
+
+[[nodiscard]] constexpr bool a_file_and_a_folder_cannot_be_compared(bool meld_there) {
+    FakeDisk disk;
+    if (meld_there) disk.installed.emplace_back("meld");
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    diff_with(tree, {2}, {0});  // note.txt, one
+    if (!notice_of(tree).is_open() || notice_of(tree).heading() != "Select two files or two folders" || notice_of(tree).detail_text() != "note.txt is a file and one is a folder, and Meld cannot compare a file with a folder") return false;
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    diff_with(tree, {1}, {2});  // two, note.txt
+    if (!notice_of(tree).is_open() || notice_of(tree).detail_text() != "note.txt is a file and two is a folder, and Meld cannot compare a file with a folder") return false;
+    return disk.started.empty() && !transfers_of(tree).diffing() && nothing_was_changed(disk);
+}
+static_assert(a_file_and_a_folder_cannot_be_compared(false));
+static_assert(a_file_and_a_folder_cannot_be_compared(true));
+
+// With Meld: exactly these words, the left first, from the left's folder, and nothing of ours is read, opened or changed.
+[[nodiscard]] constexpr bool meld_is_given_two_files() {
+    FakeDisk disk;
+    disk.installed.emplace_back("meld");
+    auto tree = ui_on(disk, std::string{"/top"}, std::string{"/other"});
+    if (!lay_out(tree)) return false;
+    tree.template get<Left_>().toggle(0);  // one: inner, f1
+    if (!same_names(names_of(tree.template get<Left_>()), {"one", "inner", "f1", "two", "note.txt"})) return false;
+    diff_with(tree, {row_of_f1}, {0});  // f1, g1
+    if (disk.started != std::vector<std::vector<std::string>>{{"/top/one", "meld", "/top/one/f1", "/other/g1"}}) return false;
+    if (transfers_of(tree).diffing() || diff_popup_of(tree).is_open() || notice_of(tree).is_open() || transfers_of(tree).line() != "Opened Meld on f1 and g1") return false;
+    // note.txt holds a NUL, which the built-in diff refuses. Meld does its own reading.
+    diff_with(tree, {4}, {0});
+    if (disk.started.back() != std::vector<std::string>{"/top", "meld", "/top/note.txt", "/other/g1"} || transfers_of(tree).line() != "Opened Meld on note.txt and g1") return false;
+    return disk.started.size() == 2 && nothing_was_changed(disk);
+}
+static_assert(meld_is_given_two_files());
+
+[[nodiscard]] constexpr bool meld_is_given_two_folders() {
+    FakeDisk disk;
+    disk.installed.emplace_back("meld");
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    tree.template get<Left_>().toggle(0);
+    diff_with(tree, {row_of_two}, {row_of_one});  // two, one
+    if (disk.started != std::vector<std::vector<std::string>>{{"/top", "meld", "/top/two", "/top/one"}}) return false;
+    if (transfers_of(tree).line() != "Opened Meld on two and one" || notice_of(tree).is_open() || transfers_of(tree).diffing()) return false;
+    // A folder with something inside it selected as well is still one thing.
+    diff_with(tree, {row_of_one, 1}, {row_of_one});
+    return disk.started.back() == std::vector<std::string>{"/top", "meld", "/top/one", "/top/one"} && !notice_of(tree).is_open() && nothing_was_changed(disk);
+}
+static_assert(meld_is_given_two_folders());
+
+// Without Meld, two files go to the built-in diff as they always have, and its popup says what differs.
+[[nodiscard]] constexpr bool without_meld_two_files_use_the_viewer() {
     FakeDisk disk;
     auto tree = ui_on(disk);
     if (!lay_out(tree)) return false;
     auto& left = tree.template get<Left_>();
     auto& right = tree.template get<Right_>();
-    click_on<decltype(tree), files::DiffButton>(tree);
-    if (transfers_of(tree).diffing() || transfers_of(tree).line() != "Select exactly two files to diff") return false;
     left.toggle(0);  // one: inner, f1
     right.toggle(0);
     left.toggle(1);  // inner: f2
     if (!same_names(names_of(left), {"one", "inner", "f2", "f1", "two", "note.txt"})) return false;
-    tree.template get<GridOf<Left_>>().select_row(GridRow{3});  // f1
-    tree.template get<GridOf<Right_>>().select_row(GridRow{2});  // f1 on that side
-    click_on<decltype(tree), files::DiffButton>(tree);
-    if (!transfers_of(tree).diffing()) return false;
+    press_diff_with(tree, {3}, {2});  // f1 on both sides
+    if (!transfers_of(tree).diffing() || transfers_of(tree).line() != "Finding what differs. Escape stops it." || notice_of(tree).is_open() || !disk.started.empty()) return false;
     until_diffed(tree);
     turn(tree);
-    if (!diff_popup_of(tree).is_open() || diff_popup_of(tree).heading() != "No lines differ" || !diff_popup_of(tree).rows().empty()) return false;
+    if (!diff_popup_of(tree).is_open() || diff_popup_of(tree).heading() != "No lines differ" || !diff_popup_of(tree).rows().empty() || transfers_of(tree).line() != "The diff is done") return false;
     jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
     if (diff_popup_of(tree).is_open()) return false;
-    // Two on one side, the first being the left of the diff.
-    tree.template get<GridOf<Right_>>().select_row(std::nullopt);
-    tree.template get<GridOf<Left_>>().select_rows(std::vector<std::uint32_t>{2, 3}, GridRow{2});  // f2, f1
-    click_on<decltype(tree), files::DiffButton>(tree);
+    // The left of the diff is the left side.
+    press_diff_with(tree, {2}, {2});  // f2, f1
     until_diffed(tree);
     turn(tree);
     if (!diff_popup_of(tree).is_open() || !diff_popup_of(tree).heading().starts_with("2 lines only on the left, 1 line only on the right") || diff_popup_of(tree).rows().empty()) return false;
@@ -2048,32 +2175,177 @@ constexpr void until_diffed(Tree& tree) {
     // The popup's OK closes it, and nothing was changed on the disk.
     static_cast<void>(lay_out(tree));
     click_on<decltype(tree), FileDiffPopupButton<files::DiffPopup>>(tree);
-    return !diff_popup_of(tree).is_open() && disk.gone.empty() && disk.arrived.empty();
+    return !diff_popup_of(tree).is_open() && disk.started.empty() && nothing_was_changed(disk);
 }
-static_assert(the_button_diffs_two_files());
+static_assert(without_meld_two_files_use_the_viewer());
 
-[[nodiscard]] constexpr bool what_cannot_be_diffed_says_why() {
+// All of the viewer's refusals stay, and each is said on the line.
+[[nodiscard]] constexpr bool what_the_viewer_cannot_diff_says_why() {
     FakeDisk disk;
-    auto tree = ui_on(disk);
+    auto tree = ui_on(disk, std::string{"/top"}, std::string{"/other"});
     if (!lay_out(tree)) return false;
-    tree.template get<GridOf<Left_>>().select_rows(std::vector<std::uint32_t>{0, 1}, GridRow{0});  // two folders
-    click_on<decltype(tree), files::DiffButton>(tree);
-    if (transfers_of(tree).diffing() || transfers_of(tree).line() != "Nothing to diff: one is not a file") return false;
-    tree.template get<GridOf<Left_>>().select_rows(std::vector<std::uint32_t>{0, 1, 2}, GridRow{0});
-    click_on<decltype(tree), files::DiffButton>(tree);
-    if (transfers_of(tree).line() != "Select exactly two files to diff") return false;
-    // Not text, and stopping one.
-    auto& pane = tree.template get<Left_>();
-    pane.toggle(0);
-    tree.template get<GridOf<Left_>>().select_rows(std::vector<std::uint32_t>{2, 4}, GridRow{2});  // f1, note.txt
-    click_on<decltype(tree), files::DiffButton>(tree);
+    tree.template get<Left_>().toggle(0);
+    // Not a file it can read, and not text.
+    diff_with(tree, {row_of_f1}, {0});  // f1, g1
+    if (transfers_of(tree).diffing() || transfers_of(tree).line() != "Nothing to diff: g1 is not a file") return false;
+    transfers_of(tree).start_diff("/top/one/f1", "/top/note.txt");
     if (!transfers_of(tree).line().contains("not both text") || transfers_of(tree).diffing()) return false;
+    // Stopping one.
     transfers_of(tree).start_diff("/top/one/f1", "/top/one/inner/f2");
     jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
     turn(tree);
-    return !transfers_of(tree).diffing() && !diff_popup_of(tree).is_open() && transfers_of(tree).line() == "The diff was stopped";
+    return !transfers_of(tree).diffing() && !diff_popup_of(tree).is_open() && transfers_of(tree).line() == "The diff was stopped" && !notice_of(tree).is_open();
 }
-static_assert(what_cannot_be_diffed_says_why());
+static_assert(what_the_viewer_cannot_diff_says_why());
+
+// Without Meld, two folders have nowhere to go.
+[[nodiscard]] constexpr bool without_meld_two_folders_are_refused() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    diff_with(tree, {0}, {1});  // one, two
+    if (!notice_of(tree).is_open() || notice_of(tree).heading() != "Comparing folders needs Meld" || notice_of(tree).detail_text() != "Meld is not installed. The built-in diff only does files.") return false;
+    return disk.started.empty() && !transfers_of(tree).diffing() && !diff_popup_of(tree).is_open() && nothing_was_changed(disk);
+}
+static_assert(without_meld_two_folders_are_refused());
+
+// Meld refusing to start: two files still get the built-in diff, and why stays on the line to the end of it, however it ends, and no later than that.
+[[nodiscard]] constexpr bool meld_refusing_files_falls_back_and_says_why() {
+    FakeDisk disk;
+    disk.installed.emplace_back("meld");
+    disk.program_refuses.emplace_back("meld");
+    auto tree = ui_on(disk, std::string{"/top"}, std::string{"/top"});
+    if (!lay_out(tree)) return false;
+    tree.template get<Left_>().toggle(0);
+    tree.template get<Right_>().toggle(0);
+    press_diff_with(tree, {row_of_f1}, {row_of_f1});
+    if (!transfers_of(tree).diffing() || notice_of(tree).is_open() || !disk.started.empty()) return false;
+    if (transfers_of(tree).line() != "Meld did not start, so this is the built-in diff: cannot start meld. Finding what differs. Escape stops it.") return false;
+    until_diffed(tree);
+    turn(tree);
+    if (!diff_popup_of(tree).is_open() || transfers_of(tree).line() != "Meld did not start, so this is the built-in diff: cannot start meld. The diff is done") return false;
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    // Stopped.
+    press_diff_with(tree, {row_of_f1}, {row_of_f1});
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    if (transfers_of(tree).diffing() || transfers_of(tree).line() != "Meld did not start, so this is the built-in diff: cannot start meld. The diff was stopped") return false;
+    // With the viewer refusing as well, both are said.
+    diff_with(tree, {4}, {4});  // note.txt, which holds a NUL
+    if (transfers_of(tree).diffing() || !transfers_of(tree).line().starts_with("Meld did not start, so this is the built-in diff: cannot start meld. Nothing to diff: ")) return false;
+    // What was said is not said of a diff that Meld has no part in.
+    transfers_of(tree).start_diff("/top/one/f1", "/top/one/f1");
+    if (transfers_of(tree).line() != "Finding what differs. Escape stops it.") return false;
+    until_diffed(tree);
+    return transfers_of(tree).line() == "The diff is done" && disk.started.empty() && nothing_was_changed(disk);
+}
+static_assert(meld_refusing_files_falls_back_and_says_why());
+
+[[nodiscard]] constexpr bool meld_refusing_folders_opens_the_popup() {
+    FakeDisk disk;
+    disk.installed.emplace_back("meld");
+    disk.program_refuses.emplace_back("meld");
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    diff_with(tree, {0}, {1});
+    if (!notice_of(tree).is_open() || notice_of(tree).heading() != "Comparing folders needs Meld" || notice_of(tree).detail_text() != "Meld did not start: cannot start meld. The built-in diff only does files.") return false;
+    return disk.started.empty() && !transfers_of(tree).diffing() && nothing_was_changed(disk);
+}
+static_assert(meld_refusing_folders_opens_the_popup());
+
+// While something goes on, the line refuses, whatever is selected, and neither Meld nor the popup comes of it.
+[[nodiscard]] constexpr bool diff_waits_for_what_is_going_on() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    tree.template get<Left_>().toggle(0);
+    tree.template get<Right_>().toggle(0);
+    const auto refused = [&](std::string_view said) {
+        const auto one = [&](std::vector<std::uint32_t> on_left, std::vector<std::uint32_t> on_right) {
+            press_diff_with(tree, std::move(on_left), std::move(on_right));
+            return transfers_of(tree).line() == said && !transfers_of(tree).take_notice();
+        };
+        return one({row_of_one}, {1}) && one({row_of_f1}, {2}) && one({}, {}) && one({0, 1}, {}) && disk.started.empty();
+    };
+    // A diff, with Meld only there from now on.
+    press_diff_with(tree, {row_of_f1}, {2});
+    if (!transfers_of(tree).diffing()) return false;
+    disk.installed.emplace_back("meld");
+    if (!refused("A diff is still going. Escape stops it.")) return false;
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    // A copy.
+    transfers_of(tree).copy({"/top/note.txt"});
+    transfers_of(tree).paste_into("/other");
+    if (!transfers_of(tree).copying() || !refused("A copy is still going. Escape stops it.")) return false;
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    // A match.
+    transfers_of(tree).start_matching(plan_matches(std::vector<std::string>{"/top/note.txt"}, std::vector<std::string>{"/top/one"}));
+    if (!transfers_of(tree).matching() || !refused("A match is still going. Escape stops it.")) return false;
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    turn(tree);
+    tree.template get<files::MatchPopup>().close();
+    // A delete, counting.
+    transfers_of(tree).start_deleting({"/top/note.txt"});
+    return transfers_of(tree).counting() && refused("A delete is still going. Escape stops it.");
+}
+static_assert(diff_waits_for_what_is_going_on());
+
+// The popup: OK, Return and Escape each close it, and until then nothing below hears anything.
+[[nodiscard]] constexpr bool the_notice_takes_everything_until_closed() {
+    FakeDisk disk;
+    disk.installed.emplace_back("meld");
+    auto tree = ui_on(disk);
+    if (!lay_out(tree)) return false;
+    auto& grid = tree.template get<GridOf<Left_>>();
+    auto& right_grid = tree.template get<GridOf<Right_>>();
+    if (notice_of(tree).bounds() != Rect{}) return false;
+    diff_with(tree, {2}, {});
+    if (!notice_of(tree).is_open() || notice_of(tree).bounds().width() == Width{} || !whole_window.contains(notice_of(tree).bounds().origin())) return false;
+    // A press below goes nowhere: it would have selected a row, and now it does not.
+    press(tree, row_point(grid, 0, past_a_top_mark));
+    if (grid.selected()->index != 2 || grid.selected_rows().size() != 1 || !notice_of(tree).is_open()) return false;
+    // Nor do keys.
+    jgui_test::dispatch(tree, KeyEvent{Key::LowerA, Modifier::Ctrl, true});
+    if (grid.selected_rows().size() != 1 || !notice_of(tree).is_open()) return false;
+    // Nor the Diff button, even with what it wants selected by now.
+    right_grid.select_rows(std::vector<std::uint32_t>{2}, GridRow{2});
+    click_on<decltype(tree), files::DiffButton>(tree);
+    turn(tree);
+    if (!disk.started.empty() || !notice_of(tree).is_open() || notice_of(tree).detail_text() != "Selected: 1 on the left, 0 on the right") return false;
+    // OK closes it, and the panes hear again.
+    static_cast<void>(lay_out(tree));
+    click_on<decltype(tree), FileNoticePopupButton<files::NoticePopup>>(tree);
+    if (notice_of(tree).is_open()) return false;
+    turn(tree);
+    if (notice_of(tree).is_open() || notice_of(tree).bounds() != Rect{}) return false;
+    press(tree, row_point(grid, 0, past_a_top_mark));
+    if (grid.selected()->index != 0) return false;
+    // Return closes it, and does nothing else.
+    diff_with(tree, {}, {});
+    if (!notice_of(tree).is_open()) return false;
+    jgui_test::dispatch(tree, KeyEvent{Key::Return, {}, true});
+    if (notice_of(tree).is_open()) return false;
+    // Escape closes it, and goes no further.
+    diff_with(tree, {}, {});
+    if (!notice_of(tree).is_open()) return false;
+    jgui_test::dispatch(tree, KeyEvent{Key::Escape, {}, true});
+    if (notice_of(tree).is_open()) return false;
+    // It is taken once, so it does not come back by itself.
+    turn(tree);
+    return !notice_of(tree).is_open() && disk.started.empty() && nothing_was_changed(disk);
+}
+static_assert(the_notice_takes_everything_until_closed());
+
+// What it shows goes the way everything shown goes: text that cannot show is not shown, and what is too long is cut.
+[[nodiscard]] constexpr bool the_notice_only_shows_what_can_show() {
+    FakeDisk disk;
+    auto tree = ui_on(disk);
+    auto& popup = notice_of(tree);
+    popup.open_with(FileNotice{"\xFF", "cut \xC3"});
+    if (!popup.is_open() || popup.heading() != "This message cannot be shown" || popup.detail_text() != "This message cannot be shown") return false;
+    popup.open_with(FileNotice{"", std::string(max_caption_bytes + 10, 'x')});
+    return popup.heading().empty() && popup.detail_text().size() == max_caption_bytes;
+}
+static_assert(the_notice_only_shows_what_can_show());
 
 // Looking again keeps what was open and what was selected, wherever they went, and what has gone is gone.
 [[nodiscard]] constexpr bool looking_again_keeps_the_tree() {

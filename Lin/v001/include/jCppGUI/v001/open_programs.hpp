@@ -27,6 +27,10 @@ struct ProgramCommand {
 inline constexpr std::string_view recording_program = "obs";
 [[nodiscard]] constexpr ProgramCommand recording_command() { return ProgramCommand{{std::string{recording_program}, "--startrecording"}, false}; }
 
+// Meld, on one thing from each side, the left first. A pane's paths are absolute, so each starts with a slash and Meld cannot read one as an option, whatever the name is.
+inline constexpr std::string_view visual_diff_program = "meld";
+[[nodiscard]] constexpr ProgramCommand visual_diff_command(std::string_view left, std::string_view right) { return ProgramCommand{{std::string{visual_diff_program}, std::string{left}, std::string{right}}, false}; }
+
 enum class FileFamily : std::uint8_t { Office, Image, Text, Other };
 
 inline constexpr std::array<std::string_view, 19> office_extensions{"odt", "ods", "odp", "odg", "ott", "ots", "otp", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "rtf", "csv", "tsv", "fodt", "fods", "fodp"};

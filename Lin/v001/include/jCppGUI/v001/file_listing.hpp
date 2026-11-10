@@ -411,6 +411,57 @@ namespace detail {
     return plan;
 }
 
+// --- What Diff can be given ---
+
+// One thing selected in a pane.
+struct SelectedThing {
+    std::string path{};
+    FileKind kind{FileKind::Unknown};
+
+    friend constexpr bool operator==(const SelectedThing&, const SelectedThing&) = default;
+};
+
+// Something a person must read and close.
+struct FileNotice {
+    std::string heading{};
+    std::string detail{};
+
+    friend constexpr bool operator==(const FileNotice&, const FileNotice&) = default;
+};
+
+enum class DiffKind : std::uint8_t { File, Folder, Neither };
+
+// A listing does not follow a link, so a link says nothing of what it points to: it counts as a file here, as it does for Open, Cat and Edit, even when it points to a folder.
+[[nodiscard]] constexpr DiffKind diff_kind_of(FileKind kind) noexcept {
+    if (kind == FileKind::File || kind == FileKind::Link) return DiffKind::File;
+    return kind == FileKind::Folder ? DiffKind::Folder : DiffKind::Neither;
+}
+
+// Why these cannot be diffed, or nothing if they can: one from each side, both files or both folders.
+[[nodiscard]] constexpr std::optional<FileNotice> refusal_of_diff(std::span<const SelectedThing> left, std::span<const SelectedThing> right) {
+    if (left.size() != 1 || right.size() != 1) {
+        return FileNotice{"Select one file or folder on each side", "Selected: " + decimal_text(left.size(), false) + " on the left, " + decimal_text(right.size(), false) + " on the right"};
+    }
+    const DiffKind left_kind = diff_kind_of(left.front().kind);
+    const DiffKind right_kind = diff_kind_of(right.front().kind);
+    if (left_kind == DiffKind::Neither || right_kind == DiffKind::Neither) {
+        const std::string_view name = last_name_of(left_kind == DiffKind::Neither ? left.front().path : right.front().path);
+        return FileNotice{"Only files and folders can be compared", std::string{name} + " is neither"};
+    }
+    if (left_kind != right_kind) {
+        const std::string_view folder = last_name_of(left_kind == DiffKind::Folder ? left.front().path : right.front().path);
+        const std::string_view file = last_name_of(left_kind == DiffKind::Folder ? right.front().path : left.front().path);
+        return FileNotice{"Select two files or two folders", std::string{file} + " is a file and " + std::string{folder} + " is a folder, and Meld cannot compare a file with a folder"};
+    }
+    return std::nullopt;
+}
+
+// Only Meld compares folders. reason is what stopped it starting, and nothing when it is not installed.
+[[nodiscard]] constexpr FileNotice folders_need_meld(const std::optional<std::string>& reason) {
+    const std::string why = reason ? "Meld did not start: " + *reason + "." : std::string{"Meld is not installed."};
+    return FileNotice{"Comparing folders needs Meld", why + " The built-in diff only does files."};
+}
+
 // --- The freedesktop.org trash ---
 
 // When something went to the trash, as the local clock said.

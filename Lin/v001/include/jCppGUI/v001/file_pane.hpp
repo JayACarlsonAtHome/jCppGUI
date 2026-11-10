@@ -382,16 +382,22 @@ public:
     }
 
     // What is selected, in tree order. Something inside a selected folder is left out, because it goes with that folder.
-    [[nodiscard]] constexpr std::vector<std::string> selected_paths() const {
-        std::vector<std::string> paths;
+    [[nodiscard]] constexpr std::vector<SelectedThing> selected_things() const {
+        std::vector<SelectedThing> things;
         std::size_t inside_until = 0;
         for (const std::uint32_t row : grid().selected_rows()) {
             if (row < inside_until) continue;
-            paths.push_back(path_of(row));
+            things.push_back(SelectedThing{path_of(row), rows()[row].kind});
             const std::uint32_t depth = rows()[row].name.depth;
             inside_until = row + std::size_t{1};
             while (inside_until < rows().size() && rows()[inside_until].name.depth > depth) ++inside_until;
         }
+        return things;
+    }
+
+    [[nodiscard]] constexpr std::vector<std::string> selected_paths() const {
+        std::vector<std::string> paths;
+        for (SelectedThing& thing : selected_things()) paths.push_back(std::move(thing.path));
         return paths;
     }
 
@@ -836,18 +842,10 @@ constexpr void open_from_panes(U& ui) {
     transfers.open_file(selected.front());
 }
 
-// Exactly two selected, on either side, the left pane's first.
+// One selected on each side. The transfers say what becomes of them.
 template <class LeftTag, class RightTag, class TransfersTag, class U>
 constexpr void diff_panes(U& ui) {
-    std::vector<std::string> selected = ui.template get<LeftTag>().selected_paths();
-    const std::vector<std::string> on_right = ui.template get<RightTag>().selected_paths();
-    selected.insert(selected.end(), on_right.begin(), on_right.end());
-    auto& transfers = ui.template get<TransfersTag>();
-    if (selected.size() != 2) {
-        transfers.tell("Select exactly two files to diff");
-        return;
-    }
-    transfers.start_diff(selected[0], selected[1]);
+    ui.template get<TransfersTag>().diff_selected(ui.template get<LeftTag>().selected_things(), ui.template get<RightTag>().selected_things());
 }
 
 template <class Tag, class Transfers, class Source>

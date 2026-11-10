@@ -3158,7 +3158,6 @@ struct FilesRecord {
     static constexpr ClientEnd end = ends_clean;
     static constexpr bool files_program = true;
     static constexpr bool left_exists = true;
-    static constexpr bool opens_programs = true;
     static constexpr bool takes_pictures = true;
     enum class Step : std::uint8_t { First, Started, Done };
     FilesState state{};
@@ -3191,6 +3190,107 @@ struct FilesRecord {
         if (read_text_file(record.string()) != "--startrecording\n") session.violation("it was not told to record: " + read_text_file(record.string()));
         step = Step::Done;
         session.close_window();
+    }
+};
+
+// The Diff button, off the wire. With nothing selected, a popup covers the middle of the window and Return takes it away. Then one from each side starts Meld with no shell. A stand-in, first on PATH, says what it was given and where it was started.
+struct FilesDiffWithMeld {
+    static constexpr ClientEnd end = ends_clean;
+    static constexpr bool files_program = true;
+    static constexpr bool left_exists = true;
+    enum class Step : std::uint8_t { First, Settling, Refused, Closed, Select, Click, Started, Done };
+    FilesState state{};
+    Step step{Step::First};
+    int waits{};
+    std::vector<std::uint32_t> lower_half_before{};
+
+    // The lower half of the window, where the popup shows.
+    [[nodiscard]] std::vector<std::uint32_t> lower_half(Session& session) const {
+        std::vector<std::uint32_t> whole = state.picture(session);
+        if (whole.empty()) return whole;
+        whole.erase(whole.begin(), whole.begin() + static_cast<std::ptrdiff_t>(whole.size() / 2));
+        return whole;
+    }
+
+    void give_up(Session& session, const std::string& why) {
+        session.violation(why);
+        session.close_window();
+        step = Step::Done;
+    }
+
+    void on(Session& session, const SurfaceReady&) { session.configure(viewer_width, viewer_height); }
+    void on(Session& session, const KeyboardCreated&) { send_valid_keymap(session); }
+    void on(Session& session, const BufferCommitted& commit) { state.on_commit(session, commit); }
+    void on(Session& session, const Idle&) {
+        if (session.commits_with_buffer() == 0 || !session.pointer() || !session.keyboard() || step == Step::Done) return;
+        const std::filesystem::path left{state.left};
+        const std::filesystem::path right{state.right};
+        const std::filesystem::path record = left.parent_path() / "bin" / "meld.words";
+        FilesReference reference{jgui::starting_folder(state.left), jgui::starting_folder(state.right), viewer_width, viewer_height};
+        const jgui::Rect button = reference.get<files::DiffButton>().bounds();
+        const auto click_diff = [&] { left_click(session, jgui_test::number(button.left()) + 3, jgui_test::number(button.top()) + 3); };
+        ++waits;
+        switch (step) {
+            case Step::First:
+                pointer_enter(session, jgui_test::number(button.left()) + 3, jgui_test::number(button.top()) + 3);
+                session.queue(event::keyboard_enter(*session.keyboard(), session.next_serial(), *session.window_surface()));
+                step = Step::Settling;
+                waits = 0;
+                return;
+            case Step::Settling:
+                if (waits < 20) return;
+                lower_half_before = lower_half(session);
+                click_diff();
+                step = Step::Refused;
+                waits = 0;
+                return;
+            case Step::Refused:
+                if (lower_half(session) == lower_half_before) {
+                    if (waits > 1000) give_up(session, "the popup did not show");
+                    return;
+                }
+                if (std::filesystem::exists(record)) session.violation("Meld was started with nothing selected");
+                session.queue(event::keyboard_key(*session.keyboard(), session.next_serial(), 0, key_return, 1));
+                session.queue(event::keyboard_key(*session.keyboard(), session.next_serial(), 0, key_return, 0));
+                step = Step::Closed;
+                waits = 0;
+                return;
+            case Step::Closed:
+                if (lower_half(session) != lower_half_before) {
+                    if (waits > 1000) give_up(session, "Return did not take the popup away");
+                    return;
+                }
+                step = Step::Select;
+                return;
+            case Step::Select: {
+                auto& left_grid = reference.get<jgui::FilePaneGrid<files::LeftPane>>();
+                auto& right_grid = reference.get<jgui::FilePaneGrid<files::RightPane>>();
+                const auto row_x = [](auto& grid) { return jgui_test::number(grid.column_left(jgui::file_name_column)) + 60; };
+                const auto row_y = [](auto& grid, std::int32_t row) { return jgui_test::number(grid.body_area().top()) + jgui_test::number(grid.row_height()) * row + 3; };
+                left_click(session, row_x(left_grid), row_y(left_grid, 1));  // plain.txt, with sub above it
+                left_click(session, row_x(right_grid), row_y(right_grid, 0));  // only.txt
+                step = Step::Click;
+                waits = 0;
+                return;
+            }
+            case Step::Click:
+                if (waits < 20) return;
+                click_diff();
+                step = Step::Started;
+                waits = 0;
+                return;
+            case Step::Started:
+                if (!std::filesystem::exists(record)) {
+                    if (waits > 1000) give_up(session, "Meld was not started");
+                    return;
+                }
+                if (read_text_file(record.string()) != left.string() + "\n" + (left / "plain.txt").string() + "\n" + (right / "only.txt").string() + "\n") session.violation("it was not started as it should be: " + read_text_file(record.string()));
+                step = Step::Done;
+                session.close_window();
+                return;
+            case Step::Done:
+            default: return;
+        }
     }
 };
 
@@ -3436,21 +3536,25 @@ template <class Script>
     put_file(right / "only.txt", "only");
     // The program under test never reaches the person's real trash.
     if (::setenv("XDG_DATA_HOME", (top / "data").c_str(), 1) != 0) return false;
-    // The program under test starts nothing of the person's: stand-ins are first on PATH, written with no first line, so execvp gives them to sh, and it finds only this entry.
+    // The program under test starts nothing of the person's: stand-ins are first on PATH, written with no first line, so execvp gives them to sh, and it finds only this entry. Meld and OBS have one in every scenario, so a stray click cannot open a real window on
+    // the person's desktop. Meld's says where it was started as well.
+    const std::filesystem::path bin = top / "bin";
+    std::filesystem::create_directories(bin);
+    const std::string says_its_words = "for word in \"$@\"; do printf '%s\\n' \"$word\" >> \"$0.partial\"; done\nmv \"$0.partial\" \"$0.words\"\n";
+    put_file(bin / "obs", says_its_words);
+    put_file(bin / "meld", "pwd >> \"$0.partial\"\n" + says_its_words);
+    std::filesystem::permissions(bin / "obs", std::filesystem::perms::owner_all);
+    std::filesystem::permissions(bin / "meld", std::filesystem::perms::owner_all);
+    const char* path_was = std::getenv("PATH");
+    const std::string path_before = path_was == nullptr ? std::string{} : std::string{path_was};
+    if (::setenv("PATH", (bin.string() + ":" + path_before).c_str(), 1) != 0) return false;
     if constexpr (requires { requires Script::opens_programs; }) {
-        const std::filesystem::path bin = top / "bin";
-        std::filesystem::create_directories(bin);
         std::filesystem::create_directories(top / "data" / "applications");
         put_file(bin / "xdg-mime", "case \"$2\" in\n  filetype) printf 'text/x-stand-in\\n' ;;\n  default) printf 'stand-in.desktop\\n' ;;\nesac\n");
-        put_file(bin / "stand-in-opener", "for word in \"$@\"; do printf '%s\\n' \"$word\" >> \"$0.partial\"; done\nmv \"$0.partial\" \"$0.words\"\n");
+        put_file(bin / "stand-in-opener", says_its_words);
         put_file(top / "data" / "applications" / "stand-in.desktop", "[Desktop Entry]\nExec=stand-in-opener --given %f\n");
         std::filesystem::permissions(bin / "xdg-mime", std::filesystem::perms::owner_all);
         std::filesystem::permissions(bin / "stand-in-opener", std::filesystem::perms::owner_all);
-        std::filesystem::copy_file(bin / "stand-in-opener", bin / "obs");
-        std::filesystem::permissions(bin / "obs", std::filesystem::perms::owner_all);
-        const char* path_was = std::getenv("PATH");
-        const std::string path_before = path_was == nullptr ? std::string{} : std::string{path_was};
-        if (::setenv("PATH", (bin.string() + ":" + path_before).c_str(), 1) != 0) return false;
     }
     // Nor the person's real ScreenShots folder.
     if constexpr (requires { requires Script::takes_pictures; }) {
@@ -3611,6 +3715,7 @@ constexpr auto scenarios = std::tuple{
     Named<FilesScreenShot>{"files_screenshot"},
     Named<FilesOpen>{"files_open"},
     Named<FilesRecord>{"files_record"},
+    Named<FilesDiffWithMeld>{"files_diff_with_meld"},
     Named<FilesCopyLine>{"files_copy_line"},
 };
 

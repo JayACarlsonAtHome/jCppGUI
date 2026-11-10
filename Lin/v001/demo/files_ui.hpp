@@ -11,6 +11,7 @@
 #include "jCppGUI/v001/file_diff_popup.hpp"
 #include "jCppGUI/v001/file_match_popup.hpp"
 #include "jCppGUI/v001/file_name_popup.hpp"
+#include "jCppGUI/v001/file_notice_popup.hpp"
 #include "jCppGUI/v001/file_open_popup.hpp"
 #include "jCppGUI/v001/file_pane.hpp"
 #include "jCppGUI/v001/file_transfers.hpp"
@@ -40,6 +41,8 @@ struct NameLayer;
 struct NamePopup;
 struct OpenLayer;
 struct OpenPopup;
+struct NoticeLayer;
+struct NoticePopup;
 
 using StartFolder = std::expected<std::string, jgui::Error>;
 
@@ -63,12 +66,13 @@ template <jgui::FileSource Source>
                               jgui::button<DiffButton>("Diff", [](auto& u) -> void { jgui::diff_panes<LeftPane, RightPane, Transfers>(u); }),
                               jgui::button<ScreenShotButton>("ScreenShot", [](auto& u) -> void { u.template get<Transfers>().ask_picture(); }),
                               jgui::button<RecordButton>("Record", [](auto& u) -> void { u.template get<Transfers>().record_desktop(); }));
-    // The transfers come first in the tree, so what they finish is seen by both panes and each popup in the same turn. Only one thing goes at a time, so only one of those popups is open, with the clipboard's on top of it, because a line inside a popup can be copied too.
+    // The transfers come first in the tree, so what they finish is seen by both panes and each popup in the same turn. Only one thing goes at a time, so only one of those popups is open, with the clipboard's on top of it, because a line inside a popup can be copied too. A notice only opens when nothing is going on, and while it is open nothing can start, so it never shares the window with another but the clipboard's.
     auto content = jgui::popup_layer<DiffLayer>(jgui::FileDiffPopup<DiffPopup, Transfers>{}, std::move(bar), jgui::file_transfers<Transfers>(std::move(source)), jgui::two_panes<Panes>(std::move(left), std::move(right)));
     auto below = jgui::popup_layer<Layer>(jgui::FileMatchPopup<MatchPopup, Transfers>{}, jgui::popup_layer<DeleteLayer>(jgui::FileDeletePopup<DeletePopup, Transfers>{}, std::move(content)));
     auto named = jgui::popup_layer<NameLayer>(jgui::FileNamePopup<NamePopup, Transfers>{}, std::move(below));
     auto opening = jgui::popup_layer<OpenLayer>(jgui::FileOpenPopup<OpenPopup, Transfers>{}, std::move(named));
-    return jgui::window(jgui::window_frame(jgui::popup_layer<ClipboardLayer>(jgui::FileClipboardPopup<ClipboardPopup, Transfers>{}, std::move(opening))));
+    auto noticed = jgui::popup_layer<NoticeLayer>(jgui::FileNoticePopup<NoticePopup, Transfers>{}, std::move(opening));
+    return jgui::window(jgui::window_frame(jgui::popup_layer<ClipboardLayer>(jgui::FileClipboardPopup<ClipboardPopup, Transfers>{}, std::move(noticed))));
 }
 
 }  // namespace files

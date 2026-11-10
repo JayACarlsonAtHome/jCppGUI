@@ -205,24 +205,55 @@ public:
         if (say_if_busy()) return;
         auto first_text = source_.read_text(first);
         if (!first_text) {
-            say("Nothing to diff: " + first_text.error().message);
+            say(std::exchange(diff_lead_, {}) + "Nothing to diff: " + first_text.error().message);
             return;
         }
         auto second_text = source_.read_text(second);
         if (!second_text) {
-            say("Nothing to diff: " + second_text.error().message);
+            say(std::exchange(diff_lead_, {}) + "Nothing to diff: " + second_text.error().message);
             return;
         }
         auto started = LineDiffer::start(std::move(*first_text), std::move(*second_text));
         if (!started) {
-            say("Nothing to diff: " + started.error().message);
+            say(std::exchange(diff_lead_, {}) + "Nothing to diff: " + started.error().message);
             return;
         }
         differ_.emplace(std::move(*started));
         diff_first_ = first;
         diff_second_ = second;
-        say("Finding what differs. Escape stops it.");
+        say(diff_lead_ + "Finding what differs. Escape stops it.");
     }
+
+    // The Diff button, with what is selected on each side. Meld goes on by itself, like any program started from here. Without it, two files go to the viewer here, and two folders have nowhere to go. Nothing is asked of a person while something else
+    // goes on, so a notice only opens when nothing can finish under it.
+    constexpr void diff_selected(std::span<const SelectedThing> left, std::span<const SelectedThing> right) {
+        if (say_if_busy()) return;
+        if (auto refused = refusal_of_diff(left, right); refused) {
+            notice_ = std::move(refused);
+            return;
+        }
+        const std::string& first = left.front().path;
+        const std::string& second = right.front().path;
+        std::optional<std::string> did_not_start;
+        if (source_.program_installed(std::string{visual_diff_program})) {
+            const ProgramCommand command = visual_diff_command(first, second);
+            auto started = source_.start_program(parent_of_path(first), command.words);
+            if (started) {
+                say("Opened Meld on " + display_name(first) + " and " + display_name(second));
+                return;
+            }
+            did_not_start = std::move(started.error().message);
+        }
+        if (diff_kind_of(left.front().kind) == DiffKind::Folder) {
+            notice_ = folders_need_meld(did_not_start);
+            return;
+        }
+        if (did_not_start) diff_lead_ = "Meld did not start, so this is the built-in diff: " + *did_not_start + ". ";
+        start_diff(first, second);
+    }
+
+    // Once, for whatever shows it.
+    [[nodiscard]] constexpr std::optional<FileNotice> take_notice() { return std::exchange(notice_, std::nullopt); }
 
     // Asks for the name to touch in this folder. Nothing happens until it is given.
     constexpr void ask_touch(std::string folder) {
@@ -457,7 +488,7 @@ public:
         }
         if (differ_) {
             differ_.reset();
-            say("The diff was stopped");
+            say(std::exchange(diff_lead_, {}) + "The diff was stopped");
             return true;
         }
         if (job_) {
@@ -681,7 +712,7 @@ private:
         }
         diff_done_ = DiffReport{std::move(diff_first_), std::move(diff_second_), differ_->outcome()};
         differ_.reset();
-        say("The diff is done");
+        say(std::exchange(diff_lead_, {}) + "The diff is done");
     }
 
     constexpr void note_match(std::string where, std::string why) {
@@ -837,6 +868,8 @@ private:
     std::string diff_first_{};
     std::string diff_second_{};
     std::optional<DiffReport> diff_done_{};
+    std::string diff_lead_{};  // why this diff is the built-in one when Meld would not start, kept on the line until it ends
+    std::optional<FileNotice> notice_{};
     std::optional<NameQuestion> name_question_{};
     std::optional<PictureTarget> picture_target_{};
     std::optional<OpenQuestion> open_question_{};
