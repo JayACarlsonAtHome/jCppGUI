@@ -453,7 +453,13 @@ jgui_compile_fail(warn_shadow "shadow[-a-z]*\\]")
 # --- Source rules: the text layer, a proof that it catches what it claims, and the AST layer on a clang build ---
 add_test(NAME source_rules
   COMMAND ${JGUI_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_source_rules.sh)
-find_program(JGUI_CLANG_QUERY clang-query)
+set(JGUI_CLANG_QUERY_NAMES clang-query)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  # The clang-query of the compiler's own version comes first. Linux Mint has only versioned ones, such as clang-query-21.
+  string(REGEX MATCH "^[0-9]+" JGUI_CLANG_MAJOR "${CMAKE_CXX_COMPILER_VERSION}")
+  list(PREPEND JGUI_CLANG_QUERY_NAMES clang-query-${JGUI_CLANG_MAJOR})
+endif()
+find_program(JGUI_CLANG_QUERY NAMES ${JGUI_CLANG_QUERY_NAMES})
 set(JGUI_SELFTEST_TOOL "")
 if(JGUI_CLANG_QUERY AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set(JGUI_SELFTEST_TOOL ${JGUI_CLANG_QUERY})

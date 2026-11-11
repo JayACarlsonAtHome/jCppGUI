@@ -1,12 +1,13 @@
 # File: bsir.sh
 # Purpose: Bootstrap, Setup, Install and Run for jCppGUI Lin/v001.
 #
-#   1. Stop unless dnf is here: Fedora is the only system this has been written for.
-#   2. Check each component with its `check` line in Setup/recipes.conf.
+#   1. Stop unless this is Fedora (dnf) or Linux Mint (apt and lsb_release): the systems this has been tested on.
+#   2. Check each component with its `check` line in Setup/recipes.conf, this OS's own line where it has one.
 #   3. Run the system update on every run, without asking.
 #   4. Offer anything missing, once, and install it from Setup/recipes.conf.
 #   5. Offer what is optional the same way. Declining it, or failing to install it, gives a warning and the build still goes on.
-#   6. Build and test with one compiler and then the other, never at the same time.
+#   6. Build and test with one compiler and then the other, never at the same time, with this OS's compilers from
+#      Setup/recipes.conf (Linux Mint: g++-15 and clang++-21, the same as jac313 there).
 #   7. Open the demo, if there is a Wayland session (skip with --no-demo).
 #
 # Run it as: bash bsir.sh. Everything is found from this script's own directory. Re-run it any time.
@@ -32,16 +33,30 @@ for arg in "$@"; do
   esac
 done
 
-# --- 1. Fedora only, until others are tested ---
-if [ -z "$(command -v dnf)" ]; then
-  echo "This script supports Fedora only, and this system has no dnf. Nothing was changed." >&2
+# --- 1. Fedora or Linux Mint, the systems this has been tested on ---
+OS=""
+if [ -n "$(command -v dnf)" ]; then
+  OS=fedora
+elif [ -n "$(command -v apt-get)" ] && [ -n "$(command -v lsb_release)" ] && [ "$(lsb_release -si)" = "Linuxmint" ]; then
+  OS=linuxmint
+fi
+if [ -z "$OS" ]; then
+  echo "This script supports Fedora and Linux Mint only, and this system is neither. Nothing was changed." >&2
   echo "To build by hand, see README.md." >&2
   exit 1
 fi
+echo "System: $OS"
 
 # A recipe value, joining backslash-continued lines: recipe <component> <field>
+# This OS's own <component>.<field>.<os> comes first, then the shared <component>.<field>.
 recipe() {
-  awk -v full="$1.$2" '
+  value="$(recipe_key "$1.$2.$OS")"
+  [ -n "$value" ] || value="$(recipe_key "$1.$2")"
+  printf '%s\n' "$value"
+}
+
+recipe_key() {
+  awk -v full="$1" '
     function is_key(line,   eq, key) {
       eq = index(line, "=")
       if (eq == 0) return 0
@@ -88,7 +103,7 @@ echo "Missing:${missing:- nothing}"
 # --- 3. the system update runs on every run, without asking ---
 echo
 echo "=== system update ==="
-sudo dnf -y upgrade --refresh || echo "  [FAIL] system update; going on"
+sh -c "$(recipe system update)" || echo "  [FAIL] system update; going on"
 
 # --- 4. offer anything missing, once ---
 find_missing $COMPONENTS
@@ -107,7 +122,7 @@ if [ -n "$missing" ]; then
   for component in $missing; do
     echo
     echo "=== $(recipe "$component" desc) ==="
-    sh -c "$(recipe "$component" dnf)" || echo "  [FAIL] (see above)"
+    sh -c "$(recipe "$component" install)" || echo "  [FAIL] (see above)"
   done
   find_missing $COMPONENTS
   if [ -n "$missing" ]; then
@@ -134,7 +149,7 @@ if [ -n "$missing" ]; then
       for component in $missing; do
         echo
         echo "=== $(recipe "$component" desc) ==="
-        sh -c "$(recipe "$component" dnf)" || echo "  [FAIL] (see above)"
+        sh -c "$(recipe "$component" install)" || echo "  [FAIL] (see above)"
       done
       find_missing $OPTIONAL_COMPONENTS ;;
   esac
@@ -142,11 +157,15 @@ if [ -n "$missing" ]; then
 fi
 
 # --- 6. build and test, one compiler at a time ---
+# The compilers this OS names in Setup/recipes.conf, given on the command line, which wins over the preset's.
+compilers() {
+  echo "-DCMAKE_C_COMPILER=$(recipe "$1" c)" "-DCMAKE_CXX_COMPILER=$(recipe "$1" cxx)"
+}
 cd "$ROOT"
 for preset in gcc-debug clang-debug; do
   echo
   echo "=== $preset ==="
-  cmake --preset "$preset"
+  cmake --preset "$preset" $(compilers "${preset%%-*}")
   cmake --build --preset "$preset"
   ctest --preset "$preset"
 done
@@ -154,7 +173,7 @@ done
 # Build only: optimized, without the flags that stop some warnings firing. See docs/SECURITY.md.
 echo
 echo "=== gcc-warn ==="
-cmake --preset gcc-warn
+cmake --preset gcc-warn $(compilers gcc)
 cmake --build --preset gcc-warn
 
 # --- 7. the window ---

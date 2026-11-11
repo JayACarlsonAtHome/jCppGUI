@@ -161,7 +161,7 @@ Missing: renaming, new folders, replacing a file on request, typing a path, open
 ## Known limits
 
 - **`bsir.sh` has been run end to end only once that is recorded**: by the owner, on Fedora 44, reported on 2026-11-03. It is
-  written for Fedora only and stops on a system with no `dnf`. Its install path has only been tried as far as that machine needed. Its optional list has only been run as that part of the script alone, with stand-ins for the installs.
+  written for Fedora and Linux Mint, and stops on any other system. On Linux Mint 22.3 it has not yet been run end to end. Its install path has only been tried as far as that machine needed. Its optional list has only been run as that part of the script alone, with stand-ins for the installs.
 - A compositor that stays connected and never answers makes `connect` wait for ever. There is no timeout.
 
 - One size, one line, and two fonts: the default regular and the default monospace, with no choice beyond that. No text editing, input methods or font selection. No bidirectional

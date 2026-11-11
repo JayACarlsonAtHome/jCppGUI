@@ -13,9 +13,11 @@ See `docs/Maturity.md` for what works and what does not, and `docs/SECURITY.md` 
 ## Build
 
 Linux, with a C++23 compiler, CMake, Ninja, and the Wayland, xkbcommon, FreeType, HarfBuzz and
-fontconfig development files. `bsir.sh` also installs Vim, which works when only a terminal does, and which the file manager's Edit button falls back on, and OBS Studio, which its Record button starts. On Fedora, from `Lin/v001`, `bash bsir.sh` checks for all of these, offers
+fontconfig development files. `bsir.sh` also installs Vim, which works when only a terminal does, and which the file manager's Edit button falls back on, and OBS Studio, which its Record button starts. On Fedora or Linux Mint, from `Lin/v001`, `bash bsir.sh` checks for all of these, offers
 what is missing, builds, tests and opens the demo. It also offers Meld, which the Diff button opens. Meld is optional: if you decline it or it cannot be installed, a warning says Diff will use the built-in viewer, and the build goes on. It runs a system update on every run and needs sudo,
-and it stops on a system with no `dnf`. It has been run end to end only on Fedora 44. The
+and it stops on any other system. It has been run end to end only on Fedora 44. Each OS has its own compilers, in
+`Lin/v001/Setup/recipes.conf`: Fedora's `g++` and `clang++`, and on Linux Mint `g++-15` and `clang++-21`, the same as
+jac313 there, because Mint's plain `g++` (13) and `clang++` (18) are too old. The
 scripts have no shebang, because a shebang cannot be a relative path. `Lin/v001/bsir.sh` alone has the executable bit,
 so from a bash shell `./bsir.sh` works as well as `bash bsir.sh`.
 
@@ -28,6 +30,10 @@ cmake --build --preset gcc-debug
 ctest --preset gcc-debug
 ./build/gcc-debug/jcppgui-demo
 ```
+
+On Linux Mint, name the compilers on the configure line, which wins over the preset's:
+`cmake --preset gcc-debug -DCMAKE_C_COMPILER=gcc-15 -DCMAKE_CXX_COMPILER=g++-15`, and for a clang preset
+`-DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21`.
 
 CTest opens no window: every test that connects reaches only the test compositor's private socket. Coverage against a real
 compositor comes from a check by hand, or from configuring with `-DJCPPGUI_LIVE_TESTS=ON`, which no preset does, and which adds
