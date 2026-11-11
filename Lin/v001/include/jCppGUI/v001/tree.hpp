@@ -105,7 +105,7 @@ constexpr void report_node_damage(Node& node, const TreeKey& key, U& ui, std::si
     }
     if (damaged) monitor.widget_damaged(DamagedWidget{class_name_of<Node>(), type_name_of<typename Node::tag>(), here});
     if constexpr (Composite<Node>) {
-        std::apply([&](auto&... child) { (report_node_damage(child, key, ui, position, monitor), ...); }, node.children());
+        for_each_child(node.children(), [&](auto& child) { report_node_damage(child, key, ui, position, monitor); });
     }
 }
 
@@ -162,7 +162,7 @@ constexpr void record_node_as(std::uint64_t id, Node& node, const TreeKey& key, 
             record_node(child, key, recorder, walk, id, shown && child_is_shown(node, index));
             ++index;
         };
-        std::apply([&](auto&... child) { (visit_child(child), ...); }, node.children());
+        for_each_child(node.children(), visit_child);
     }
     if constexpr (HoldsItems<Node>) {
         node.visit_items(key, [&](auto& item, ItemPlace place) -> void {
@@ -284,7 +284,7 @@ public:
 
     template <class U>
     constexpr bool handle(const TreeKey& key, U& ui, const PointerRelease& event) {
-        const std::optional<Handle<T>> holder = std::exchange(capture_, std::nullopt);
+        const std::optional<Handle<T>> holder = std::exchange(capture_, {});
         T* item = holder ? pool_.find(*holder) : nullptr;
         return item != nullptr && item->handle(key, ui, event);
     }
@@ -311,7 +311,7 @@ public:
 
     template <class U>
     constexpr void notify(const TreeKey& key, U& ui, const PointerLeave& event) {
-        capture_.reset();
+        capture_ = {};
         notify_each(key, ui, event);
     }
 
@@ -323,7 +323,7 @@ public:
 
     template <class U>
     constexpr void notify(const TreeKey& key, U& ui, const ClearFocus& event) {
-        focus_.reset();
+        focus_ = {};
         notify_each(key, ui, event);
     }
 
@@ -353,7 +353,7 @@ public:
     constexpr void notify(const TreeKey& key, U& ui, const CollectDead& event) {
         notify_each(key, ui, event);
         pool_.collect();
-        std::erase_if(live_, [&](const Handle<T>& handle) { return pool_.find(handle) == nullptr; });
+        std::erase_if(live_, [&](const Handle<T>& handle) noexcept { return pool_.find(handle) == nullptr; });
     }
 
 private:
@@ -397,6 +397,8 @@ private:
 
     Pool<T, Slots> pool_{};
     std::vector<Handle<T>> live_{};
+    // Emptied with = {} and not reset(): clang cannot copy, in a constant expression, an optional of a trivially copyable type
+    // that reset() emptied under libstdc++ 15, and one assigned empty copies.
     std::optional<Handle<T>> capture_{};
     std::optional<Handle<T>> focus_{};
     std::optional<Error> deferred_error_{};
@@ -530,9 +532,9 @@ private:
 
     // Every widget, shown or not, acts on what has come due. The answer is when the earliest of them next wants to.
     [[nodiscard]] constexpr std::optional<MonotonicTime> run_timers(MonotonicTime now) {
-        wake_.reset();
+        wake_ = {};
         notify(TimersDue{now});
-        return std::exchange(wake_, std::nullopt);
+        return std::exchange(wake_, {});
     }
 
     [[nodiscard]] constexpr bool capture_active() {
@@ -553,7 +555,7 @@ private:
     constexpr void report_damage(Monitor& monitor) {
         const TreeKey key{};
         std::size_t position = 0;
-        std::apply([&](auto&... child) { (detail::report_node_damage(child, key, *this, position, monitor), ...); }, children_);
+        detail::for_each_child(children_, [&](auto& child) { detail::report_node_damage(child, key, *this, position, monitor); });
     }
 
     // Writes the tree down for a recorder: the window itself as the first item, then the rest, depth first. Only an application with a
@@ -565,7 +567,7 @@ private:
         detail::ItemWalk walk{0, window_id};
         recorder.items_begin(window_id + detail::fixed_items_in_tuple(std::type_identity<children_type>{}));
         recorder.item_found(ItemFound{window_id, 0, detail::class_name_of<Window>(), {}, Rect{Point{}, size_}});
-        std::apply([&](auto&... child) { (detail::record_node(child, key, recorder, walk, window_id, true), ...); }, children_);
+        detail::for_each_child(children_, [&](auto& child) { detail::record_node(child, key, recorder, walk, window_id, true); });
         recorder.items_end();
     }
 
@@ -605,6 +607,7 @@ private:
     WindowRequests requests_{};
     std::optional<ClipboardQuestion> clipboard_question_{};
     std::optional<WindowPicture> picture_{};
+    // Emptied with = {} and not reset(), as capture_ is.
     std::optional<MonotonicTime> wake_{};
     Size size_{};
 };

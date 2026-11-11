@@ -9,6 +9,7 @@
 #include <expected>
 #include <limits>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -98,7 +99,13 @@ public:
     constexpr void collect() {
         for (const std::uint32_t index : dying_) {
             Slot& slot = slots_[index];
-            slot.value.reset();
+            // A vector of slots copies them as it grows, and clang cannot copy, in a constant expression, an optional of a trivially
+            // copyable type that reset() emptied under libstdc++ 15. One assigned empty copies; other types need not be assignable.
+            if constexpr (std::is_trivially_copyable_v<T>) {
+                slot.value = {};
+            } else {
+                slot.value.reset();
+            }
             slot.dying = false;
             if (slot.generation >= max_generation_) {
                 ++retired_;

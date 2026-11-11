@@ -197,7 +197,7 @@ constexpr std::array<std::string_view, 17> cursor_shape{
     "X.X X..X    ", "XX  X..X    ", "X    X..X   ", "     X..X   ", "      XX    ",
 };
 
-static_assert(std::ranges::all_of(cursor_shape, [](std::string_view row) { return row.size() == cursor_shape.front().size(); }),
+static_assert(std::ranges::all_of(cursor_shape, [](std::string_view row) noexcept { return row.size() == cursor_shape.front().size(); }),
               "every cursor row must have the same width");
 
 [[nodiscard]] constexpr std::uint32_t cursor_colour(char cell) noexcept {
@@ -434,6 +434,43 @@ struct BasicWaylandImpl {
     Size geometry{};
 };
 
+// The wl_pointer table. libwayland 1.24 added warp, so an older header, such as the 1.22 on Linux Mint 22, has no entry for it.
+// Each table is whole for the header it is built with, so a missing initializer is still a compile error.
+template <class Impl, class Table>
+[[nodiscard]] consteval Table pointer_table() noexcept {
+    using Pointer = OwnedListener<Impl, Table>;
+    if constexpr (requires(Table table) { table.warp; }) {
+        return Table{
+            .enter = Pointer::template on<&Impl::on_pointer_enter>,
+            .leave = Pointer::template on<&Impl::on_pointer_leave>,
+            .motion = Pointer::template on<&Impl::on_pointer_motion>,
+            .button = Pointer::template on<&Impl::on_pointer_button>,
+            .axis = Pointer::template on<&Impl::on_pointer_axis>,
+            .frame = Pointer::template on<&Impl::on_pointer_frame>,
+            .axis_source = Pointer::template on<&Impl::on_pointer_axis_source>,
+            .axis_stop = Pointer::template on<&Impl::on_pointer_axis_stop>,
+            .axis_discrete = Pointer::template on<&Impl::on_pointer_axis_discrete>,
+            .axis_value120 = Pointer::template on<&Impl::on_pointer_axis_value120>,
+            .axis_relative_direction = Pointer::template on<&Impl::on_pointer_axis_relative_direction>,
+            .warp = Pointer::template on<&Impl::on_pointer_warp>,
+        };
+    } else {
+        return Table{
+            .enter = Pointer::template on<&Impl::on_pointer_enter>,
+            .leave = Pointer::template on<&Impl::on_pointer_leave>,
+            .motion = Pointer::template on<&Impl::on_pointer_motion>,
+            .button = Pointer::template on<&Impl::on_pointer_button>,
+            .axis = Pointer::template on<&Impl::on_pointer_axis>,
+            .frame = Pointer::template on<&Impl::on_pointer_frame>,
+            .axis_source = Pointer::template on<&Impl::on_pointer_axis_source>,
+            .axis_stop = Pointer::template on<&Impl::on_pointer_axis_stop>,
+            .axis_discrete = Pointer::template on<&Impl::on_pointer_axis_discrete>,
+            .axis_value120 = Pointer::template on<&Impl::on_pointer_axis_value120>,
+            .axis_relative_direction = Pointer::template on<&Impl::on_pointer_axis_relative_direction>,
+        };
+    }
+}
+
 // One table each, which names exactly the type it casts back to.
 template <class Api>
 struct Listeners {
@@ -486,20 +523,7 @@ struct Listeners {
         .action = DataSource::template on<&Impl::on_source_action>,
     }};
     using Pointer = OwnedListener<Impl, wl_pointer_listener>;
-    static constexpr Pointer pointer{{
-        .enter = Pointer::template on<&Impl::on_pointer_enter>,
-        .leave = Pointer::template on<&Impl::on_pointer_leave>,
-        .motion = Pointer::template on<&Impl::on_pointer_motion>,
-        .button = Pointer::template on<&Impl::on_pointer_button>,
-        .axis = Pointer::template on<&Impl::on_pointer_axis>,
-        .frame = Pointer::template on<&Impl::on_pointer_frame>,
-        .axis_source = Pointer::template on<&Impl::on_pointer_axis_source>,
-        .axis_stop = Pointer::template on<&Impl::on_pointer_axis_stop>,
-        .axis_discrete = Pointer::template on<&Impl::on_pointer_axis_discrete>,
-        .axis_value120 = Pointer::template on<&Impl::on_pointer_axis_value120>,
-        .axis_relative_direction = Pointer::template on<&Impl::on_pointer_axis_relative_direction>,
-        .warp = Pointer::template on<&Impl::on_pointer_warp>,
-    }};
+    static constexpr Pointer pointer{pointer_table<Impl, wl_pointer_listener>()};
     using Keyboard = OwnedListener<Impl, wl_keyboard_listener>;
     static constexpr Keyboard keyboard{{
         .keymap = Keyboard::template on<&Impl::on_keymap>,

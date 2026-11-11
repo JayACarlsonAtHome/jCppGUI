@@ -37,7 +37,7 @@ public:
     // Shows the child at this position, or nothing at all, which a position past the last also means. A callback can call this. It holds
     // no key to tell the one going away, so that is told as soon as this delivery ends, and until then the old one gets no events.
     constexpr void show(std::optional<std::size_t> position) noexcept {
-        if (position && *position >= sizeof...(Children)) position.reset();
+        if (position && *position >= sizeof...(Children)) position = {};
         if (position == shown_) return;
         if (shown_ && !leaving_) leaving_ = shown_;
         shown_ = position;
@@ -70,7 +70,7 @@ public:
     // Tells the one that went away that the pointer and the focus went with it, as soon as this can.
     template <class U>
     constexpr void notify(const TreeKey& key, U& ui, const CollectDead& event) {
-        if (const std::optional<std::size_t> gone = std::exchange(leaving_, std::nullopt); gone && gone != shown_) {
+        if (const std::optional<std::size_t> gone = std::exchange(leaving_, {}); gone && gone != shown_) {
             with_child(*gone, [&](auto& child) {
                 child.notify(key, ui, PointerLeave{});
                 child.notify(key, ui, ClearFocus{});
@@ -111,6 +111,8 @@ private:
     }
 
     children_type children_;
+    // Emptied with = {} and not reset(): clang cannot copy, in a constant expression, an optional of a trivially copyable type
+    // that reset() emptied under libstdc++ 15, and one assigned empty copies.
     std::optional<std::size_t> shown_{};
     std::optional<std::size_t> leaving_{};
     Rect bounds_{};

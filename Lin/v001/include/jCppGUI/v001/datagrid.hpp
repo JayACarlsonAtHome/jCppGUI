@@ -293,7 +293,7 @@ public:
 
     // Selects these rows, with this one current and in view. Rows not there are left out, and one current that is not among them gives way to the first. No message goes.
     constexpr void select_rows(std::vector<std::uint32_t> rows, std::optional<GridRow> current) {
-        std::erase_if(rows, [&](std::uint32_t row) { return row >= order_.size(); });
+        std::erase_if(rows, [&](std::uint32_t row) noexcept { return row >= order_.size(); });
         std::ranges::sort(rows);
         rows.erase(std::ranges::unique(rows).begin(), rows.end());
         if (rows.empty()) {
@@ -356,7 +356,7 @@ public:
     [[nodiscard]] constexpr Rect font_button(std::size_t column) const { return column_buttons(column).font; }
     [[nodiscard]] constexpr Rect align_button(std::size_t column) const { return column_buttons(column).align; }
     [[nodiscard]] constexpr bool every_column_monospace() const noexcept {
-        return std::ranges::all_of(fonts_, [](const DelayedChoice<ColumnFont>& font) { return font.chosen() == ColumnFont::Monospace; });
+        return std::ranges::all_of(fonts_, [](const DelayedChoice<ColumnFont>& font) noexcept { return font.chosen() == ColumnFont::Monospace; });
     }
 
     // These take effect at once, with no wait, and end any wait that column's button had started. A column that is not there is refused.
@@ -601,7 +601,7 @@ private:
     // The tallest font any column has in effect, which all rows are sized to. This is where monospace is first asked for, and where a refusal puts the columns back.
     template <TextShaper Shaper>
     [[nodiscard]] constexpr Height tallest_line_in_use(const Shaper& text) {
-        if (std::ranges::none_of(fonts_, [](const DelayedChoice<ColumnFont>& font) { return font.applied() == ColumnFont::Monospace; })) return text.line_height();
+        if (std::ranges::none_of(fonts_, [](const DelayedChoice<ColumnFont>& font) noexcept { return font.applied() == ColumnFont::Monospace; })) return text.line_height();
         if constexpr (HasMonospaceFace<Shaper>) {
             auto face = text.monospace_face();
             if (face) return std::max(text.line_height(), face->get().line_height());

@@ -55,7 +55,7 @@ namespace detail {
 // A file's name and nothing more, so it stays in the directory it was given for, and fit to stand in a jText line.
 [[nodiscard]] constexpr bool plain_file_name_fits(std::string_view name) noexcept {
     if (name.empty() || name == "." || name == ".." || !valid_utf8(name)) return false;
-    return std::ranges::none_of(name, [](char c) { return c == '/' || static_cast<std::uint8_t>(c) < 0x20 || c == 0x7F; });
+    return std::ranges::none_of(name, [](char c) noexcept { return c == '/' || static_cast<std::uint8_t>(c) < 0x20 || c == 0x7F; });
 }
 }  // namespace detail
 
@@ -152,7 +152,7 @@ struct LineFormatter {
 }
 
 [[nodiscard]] constexpr bool any_value_holds(std::span<const std::string_view> values, std::string_view text) noexcept {
-    return std::ranges::any_of(values, [&](std::string_view value) { return value.find(text) != std::string_view::npos; });
+    return std::ranges::any_of(values, [&](std::string_view value) noexcept { return value.find(text) != std::string_view::npos; });
 }
 
 // The next mark not in the data and not already taken. Empty when every one of them is in the data.

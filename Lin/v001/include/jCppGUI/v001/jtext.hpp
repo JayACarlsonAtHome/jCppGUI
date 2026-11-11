@@ -478,7 +478,7 @@ template <std::integral T>
 }
 
 [[nodiscard]] constexpr bool same_ignoring_case(std::string_view text, std::string_view lower) noexcept {
-    return std::ranges::equal(text, lower, {}, [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; });
+    return std::ranges::equal(text, lower, {}, [](char c) noexcept { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; });
 }
 
 // Every way the format writes a true or a false, in any case.

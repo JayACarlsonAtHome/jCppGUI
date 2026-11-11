@@ -17,7 +17,7 @@ namespace jgui::inline v001 {
 namespace detail {
 // Exactly "v" and three digits, so not v01, v0001, vabc, V001, xv001 or v001x.
 [[nodiscard]] constexpr bool is_version_folder_name(std::string_view name) noexcept {
-    return name.size() == 4 && name.front() == 'v' && std::ranges::all_of(name.substr(1), [](char c) { return c >= '0' && c <= '9'; });
+    return name.size() == 4 && name.front() == 'v' && std::ranges::all_of(name.substr(1), [](char c) noexcept { return c >= '0' && c <= '9'; });
 }
 }  // namespace detail
 

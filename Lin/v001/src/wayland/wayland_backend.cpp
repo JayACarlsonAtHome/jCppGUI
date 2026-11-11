@@ -65,7 +65,7 @@ std::expected<Frame<WaylandBackend>, Error> WaylandBackend::acquire_frame(Size s
     // Everything the compositor does not hold goes, except one buffer that fits.
     auto& buffers = impl_->core.buffers;
     bool kept_one = false;
-    std::erase_if(buffers, [&](const std::unique_ptr<detail::ShmBuffer<detail::LibWayland>>& buffer) {
+    std::erase_if(buffers, [&](const std::unique_ptr<detail::ShmBuffer<detail::LibWayland>>& buffer) noexcept {
         if (buffer->busy()) return false;
         if (kept_one || buffer->size() != size) return true;
         kept_one = true;

@@ -119,7 +119,7 @@ private:
     // What the widgets were waiting for goes with the window.
     constexpr void on(const CloseEvent&) {
         closed_ = true;
-        wake_.reset();
+        wake_ = {};
     }
 
     constexpr void on(const ResizeEvent& event) {
@@ -282,6 +282,8 @@ private:
     std::unique_ptr<detail::FrameLedger> painting_;
     std::optional<Error> failure_{};
     std::uint64_t frames_{};
+    // Emptied with = {} and not reset(): clang cannot copy, in a constant expression, an optional of a trivially copyable type
+    // that reset() emptied under libstdc++ 15, and one assigned empty copies.
     std::optional<MonotonicTime> wake_{};
     std::optional<CursorShape> cursor_{};
     bool have_size_{};

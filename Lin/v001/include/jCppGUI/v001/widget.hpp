@@ -8,6 +8,7 @@
 #include <expected>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 
 #include "canvas.hpp"
@@ -113,18 +114,25 @@ private:
 
 namespace detail {
 
+// Calls visit on each child, first to last. Not std::apply, which asks whether the call can throw: g++ 15's -Wnoexcept then
+// reports every widget function that cannot throw and is not marked noexcept, and nothing here needs that answer.
+template <class Children, class Visit>
+constexpr void for_each_child(Children& children, Visit&& visit) {
+    [&]<std::size_t... I>(std::index_sequence<I...>) { (visit(std::get<I>(children)), ...); }(std::make_index_sequence<std::tuple_size_v<std::remove_const_t<Children>>>{});
+}
+
 // Every widget sees the event. True when any of them answered true.
 template <class Children, class U, class E>
 constexpr bool broadcast(Children& children, const TreeKey& key, U& ui, const E& event) {
     bool any = false;
-    std::apply([&](auto&... child) { ((any = child.handle(key, ui, event) || any), ...); }, children);
+    for_each_child(children, [&](auto& child) { any = child.handle(key, ui, event) || any; });
     return any;
 }
 
 // Every widget gets the notice.
 template <class Children, class U, class E>
 constexpr void notify_all(Children& children, const TreeKey& key, U& ui, const E& event) {
-    std::apply([&](auto&... child) { (child.notify(key, ui, event), ...); }, children);
+    for_each_child(children, [&](auto& child) { child.notify(key, ui, event); });
 }
 
 // Default delivery: a broadcast.
@@ -158,7 +166,8 @@ constexpr bool deliver(Children& children, const TreeKey& key, U& ui, const Poin
 template <class Children, class U>
 constexpr bool deliver(Children& children, const TreeKey& key, U& ui, const PointerMove& event) {
     if (event.captured) return broadcast(children, key, ui, event);
-    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+    if constexpr (std::tuple_size_v<Children> == 0) return false;
+    else return [&]<std::size_t... I>(std::index_sequence<I...>) {
         constexpr std::size_t count = sizeof...(I);
         bool hit = false;
         const auto visit = [&](auto& child) {
@@ -180,13 +189,13 @@ constexpr std::expected<Rect, Error> layout_in_order(Children& children, const T
     const auto place = [&](auto& child) {
         if (remaining) remaining = child.layout(key, *remaining, text);
     };
-    std::apply([&](auto&... child) { (place(child), ...); }, children);
+    for_each_child(children, place);
     return remaining;
 }
 
 template <class Children>
 constexpr void paint_in_order(Children& children, const TreeKey& key, Canvas& canvas) {
-    std::apply([&](auto&... child) { (child.paint(key, canvas), ...); }, children);
+    for_each_child(children, [&](auto& child) { child.paint(key, canvas); });
 }
 
 }  // namespace detail

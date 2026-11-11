@@ -102,7 +102,7 @@ public:
     // Refuses what is too long, and what holds a NUL, which is how a file that is not text is told apart.
     [[nodiscard]] static constexpr std::expected<LineDiffer, Error> start(std::string first, std::string second) {
         if (first.size() > most_diff_file_bytes || second.size() > most_diff_file_bytes) return make_error(ErrorCode::SizeLimit, "a file to diff can be at most 16 MiB");
-        if (first.contains('\0') || second.contains('\0')) return make_error(ErrorCode::System, "those are not both text, so Compare is the way to check them");
+        if (std::ranges::contains(first, '\0') || std::ranges::contains(second, '\0')) return make_error(ErrorCode::System, "those are not both text, so Compare is the way to check them");
         LineDiffer differ{std::move(first), std::move(second)};
         if (differ.first_lines_.size() > most_diff_lines || differ.second_lines_.size() > most_diff_lines) return make_error(ErrorCode::SizeLimit, "a file to diff can have at most 200,000 lines");
         differ.number_the_lines();

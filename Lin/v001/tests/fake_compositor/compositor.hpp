@@ -226,7 +226,7 @@ public:
     [[nodiscard]] std::size_t set_cursors() const noexcept { return set_cursors_; }
     [[nodiscard]] std::size_t acks() const noexcept { return acks_; }
     [[nodiscard]] std::size_t buffers_held() const {
-        return static_cast<std::size_t>(std::ranges::count_if(buffers_, [](const auto& entry) { return entry.second.held; }));
+        return static_cast<std::size_t>(std::ranges::count_if(buffers_, [](const auto& entry) noexcept { return entry.second.held; }));
     }
     [[nodiscard]] std::size_t buffers_alive() const noexcept { return buffers_.size(); }
     [[nodiscard]] const std::string& title() const noexcept { return title_; }

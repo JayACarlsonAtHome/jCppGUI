@@ -63,10 +63,8 @@ public:
     constexpr void drain(Sink& sink) {
         while (count_ > 0) {
             std::uint64_t oldest = std::numeric_limits<std::uint64_t>::max();
-            std::apply([&](const auto&... queue) {
-                ((oldest = queue.has_next() ? std::min(oldest, queue.next().sequence) : oldest), ...);
-            }, queues_);
-            std::apply([&](auto&... queue) { (deliver_if_oldest(queue, oldest, sink) || ...); }, queues_);
+            ((oldest = std::get<Queue<E>>(queues_).has_next() ? std::min(oldest, std::get<Queue<E>>(queues_).next().sequence) : oldest), ...);
+            (deliver_if_oldest(std::get<Queue<E>>(queues_), oldest, sink) || ...);
         }
     }
 

@@ -403,7 +403,7 @@ public:
 
     // True when nothing selected on this side is anything but a file or a link.
     [[nodiscard]] constexpr bool selected_are_files() const noexcept {
-        return std::ranges::all_of(grid().selected_rows(), [&](std::uint32_t row) { return rows()[row].kind == FileKind::File || rows()[row].kind == FileKind::Link; });
+        return std::ranges::all_of(grid().selected_rows(), [&](std::uint32_t row) noexcept { return rows()[row].kind == FileKind::File || rows()[row].kind == FileKind::Link; });
     }
 
     // Paste: into the selected folder, or the folder the selected row is in, or with nothing selected the folder at the top.

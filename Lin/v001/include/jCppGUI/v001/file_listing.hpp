@@ -397,9 +397,9 @@ namespace detail {
             return plan;
         }
     }
-    const auto named = [](std::span<const std::string> side, std::string_view name) { return std::ranges::any_of(side, [&](const std::string& path) { return last_name_of(path) == name; }); };
+    const auto named = [](std::span<const std::string> side, std::string_view name) noexcept { return std::ranges::any_of(side, [&](const std::string& path) noexcept { return last_name_of(path) == name; }); };
     for (const std::string& path : left) {
-        const auto partner = std::ranges::find_if(right, [&](const std::string& other) { return last_name_of(other) == last_name_of(path); });
+        const auto partner = std::ranges::find_if(right, [&](const std::string& other) noexcept { return last_name_of(other) == last_name_of(path); });
         if (partner != right.end()) {
             plan.pairs.push_back(MatchPair{path, *partner});
         } else {
@@ -539,7 +539,7 @@ inline constexpr std::string_view trash_info_suffix = ".trashinfo";
 
 // Folders first, then by name.
 constexpr void sort_file_entries(std::vector<FileEntry>& entries) {
-    std::ranges::sort(entries, [](const FileEntry& a, const FileEntry& b) {
+    std::ranges::sort(entries, [](const FileEntry& a, const FileEntry& b) noexcept {
         const bool a_folder = a.kind == FileKind::Folder;
         const bool b_folder = b.kind == FileKind::Folder;
         if (a_folder != b_folder) return a_folder;

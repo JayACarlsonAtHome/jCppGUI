@@ -317,7 +317,8 @@ static_assert(refused_on(one_section(two_fields, " 1. ?# a\x01z\n"), 8, "control
 static_assert(refused_on(one_section(two_fields, " 1. ?# a\xC2\x85z\n"), 8, "control"), "C1");
 static_assert(refused_on(one_section(two_fields, " 1. |# 1|\x1F\n"), 8, "control"), "the old null mark is not guessed at");
 static_assert(refused_on(one_section(two_fields, " 1. ?# a\rb\n"), 8, "control"), "a CR that is not a line's end");
-static_assert(refused_on(std::string{"=== jText File ===\n"} + std::string(std::size_t{1}, '\0') + "\n", 2, "control"));
+// In a lambda, because g++ 15 refuses this at namespace scope: it cannot tell that a temporary's address is not null.
+static_assert([] { return refused_on(std::string{"=== jText File ===\n"} + std::string(std::size_t{1}, '\0') + "\n", 2, "control"); }());
 
 // --- Limits ---
 [[nodiscard]] constexpr bool refused_with_limits(std::string_view text, const JTextLimits& limits, std::string_view why) {

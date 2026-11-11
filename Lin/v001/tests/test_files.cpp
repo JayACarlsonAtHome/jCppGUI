@@ -1104,7 +1104,7 @@ static_assert(comparing_needs_both_sides());
     auto tree = ui_on(disk, std::string{"/"}, std::string{"/"});
     if (!lay_out(tree)) return false;
     click_on<decltype(tree), files::CompareButton>(tree);
-    return std::ranges::all_of(tree.template get<Left_>().rows(), [](const FileRow& row) { return row.match == FileMatch::InBoth; });
+    return std::ranges::all_of(tree.template get<Left_>().rows(), [](const FileRow& row) noexcept { return row.match == FileMatch::InBoth; });
 }
 static_assert(comparing_at_the_root());
 
@@ -1365,19 +1365,21 @@ static_assert(!path_is_in_a_trash("/disk/d/.Trashy/a", "/h/T") && !path_is_in_a_
 // --- Cat, Edit and Touch, on the made-up disk ---
 
 using Words = std::vector<std::string>;
-static_assert(editor_words("") == Words{"vim"} && editor_words("  \t ") == Words{"vim"}, "nothing set, and vim is there even when only a terminal works");
-static_assert(editor_words("nano") == Words{"nano"} && editor_words("  emacs   -nw\t--foo ") == Words{"emacs", "-nw", "--foo"});
+// Those wrapped in a lambda are so because g++ 15 refuses them at namespace scope: it cannot tell that a temporary's address is not
+// null.
+static_assert([] { return editor_words("") == Words{"vim"} && editor_words("  \t ") == Words{"vim"}; }(), "nothing set, and vim is there even when only a terminal works");
+static_assert([] { return editor_words("nano") == Words{"nano"} && editor_words("  emacs   -nw\t--foo ") == Words{"emacs", "-nw", "--foo"}; }());
 static_assert(!editor_words("sh -c 'x'") && !editor_words("a\"b") && !editor_words("a\\b"), "what would need a shell to read is refused");
-static_assert(*terminal_tool_command(TerminalTool::Edit, Words{"/a b"}, "emacs -nw") == Words{"emacs", "-nw", "--", "/a b"}, "the name stays one word, after where options end");
-static_assert(*terminal_tool_command(TerminalTool::Edit, Words{"/a"}, "") == Words{"vim", "--", "/a"});
-static_assert(terminal_tool_command(TerminalTool::Cat, Words{"/a"}, "'bad")->front() == "sh", "Cat does not care what EDITOR says");
+static_assert([] { return *terminal_tool_command(TerminalTool::Edit, Words{"/a b"}, "emacs -nw") == Words{"emacs", "-nw", "--", "/a b"}; }(), "the name stays one word, after where options end");
+static_assert([] { return *terminal_tool_command(TerminalTool::Edit, Words{"/a"}, "") == Words{"vim", "--", "/a"}; }());
+static_assert([] { return terminal_tool_command(TerminalTool::Cat, Words{"/a"}, "'bad")->front() == "sh"; }(), "Cat does not care what EDITOR says");
 
-static_assert(absolute_path_folders("/a:/b c:/d") == Words{"/a", "/b c", "/d"});
+static_assert([] { return absolute_path_folders("/a:/b c:/d") == Words{"/a", "/b c", "/d"}; }());
 static_assert(absolute_path_folders("").empty() && absolute_path_folders("::").empty() && absolute_path_folders(".:bin:./x").empty(), "nothing and relative folders are not looked in");
-static_assert(absolute_path_folders(":/a::rel:/b:") == Words{"/a", "/b"});
+static_assert([] { return absolute_path_folders(":/a::rel:/b:") == Words{"/a", "/b"}; }());
 
-static_assert(terminal_arguments(TerminalStyle{"ptyxis", {"--"}, 1}, std::vector<std::string>{"vim", "--", "/a b"}) == std::vector<std::string>{"ptyxis", "--", "vim", "--", "/a b"});
-static_assert(terminal_arguments(TerminalStyle{"foot", {}, 0}, std::vector<std::string>{"vim"}) == std::vector<std::string>{"foot", "vim"});
+static_assert([] { return terminal_arguments(TerminalStyle{"ptyxis", {"--"}, 1}, std::vector<std::string>{"vim", "--", "/a b"}) == std::vector<std::string>{"ptyxis", "--", "vim", "--", "/a b"}; }());
+static_assert([] { return terminal_arguments(TerminalStyle{"foot", {}, 0}, std::vector<std::string>{"vim"}) == std::vector<std::string>{"foot", "vim"}; }());
 
 [[nodiscard]] constexpr bool cat_and_edit_open_a_terminal() {
     FakeDisk disk;
@@ -2057,7 +2059,8 @@ constexpr void diff_with(Tree& tree, std::vector<std::uint32_t> on_left, std::ve
 static_assert(visual_diff_program == "meld");
 static_assert(visual_diff_command("/a", "/b") == ProgramCommand{{"meld", "/a", "/b"}, false});
 static_assert(visual_diff_command("/b", "/a").words[1] == "/b", "the left first");
-static_assert(visual_diff_command("/a b/-x; rm", "/$(c)/`d`").words == std::vector<std::string>{"meld", "/a b/-x; rm", "/$(c)/`d`"}, "nothing in a name is read");
+// In a lambda, because g++ 15 refuses this at namespace scope: it cannot tell that a temporary's address is not null.
+static_assert([] { return visual_diff_command("/a b/-x; rm", "/$(c)/`d`").words == std::vector<std::string>{"meld", "/a b/-x; rm", "/$(c)/`d`"}; }(), "nothing in a name is read");
 static_assert(visual_diff_command("", "").words.size() == 3, "an empty path is still a word of its own");
 static_assert(!visual_diff_command("/a", "/b").in_terminal);
 
@@ -2068,16 +2071,17 @@ static_assert(diff_kind_of(FileKind::Other) == DiffKind::Neither && diff_kind_of
 using Things = std::vector<SelectedThing>;
 inline constexpr std::string_view one_on_each_side = "Select one file or folder on each side";
 static_assert(refusal_of_diff(Things{}, Things{}) == FileNotice{std::string{one_on_each_side}, "Selected: 0 on the left, 0 on the right"});
-static_assert(refusal_of_diff(Things{{"/a", FileKind::File}}, Things{})->detail == "Selected: 1 on the left, 0 on the right");
-static_assert(refusal_of_diff(Things{}, Things{{"/a", FileKind::File}})->detail == "Selected: 0 on the left, 1 on the right");
-static_assert(refusal_of_diff(Things{{"/a", FileKind::File}, {"/b", FileKind::File}}, Things{})->detail == "Selected: 2 on the left, 0 on the right");
-static_assert(refusal_of_diff(Things{{"/a", FileKind::File}, {"/b", FileKind::File}}, Things{{"/c", FileKind::File}})->detail == "Selected: 2 on the left, 1 on the right");
-static_assert(!refusal_of_diff(Things{{"/a", FileKind::File}}, Things{{"/b", FileKind::File}}) && !refusal_of_diff(Things{{"/a", FileKind::Folder}}, Things{{"/b", FileKind::Folder}}));
-static_assert(!refusal_of_diff(Things{{"/a", FileKind::Link}}, Things{{"/b", FileKind::File}}), "a link counts as a file");
-static_assert(refusal_of_diff(Things{{"/d/a", FileKind::File}}, Things{{"/d/b", FileKind::Folder}}) == FileNotice{"Select two files or two folders", "a is a file and b is a folder, and Meld cannot compare a file with a folder"});
-static_assert(refusal_of_diff(Things{{"/d/a", FileKind::Folder}}, Things{{"/d/b", FileKind::Link}}) == FileNotice{"Select two files or two folders", "b is a file and a is a folder, and Meld cannot compare a file with a folder"});
-static_assert(refusal_of_diff(Things{{"/d/pipe", FileKind::Other}}, Things{{"/d/b", FileKind::File}}) == FileNotice{"Only files and folders can be compared", "pipe is neither"});
-static_assert(refusal_of_diff(Things{{"/d/a", FileKind::Folder}}, Things{{"/d/gone", FileKind::Unknown}}) == FileNotice{"Only files and folders can be compared", "gone is neither"});
+// In a lambda, because g++ 15 refuses these at namespace scope: it cannot tell that a temporary's address is not null.
+static_assert([] { return refusal_of_diff(Things{{"/a", FileKind::File}}, Things{})->detail == "Selected: 1 on the left, 0 on the right"; }());
+static_assert([] { return refusal_of_diff(Things{}, Things{{"/a", FileKind::File}})->detail == "Selected: 0 on the left, 1 on the right"; }());
+static_assert([] { return refusal_of_diff(Things{{"/a", FileKind::File}, {"/b", FileKind::File}}, Things{})->detail == "Selected: 2 on the left, 0 on the right"; }());
+static_assert([] { return refusal_of_diff(Things{{"/a", FileKind::File}, {"/b", FileKind::File}}, Things{{"/c", FileKind::File}})->detail == "Selected: 2 on the left, 1 on the right"; }());
+static_assert([] { return !refusal_of_diff(Things{{"/a", FileKind::File}}, Things{{"/b", FileKind::File}}) && !refusal_of_diff(Things{{"/a", FileKind::Folder}}, Things{{"/b", FileKind::Folder}}); }());
+static_assert([] { return !refusal_of_diff(Things{{"/a", FileKind::Link}}, Things{{"/b", FileKind::File}}); }(), "a link counts as a file");
+static_assert([] { return refusal_of_diff(Things{{"/d/a", FileKind::File}}, Things{{"/d/b", FileKind::Folder}}) == FileNotice{"Select two files or two folders", "a is a file and b is a folder, and Meld cannot compare a file with a folder"}; }());
+static_assert([] { return refusal_of_diff(Things{{"/d/a", FileKind::Folder}}, Things{{"/d/b", FileKind::Link}}) == FileNotice{"Select two files or two folders", "b is a file and a is a folder, and Meld cannot compare a file with a folder"}; }());
+static_assert([] { return refusal_of_diff(Things{{"/d/pipe", FileKind::Other}}, Things{{"/d/b", FileKind::File}}) == FileNotice{"Only files and folders can be compared", "pipe is neither"}; }());
+static_assert([] { return refusal_of_diff(Things{{"/d/a", FileKind::Folder}}, Things{{"/d/gone", FileKind::Unknown}}) == FileNotice{"Only files and folders can be compared", "gone is neither"}; }());
 static_assert(folders_need_meld(std::nullopt).detail == "Meld is not installed. The built-in diff only does files.");
 static_assert(folders_need_meld(std::string{"no"}).detail == "Meld did not start: no. The built-in diff only does files.");
 
@@ -2396,7 +2400,7 @@ static_assert(tiny_windows_hold());
     jgui_test::paint(tree, canvas);
     const Rect left_strip = tree.template get<FilePaneUpButton<Left_>>().bounds();
     const Rect right_strip = tree.template get<FilePaneUpButton<Right_>>().bounds();
-    return left_strip != right_strip && std::ranges::any_of(pixels, [](std::uint32_t pixel) { return pixel == theme::bar.argb; });
+    return left_strip != right_strip && std::ranges::any_of(pixels, [](std::uint32_t pixel) noexcept { return pixel == theme::bar.argb; });
 }
 static_assert(the_window_paints());
 
