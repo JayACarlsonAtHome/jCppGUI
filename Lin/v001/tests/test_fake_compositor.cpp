@@ -633,8 +633,18 @@ struct EventsOfLaterVersions {
         if (session.pointer()) {
             session.queue(wire::MessageWriter{*session.pointer(), 9}.u32(0).i32(120).finish());
             session.queue(wire::MessageWriter{*session.pointer(), 10}.u32(0).u32(1).finish());
-            session.queue(wire::MessageWriter{*session.pointer(), 11}.i32(0).i32(0).finish());
         }
+        session.close_window();
+    }
+};
+
+// wl_pointer.warp, event 11, the same way. A libwayland whose header has no warp ends the connection on it before the
+// toolkit sees it, so CMakeLists.txt disables this scenario there.
+struct PointerWarp {
+    static constexpr ClientEnd end = ends_clean;
+    void on(Session& session, const BufferCommitted& commit) {
+        session.release(commit.buffer);
+        if (session.pointer()) session.queue(wire::MessageWriter{*session.pointer(), 11}.i32(0).i32(0).finish());
         session.close_window();
     }
 };
@@ -3641,6 +3651,7 @@ constexpr auto scenarios = std::tuple{
     Named<KeysExtreme>{"keys_extreme"},
     Named<PointerExtremes>{"pointer_extremes"},
     Named<EventsOfLaterVersions>{"events_of_later_versions"},
+    Named<PointerWarp>{"pointer_warp"},
     Named<EventFlood>{"event_flood"},
     Named<EventFloodInSync>{"event_flood_in_sync"},
     Named<EventFloodMixed>{"event_flood_mixed"},

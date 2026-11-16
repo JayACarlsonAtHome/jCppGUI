@@ -302,7 +302,7 @@ set(JGUI_FAKE_SCENARIOS
   release_before_attach release_three_times never_release release_late pool_attack
   capabilities_flap seat_removed_while_held no_seat no_compositor no_shm no_wm_base old_compositor old_seat
   keymap_pipe keymap_directory keymap_short keymap_1mib_no_terminator keymap_size_0xffffffff keymap_format_7 keymap_none
-  keys_extreme pointer_extremes events_of_later_versions event_flood event_flood_in_sync event_flood_mixed
+  keys_extreme pointer_extremes events_of_later_versions pointer_warp event_flood event_flood_in_sync event_flood_mixed
   disconnect_at_once disconnect_after_frame
   bad_length_too_small bad_length_too_large bad_length_not_aligned unknown_opcode unknown_object
   truncated_then_gone truncated_during_connect truncated_during_first_frame
@@ -328,6 +328,14 @@ set_property(TEST fake_demo_as_built fake_demo_copy_under_a_base fake_demo_copy_
 foreach(scenario viewer_first_frame viewer_section_switch viewer_wheel_scroll viewer_resize viewer_missing_file viewer_malformed_file viewer_refused_symlink viewer_path_not_text viewer_copy_with_no_base viewer_file_in_its_base viewer_65536_rows settings_viewer_items settings_viewer_bad_row settings_viewer_missing_file settings_viewer_only_settings settings_viewer_malformed_file settings_viewer_files_in_its_base)
   set_property(TEST fake_${scenario} APPEND PROPERTY ENVIRONMENT "JGUI_TEST_VIEWER=$<TARGET_FILE:jcppgui-viewer>")
 endforeach()
+# wl_pointer.warp is newer than some libwayland, such as Linux Mint 22's 1.22 and Red Hat Enterprise Linux 10's 1.25.
+# Without it in the header, libwayland ends the connection on that event before the toolkit sees it, so the scenario
+# cannot run and is shown as disabled.
+find_file(JGUI_WAYLAND_CLIENT_PROTOCOL wayland-client-protocol.h HINTS ${WAYLAND_CLIENT_INCLUDE_DIRS} ${WAYLAND_CLIENT_INCLUDEDIR} REQUIRED)
+file(STRINGS "${JGUI_WAYLAND_CLIENT_PROTOCOL}" JGUI_POINTER_WARP REGEX "WL_POINTER_WARP_SINCE_VERSION")
+if(NOT JGUI_POINTER_WARP)
+  set_tests_properties(fake_pointer_warp PROPERTIES DISABLED TRUE)
+endif()
 # These start the real file manager itself, against the same compositor.
 set_property(TEST fake_files_open_on_the_left fake_files_missing_folder fake_files_copy_and_drag fake_files_several fake_files_delete fake_files_touch_rename fake_files_screenshot fake_files_open fake_files_record fake_files_diff_with_meld fake_files_copy_line APPEND PROPERTY ENVIRONMENT "JGUI_TEST_FILES=$<TARGET_FILE:jcppgui-files>")
 # One C call failing at a time, through the real implementation. It goes against the compositor above.
@@ -465,7 +473,9 @@ if(JGUI_CLANG_QUERY AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set(JGUI_SELFTEST_TOOL ${JGUI_CLANG_QUERY})
   add_test(NAME source_rules_ast
     COMMAND ${JGUI_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_ast_rules.sh ${JGUI_CLANG_QUERY} ${CMAKE_CURRENT_BINARY_DIR})
-  set_tests_properties(source_rules_ast PROPERTIES TIMEOUT 600)
+  # One clang-query per file, one after another. On Red Hat Enterprise Linux 10.3, with clang 22 reading libstdc++ 16,
+  # the 51 files took 610 seconds.
+  set_tests_properties(source_rules_ast PROPERTIES TIMEOUT 1200)
 elseif(NOT JGUI_CLANG_QUERY)
   message(STATUS "clang-query was not found, so the AST layer of the source rules will not run")
 endif()

@@ -434,7 +434,7 @@ struct BasicWaylandImpl {
     Size geometry{};
 };
 
-// The wl_pointer table. libwayland 1.24 added warp, so an older header, such as the 1.22 on Linux Mint 22, has no entry for it.
+// The wl_pointer table. warp is newer than some libwayland: the header of Linux Mint 22's 1.22, or of Red Hat Enterprise Linux 10's 1.25, has no entry for it.
 // Each table is whole for the header it is built with, so a missing initializer is still a compile error.
 template <class Impl, class Table>
 [[nodiscard]] consteval Table pointer_table() noexcept {

@@ -1,19 +1,22 @@
 # File: bsir.sh
 # Purpose: Bootstrap, Setup, Install and Run for jCppGUI Lin/v001.
 #
-#   1. Stop unless this is Fedora (dnf) or Linux Mint (apt and lsb_release): the systems this has been tested on.
+#   1. Stop unless this is Fedora or Red Hat Enterprise Linux (dnf), or Linux Mint (apt and lsb_release).
 #   2. Check each component with its `check` line in Setup/recipes.conf, this OS's own line where it has one.
+#      Red Hat Enterprise Linux uses Fedora's lines where it has none of its own.
 #   3. Run the system update on every run, without asking.
 #   4. Offer anything missing, once, and install it from Setup/recipes.conf.
 #   5. Offer what is optional the same way. Declining it, or failing to install it, gives a warning and the build still goes on.
 #   6. Build and test with one compiler and then the other, never at the same time, with this OS's compilers from
-#      Setup/recipes.conf (Linux Mint: g++-15 and clang++-21, the same as jac313 there).
+#      Setup/recipes.conf (Linux Mint: g++-15 and clang++-21, the same as jac313 there; Red Hat Enterprise Linux:
+#      the newest GCC Toolset and the newest Clang, from Setup/newest_compilers.sh).
 #   7. Open the demo, if there is a Wayland session (skip with --no-demo).
 #
 # Run it as: bash bsir.sh. Everything is found from this script's own directory. Re-run it any time.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
 RECIPES="$ROOT/Setup/recipes.conf"
 COMPONENTS="gcc clang compiler_rt cmake ninja pkgconfig wayland wayland_protocols xkbcommon freetype harfbuzz fontconfig vim obs"
 OPTIONAL_COMPONENTS="meld"
@@ -33,24 +36,27 @@ for arg in "$@"; do
   esac
 done
 
-# --- 1. Fedora or Linux Mint, the systems this has been tested on ---
+# --- 1. Fedora, Red Hat Enterprise Linux or Linux Mint ---
 OS=""
-if [ -n "$(command -v dnf)" ]; then
+if [ -n "$(command -v dnf)" ] && [ -n "$(rpm --eval '%{?rhel}')" ]; then
+  OS=rhel
+elif [ -n "$(command -v dnf)" ]; then
   OS=fedora
 elif [ -n "$(command -v apt-get)" ] && [ -n "$(command -v lsb_release)" ] && [ "$(lsb_release -si)" = "Linuxmint" ]; then
   OS=linuxmint
 fi
 if [ -z "$OS" ]; then
-  echo "This script supports Fedora and Linux Mint only, and this system is neither. Nothing was changed." >&2
+  echo "This script supports Fedora, Red Hat Enterprise Linux and Linux Mint only, and this system is none of them. Nothing was changed." >&2
   echo "To build by hand, see README.md." >&2
   exit 1
 fi
 echo "System: $OS"
 
 # A recipe value, joining backslash-continued lines: recipe <component> <field>
-# This OS's own <component>.<field>.<os> comes first, then the shared <component>.<field>.
+# This OS's own <component>.<field>.<os> comes first, then on rhel fedora's, then the shared <component>.<field>.
 recipe() {
   value="$(recipe_key "$1.$2.$OS")"
+  [ -n "$value" ] || [ "$OS" != rhel ] || value="$(recipe_key "$1.$2.fedora")"
   [ -n "$value" ] || value="$(recipe_key "$1.$2")"
   printf '%s\n' "$value"
 }
@@ -157,15 +163,50 @@ if [ -n "$missing" ]; then
 fi
 
 # --- 6. build and test, one compiler at a time ---
-# The compilers this OS names in Setup/recipes.conf, given on the command line, which wins over the preset's.
+# The compilers this OS names in Setup/recipes.conf, given on the command line, which wins over the preset's. A
+# `compilers` command, where there is one, prints them instead, and a `cxx_flags` command the C++ flags they need.
 compilers() {
-  echo "-DCMAKE_C_COMPILER=$(recipe "$1" c)" "-DCMAKE_CXX_COMPILER=$(recipe "$1" cxx)"
+  command="$(recipe "$1" compilers)"
+  if [ -n "$command" ]; then
+    printed="$(sh -c "$command")"
+    c="$(printf '%s\n' "$printed" | sed -n 1p)"
+    cxx="$(printf '%s\n' "$printed" | sed -n 2p)"
+  else
+    c="$(recipe "$1" c)"
+    cxx="$(recipe "$1" cxx)"
+  fi
+  extra=""
+  command="$(recipe "$1" cxx_flags)"
+  [ -z "$command" ] || extra="-DCMAKE_CXX_FLAGS=$(sh -c "$command")"
+  echo "-DCMAKE_C_COMPILER=$c" "-DCMAKE_CXX_COMPILER=$cxx" $extra
 }
-cd "$ROOT"
+
+# A program's real file: a name is looked for on PATH, and links are followed.
+real_file() {
+  case "$1" in
+    */*) readlink -f "$1" ;;
+    *) found="$(command -v "$1")" && readlink -f "$found" ;;
+  esac
+}
+
+# A build directory keeps the compiler it was configured with. Given another one, as when a newer GCC Toolset comes,
+# CMake starts that directory again from nothing and loses the preset's build type, so remove it first.
+drop_if_compiler_changed() {
+  cache="build/$1/CMakeCache.txt"
+  [ -f "$cache" ] || return 0
+  was="$(sed -n 's/^CMAKE_CXX_COMPILER:[^=]*=//p' "$cache" | head -n 1)"
+  now="$(printf '%s\n' "$2" | sed -n 's/.*-DCMAKE_CXX_COMPILER=//p')"
+  [ "$(real_file "$was")" = "$(real_file "$now")" ] && return 0
+  echo "Removing build/$1: it was configured with $was, and this system now builds with $now."
+  rm -rf "build/$1"
+}
+
 for preset in gcc-debug clang-debug; do
   echo
   echo "=== $preset ==="
-  cmake --preset "$preset" $(compilers "${preset%%-*}")
+  flags="$(compilers "${preset%%-*}")"
+  drop_if_compiler_changed "$preset" "$flags"
+  cmake --preset "$preset" $flags
   cmake --build --preset "$preset"
   ctest --preset "$preset"
 done
@@ -173,7 +214,9 @@ done
 # Build only: optimized, without the flags that stop some warnings firing. See docs/SECURITY.md.
 echo
 echo "=== gcc-warn ==="
-cmake --preset gcc-warn $(compilers gcc)
+flags="$(compilers gcc)"
+drop_if_compiler_changed gcc-warn "$flags"
+cmake --preset gcc-warn $flags
 cmake --build --preset gcc-warn
 
 # --- 7. the window ---
