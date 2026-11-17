@@ -24,9 +24,13 @@ readonly LAST_CLANG_TO_TRY=19
 
 # Every package the enabled repositories offer, and every one installed, whose name matches: "name major" per line.
 # dnf is asked once, and the searches below look through its answer.
+# dnf never waits for an answer here. A repository whose signing key was never imported makes dnf ask
+# "Is this ok [y/N]" to import it; the question lands in the captured output, where no one sees it, and dnf
+# waits for ever. --assumeno answers no without reading the terminal, and that repository is skipped
+# instead of failing the whole query.
 known_packages() {
   {
-    dnf -q repoquery --qf '%{name} %{version}\n' "$@" 2>&1
+    dnf -q --assumeno --setopt=skip_if_unavailable=True repoquery --qf '%{name} %{version}\n' "$@" 2>&1
     rpm -qa --qf '%{NAME} %{VERSION}\n' "$@"
   } | sed -n 's/^\([^ ]*\) \([0-9]*\)\..*$/\1 \2/p'
 }
