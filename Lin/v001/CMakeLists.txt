@@ -7,6 +7,16 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+# The oldest compilers that build this C++23 code, the same floors as Setup/recipes.conf. An older one would fail far into the
+# build with hundreds of errors, so stop here and name the fix. Linux Mint's plain clang++ (18) and g++ (13) are below them.
+set(JGUI_MIN_GNU 14)
+set(JGUI_MIN_Clang 19)
+if(DEFINED JGUI_MIN_${CMAKE_CXX_COMPILER_ID} AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS JGUI_MIN_${CMAKE_CXX_COMPILER_ID})
+  message(FATAL_ERROR "${CMAKE_CXX_COMPILER} is ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}, and this code needs "
+    "${CMAKE_CXX_COMPILER_ID} ${JGUI_MIN_${CMAKE_CXX_COMPILER_ID}} or later. Run bash bsir.sh, which picks this system's compilers, "
+    "or name them, on Linux Mint: -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 "
+    "(or gcc-15 and g++-15). Remove the build folder first, because CMake keeps the compiler it found.")
+endif()
 # Choosing no build type would quietly choose no optimization and none of the hardening below that needs it, so a
 # build must name one. CMake's own defaults for the optimized types are not used: they add -DNDEBUG, and -O3 at
 # Release. Nothing here depends on assert, but -O2 is the level these flags were tried at.
@@ -94,6 +104,17 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # Contradicts -Wswitch-default, which the owner requires: a switch over an enum names every value,
     # checked by -Wswitch-enum, and also has a default, because a value from outside can be out of range.
     -Wno-covered-switch-default)
+  # clang++ 23 brought the lifetime-safety analysis into -Weverything. Its checks for real dangling stay live; two of its
+  # groups are left out. Older clang++ does not know these names and fails on an unknown one, so they are added only where known.
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag(-Wlifetime-safety-invalidation JGUI_CXX_HAS_LIFETIME_SAFETY)
+  if(JGUI_CXX_HAS_LIFETIME_SAFETY)
+    list(APPEND JGUI_WARNING_FLAGS
+      # False positive in clang++ 23.1: `out += 'a'; out += "b";` on a std::string& parameter reports `out` itself invalidated.
+      -Wno-lifetime-safety-invalidation
+      # Asks for [[clang::lifetimebound]], which g++ rejects as an error under -Wattributes, and a macro to hide it is banned.
+      -Wno-lifetime-safety-suggestions)
+  endif()
 endif()
 add_library(jgui_warnings INTERFACE)
 target_compile_options(jgui_warnings INTERFACE ${JGUI_WARNING_FLAGS})
