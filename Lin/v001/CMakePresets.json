@@ -5,19 +5,20 @@
       "name": "base",
       "hidden": true,
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/${presetName}"
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "${sourceDir}/Setup/pinned_compilers.cmake"
     },
     {
       "name": "gcc",
       "hidden": true,
       "inherits": "base",
-      "cacheVariables": { "CMAKE_C_COMPILER": "gcc", "CMAKE_CXX_COMPILER": "g++" }
+      "cacheVariables": { "JGUI_COMPILER": "gcc" }
     },
     {
       "name": "clang",
       "hidden": true,
       "inherits": "base",
-      "cacheVariables": { "CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++" }
+      "cacheVariables": { "JGUI_COMPILER": "clang" }
     },
     { "name": "gcc-debug", "inherits": "gcc", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
     { "name": "gcc-release", "inherits": "gcc", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } },

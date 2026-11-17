@@ -7,15 +7,25 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-# The oldest compilers that build this C++23 code, the same floors as Setup/recipes.conf. An older one would fail far into the
-# build with hundreds of errors, so stop here and name the fix. Linux Mint's plain clang++ (18) and g++ (13) are below them.
+# Every build uses this machine's pinned compilers, which Setup/pinned_compilers.cmake, the presets' toolchain file, reads.
+# A build folder keeps the compiler it was first configured with, so one that no longer matches the pin is refused here.
+if(NOT DEFINED JGUI_PINNED_CXX)
+  message(FATAL_ERROR "Configure with a preset, such as cmake --preset gcc-debug, so that the build uses this machine's pinned "
+    "compilers. Without one: -DCMAKE_TOOLCHAIN_FILE=Setup/pinned_compilers.cmake -DJGUI_COMPILER=gcc (or clang).")
+endif()
+file(REAL_PATH "${CMAKE_CXX_COMPILER}" JGUI_CXX_REAL)
+file(REAL_PATH "${JGUI_PINNED_CXX}" JGUI_PINNED_CXX_REAL)
+if(NOT JGUI_CXX_REAL STREQUAL JGUI_PINNED_CXX_REAL)
+  message(FATAL_ERROR "This build folder builds with ${CMAKE_CXX_COMPILER}, and this machine (${JGUI_PIN_HOST}) is pinned to "
+    "${JGUI_PINNED_CXX} in ${JGUI_PIN_FILE}. Remove ${CMAKE_BINARY_DIR} and configure again, without naming a compiler.")
+endif()
+# The oldest compilers that build this C++23 code, the same floors as Setup/recipes.conf. A pin written by another
+# project could name an older one, which would fail far into the build with hundreds of errors.
 set(JGUI_MIN_GNU 14)
 set(JGUI_MIN_Clang 19)
 if(DEFINED JGUI_MIN_${CMAKE_CXX_COMPILER_ID} AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS JGUI_MIN_${CMAKE_CXX_COMPILER_ID})
-  message(FATAL_ERROR "${CMAKE_CXX_COMPILER} is ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}, and this code needs "
-    "${CMAKE_CXX_COMPILER_ID} ${JGUI_MIN_${CMAKE_CXX_COMPILER_ID}} or later. Run bash bsir.sh, which picks this system's compilers, "
-    "or name them, on Linux Mint: -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 "
-    "(or gcc-15 and g++-15). Remove the build folder first, because CMake keeps the compiler it found.")
+  message(FATAL_ERROR "This machine's pinned ${CMAKE_CXX_COMPILER} is ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}, and "
+    "this code needs ${CMAKE_CXX_COMPILER_ID} ${JGUI_MIN_${CMAKE_CXX_COMPILER_ID}} or later. Pin a newer one in ${JGUI_PIN_FILE}.")
 endif()
 # Choosing no build type would quietly choose no optimization and none of the hardening below that needs it, so a
 # build must name one. CMake's own defaults for the optimized types are not used: they add -DNDEBUG, and -O3 at

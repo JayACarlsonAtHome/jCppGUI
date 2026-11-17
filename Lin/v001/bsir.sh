@@ -7,9 +7,10 @@
 #   3. Run the system update on every run, without asking.
 #   4. Offer anything missing, once, and install it from Setup/recipes.conf.
 #   5. Offer what is optional the same way. Declining it, or failing to install it, gives a warning and the build still goes on.
-#   6. Build and test with one compiler and then the other, never at the same time, with this OS's compilers from
-#      Setup/recipes.conf (Linux Mint: g++-15 and clang++-21, the same as jac313 there; Red Hat Enterprise Linux:
-#      the newest GCC Toolset and the newest Clang, from Setup/newest_compilers.sh).
+#   6. Build and test with one compiler and then the other, never at the same time, with this machine's pinned compilers
+#      (<base>/Compiler_Pins/compilers.pin.jtext, shared with jac313, Qlite, jText and jText_GUI). A machine with no
+#      pin is pinned to this OS's compilers from Setup/recipes.conf (Linux Mint: g++-15 and clang++-21; Red Hat
+#      Enterprise Linux: the newest GCC Toolset and the newest Clang, from Setup/newest_compilers.sh).
 #   7. Open the demo, if there is a Wayland session (skip with --no-demo).
 #
 # Run it as: bash bsir.sh. Everything is found from this script's own directory. Re-run it any time.
@@ -163,23 +164,82 @@ if [ -n "$missing" ]; then
 fi
 
 # --- 6. build and test, one compiler at a time ---
-# The compilers this OS names in Setup/recipes.conf, given on the command line, which wins over the preset's. A
-# `compilers` command, where there is one, prints them instead, and a `cxx_flags` command the C++ flags they need.
-compilers() {
+# Every preset builds with this machine's pinned compilers (Setup/pinned_compilers.cmake reads them), so a preset run by
+# hand builds with the same ones as this script. The pin is one row per machine (uname -n) in
+# <base>/Compiler_Pins/compilers.pin.jtext, beside the repository, or the file $COMPILER_PINS names: the same file
+# jac313, Qlite, jText and jText_GUI build with. A row already there is kept, whoever wrote it. A machine with none is
+# pinned here to this OS's compilers from Setup/recipes.conf, written the way jac313 writes the file.
+PIN_FILE="${COMPILER_PINS:-$(realpath -m "$ROOT/../../../Compiler_Pins/compilers.pin.jtext")}"
+PIN_HOST="$(uname -n)"
+
+# This OS's C++ compiler of family $1 (gcc or clang) from Setup/recipes.conf, as a path. A `compilers` command, where
+# there is one, prints the C and then the C++ compiler.
+recipe_cxx() {
   command="$(recipe "$1" compilers)"
   if [ -n "$command" ]; then
-    printed="$(sh -c "$command")"
-    c="$(printf '%s\n' "$printed" | sed -n 1p)"
-    cxx="$(printf '%s\n' "$printed" | sed -n 2p)"
+    cxx="$(sh -c "$command" | sed -n 2p)"
   else
-    c="$(recipe "$1" c)"
     cxx="$(recipe "$1" cxx)"
   fi
-  extra=""
-  command="$(recipe "$1" cxx_flags)"
-  [ -z "$command" ] || extra="-DCMAKE_CXX_FLAGS=$(sh -c "$command")"
-  echo "-DCMAKE_C_COMPILER=$c" "-DCMAKE_CXX_COMPILER=$cxx" $extra
+  case "$cxx" in
+    */*) printf '%s\n' "$cxx" ;;
+    *) command -v "$cxx" ;;
+  esac
 }
+
+# This machine's pinned C++ compiler of family $1, from its row: id|host|gcc_version|gcc_path|clang_version|clang_path|pinned.
+pinned_cxx() {
+  [ -f "$PIN_FILE" ] || return 0
+  awk -v host="$PIN_HOST" -v field="$([ "$1" = gcc ] && echo 4 || echo 6)" '
+    sub(/^ *1\. #\|# /, "") { split($0, f, "|"); if (f[2] == host) { print f[field]; exit } }' "$PIN_FILE"
+}
+
+pin_this_machine() {
+  gcc="$(recipe_cxx gcc)" && [ -n "$gcc" ] || { echo "No g++ to pin: see Setup/recipes.conf." >&2; exit 1; }
+  clang="$(recipe_cxx clang)" && [ -n "$clang" ] || { echo "No clang++ to pin: see Setup/recipes.conf." >&2; exit 1; }
+  row="$PIN_HOST|$("$gcc" -dumpfullversion)|$gcc|$("$clang" -dumpversion)|$clang|$(date +%F)"
+  case "$row" in *"
+"*) echo "A compiler pin value holds a line break: $row" >&2; exit 1 ;; esac
+  mkdir -p "$(dirname "$PIN_FILE")"
+  if [ ! -f "$PIN_FILE" ]; then
+    # Exactly the header jac313 and tools/hooks/compiler-pin.sh write, so any of them can rewrite the file.
+    printf '%s\n' \
+      "//File:    compilers.pin.jtext" \
+      "//Purpose: The GCC and Clang each machine builds with, pinned. Outside every repository (like" \
+      "//         SQL_Secrets), so removing the git folder starts over. One row per machine (hostname)." \
+      "//         Written by tools/hooks/compiler-pin.sh (Qlite, jText, jText_GUI). Values never contain '|'." \
+      "//" "=== jText File ===" " 1. #?# compilers.pin" " 3. #?# Pinned compilers per machine" "" "" \
+      "=== Section: pins ===" "" "" "=== Fields ===" \
+      " 1. #/# id/Identity(1,1)/Not Null" \
+      " 2. #/# host/String/Not Null          # uname -n" \
+      " 3. #/# gcc_version/String/Not Null   # when pinned; the major version is what is held" \
+      " 4. #/# gcc_path/String/Not Null" \
+      " 5. #/# clang_version/String/Not Null" \
+      " 6. #/# clang_path/String/Not Null" \
+      " 7. #/# pinned/String/Not Null        # date of the last pin or upgrade" \
+      "=== End Fields ===" "" "" "=== Data ===" "=== End Data ===" "=== End Section ===" "=== End File ===" \
+      > "$PIN_FILE.tmp"
+    mv "$PIN_FILE.tmp" "$PIN_FILE"
+  fi
+  # The new row goes last in the data, numbered after the highest id. Written beside the file, then renamed over it.
+  awk -v row="$row" '
+    { line[NR] = $0 }
+    /^ *1\. #\|# / { s = $0; sub(/^ *1\. #\|# /, "", s); split(s, f, "|"); if (f[1] + 0 > top) top = f[1] + 0 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        if (line[i] == "=== End Data ===") { print "1. #|# " (top + 1) "|" row; print "" }
+        print line[i]
+      }
+    }' "$PIN_FILE" > "$PIN_FILE.tmp"
+  grep -q "^1\. #|# [0-9]*|$PIN_HOST|" "$PIN_FILE.tmp" || { echo "Could not add this machine to $PIN_FILE." >&2; rm -f "$PIN_FILE.tmp"; exit 1; }
+  mv "$PIN_FILE.tmp" "$PIN_FILE"
+  echo "Pinned this machine, $PIN_HOST, to $gcc and $clang in $PIN_FILE."
+}
+
+echo
+echo "=== compiler pin ==="
+[ -n "$(pinned_cxx gcc)" ] || pin_this_machine
+echo "$PIN_HOST builds with $(pinned_cxx gcc) and $(pinned_cxx clang), pinned in $PIN_FILE."
 
 # A program's real file: a name is looked for on PATH, and links are followed.
 real_file() {
@@ -189,24 +249,23 @@ real_file() {
   esac
 }
 
-# A build directory keeps the compiler it was configured with. Given another one, as when a newer GCC Toolset comes,
-# CMake starts that directory again from nothing and loses the preset's build type, so remove it first.
+# A build directory keeps the compiler it was configured with, and CMakeLists.txt refuses one that is no longer the pin,
+# as after a newer GCC Toolset is pinned. Remove it first, so that it is configured again from nothing.
 drop_if_compiler_changed() {
   cache="build/$1/CMakeCache.txt"
   [ -f "$cache" ] || return 0
   was="$(sed -n 's/^CMAKE_CXX_COMPILER:[^=]*=//p' "$cache" | head -n 1)"
-  now="$(printf '%s\n' "$2" | sed -n 's/.*-DCMAKE_CXX_COMPILER=//p')"
+  now="$(pinned_cxx "${1%%-*}")"
   [ "$(real_file "$was")" = "$(real_file "$now")" ] && return 0
-  echo "Removing build/$1: it was configured with $was, and this system now builds with $now."
+  echo "Removing build/$1: it was configured with $was, and this machine is pinned to $now."
   rm -rf "build/$1"
 }
 
 for preset in gcc-debug clang-debug; do
   echo
   echo "=== $preset ==="
-  flags="$(compilers "${preset%%-*}")"
-  drop_if_compiler_changed "$preset" "$flags"
-  cmake --preset "$preset" $flags
+  drop_if_compiler_changed "$preset"
+  cmake --preset "$preset"
   cmake --build --preset "$preset"
   ctest --preset "$preset"
 done
@@ -214,9 +273,8 @@ done
 # Build only: optimized, without the flags that stop some warnings firing. See docs/SECURITY.md.
 echo
 echo "=== gcc-warn ==="
-flags="$(compilers gcc)"
-drop_if_compiler_changed gcc-warn "$flags"
-cmake --preset gcc-warn $flags
+drop_if_compiler_changed gcc-warn
+cmake --preset gcc-warn
 cmake --build --preset gcc-warn
 
 # --- 7. the window ---

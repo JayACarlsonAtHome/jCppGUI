@@ -15,12 +15,18 @@ See `docs/Maturity.md` for what works and what does not, and `docs/SECURITY.md` 
 Linux, with a C++23 compiler, CMake, Ninja, and the Wayland, xkbcommon, FreeType, HarfBuzz and
 fontconfig development files. `bsir.sh` also installs Vim, which works when only a terminal does, and which the file manager's Edit button falls back on, and OBS Studio, which its Record button starts. On Fedora, Red Hat Enterprise Linux or Linux Mint, from `Lin/v001`, `bash bsir.sh` checks for all of these, offers
 what is missing, builds, tests and opens the demo. It also offers Meld, which the Diff button opens. Meld is optional: if you decline it or it cannot be installed, a warning says Diff will use the built-in viewer, and the build goes on. It runs a system update on every run and needs sudo,
-and it stops on any other system. It has been run end to end only on Fedora 44. Each OS has its own compilers, in
-`Lin/v001/Setup/recipes.conf`: Fedora's `g++` and `clang++`, and on Linux Mint `g++-15` and `clang++-21`, the same as
-jac313 there, because Mint's plain `g++` (13) and `clang++` (18) are too old. On Red Hat Enterprise Linux the system `g++`
-stays at the release default, so `bsir.sh` installs the newest GCC Toolset the system offers (gcc-toolset-16 on RHEL 10.3)
-and the newest Clang (22 on RHEL 10.3), and builds with them; `Lin/v001/Setup/newest_compilers.sh` finds both. Clang is given
-the newest GCC Toolset's C++ library, where Red Hat's own setting would give it an older one. RHEL has no OBS package, so OBS comes from Flathub, with an
+and it stops on any other system. It has been run end to end only on Fedora 44.
+
+Every build, by `bsir.sh` or by hand, uses this machine's **pinned** compilers: one row per machine (`uname -n`) in
+`Compiler_Pins/compilers.pin.jtext` beside the repository (or the file `$COMPILER_PINS` names), the same file jac313,
+Qlite, jText and jText_GUI build with. The presets' toolchain file, `Lin/v001/Setup/pinned_compilers.cmake`, reads it,
+and CMake refuses a build folder that was configured with another compiler. A row already there is kept, whoever wrote it.
+A machine with no row is pinned by `bsir.sh` to its OS's compilers in `Lin/v001/Setup/recipes.conf`: Fedora's `g++` and
+`clang++`, and on Linux Mint `g++-15` and `clang++-21`, because Mint's plain `g++` (13) and `clang++` (18) are too old. On
+Red Hat Enterprise Linux the system `g++` stays at the release default, so `bsir.sh` installs the newest GCC Toolset the
+system offers (gcc-toolset-16 on RHEL 10.3) and the newest Clang (22 on RHEL 10.3), and pins them;
+`Lin/v001/Setup/newest_compilers.sh` finds both. There Clang is given the pinned GCC's C++ library, where Red Hat's own
+setting would give it an older one. RHEL has no OBS package, so OBS comes from Flathub, with an
 `obs` command in `~/.local/bin` that starts it. The
 scripts have no shebang, because a shebang cannot be a relative path. `Lin/v001/bsir.sh` alone has the executable bit,
 so from a bash shell `./bsir.sh` works as well as `bash bsir.sh`.
@@ -35,11 +41,9 @@ ctest --preset gcc-debug
 ./build/gcc-debug/jcppgui-demo
 ```
 
-On Linux Mint, name the compilers on the configure line, which wins over the preset's:
-`cmake --preset gcc-debug -DCMAKE_C_COMPILER=gcc-15 -DCMAKE_CXX_COMPILER=g++-15`, and for a clang preset
-`-DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21`. On Red Hat Enterprise Linux, name the GCC Toolset's for
-a gcc preset, and the newest Clang and its flag for a clang preset: `bash Setup/newest_compilers.sh --compilers gcc`,
-`--compilers clang` and `--cxx-flags clang` print them.
+The preset builds with this machine's pinned compilers, so do not name one on the configure line. A machine with no pin
+stops the configure and says so: run `bash bsir.sh` once, or `jac313_test_cli pin --ensure` from jac313. To build with
+other compilers, change this machine's row in the pin file, which changes them for every project that reads it.
 
 CTest opens no window: every test that connects reaches only the test compositor's private socket. Coverage against a real
 compositor comes from a check by hand, or from configuring with `-DJCPPGUI_LIVE_TESTS=ON`, which no preset does, and which adds
