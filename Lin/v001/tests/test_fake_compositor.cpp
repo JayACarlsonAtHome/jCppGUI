@@ -1592,9 +1592,34 @@ struct GridCtrlKeysSort {
             session.close_window();
         }
     }
-    // Sorted going down by the names as text, so "row 60" sits just above "row 6", the row that was clicked: the click at y 200 lands on row 6, under a header of one row.
+    // The row the click at y 200 landed on, before any scroll or sort. The row height comes from the system's sans-serif font,
+    // so this is row 6 with Noto Sans (24 high) and row 7 with Liberation Sans (20 high).
+    [[nodiscard]] static std::optional<std::size_t> clicked_row(const WireGrid& grid) {
+        const std::int32_t height = jgui_test::number(grid.row_height());
+        const std::int32_t into_body = in_the_body_y - jgui_test::number(grid.body_area().top());
+        if (height <= 0 || into_body < 0 || into_body / height >= grid_rows) return std::nullopt;
+        return static_cast<std::size_t>(into_body / height);
+    }
+    // Sorted going down by the names as text, the row just above the clicked one is the next name up: "row 60" above "row 6".
+    [[nodiscard]] static std::optional<std::size_t> row_above_when_sorted_down(std::size_t clicked) {
+        const std::string clicked_name = "row " + std::to_string(clicked);
+        std::optional<std::size_t> above{};
+        std::string above_name{};
+        for (std::int32_t i = 0; i < grid_rows; ++i) {
+            std::string name = "row " + std::to_string(i);
+            if (name > clicked_name && (!above || name < above_name)) {
+                above = static_cast<std::size_t>(i);
+                above_name = std::move(name);
+            }
+        }
+        return above;
+    }
     [[nodiscard]] static bool grid_is_right(const WireGrid& grid) {
-        return grid.sort_keys().size() == 1 && grid.sort_keys().front() == jgui::GridSortKey{1, true} && grid.current_column() == 1 && grid.selected() == jgui::GridRow{60};
+        const std::optional<std::size_t> clicked = clicked_row(grid);
+        if (!clicked) return false;
+        const std::optional<std::size_t> above = row_above_when_sorted_down(*clicked);
+        if (!above) return false;
+        return grid.sort_keys().size() == 1 && grid.sort_keys().front() == jgui::GridSortKey{1, true} && grid.current_column() == 1 && grid.selected() == jgui::GridRow{*above};
     }
 };
 
