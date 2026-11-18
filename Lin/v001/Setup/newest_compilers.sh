@@ -3,7 +3,10 @@
 #          first version and counts down, and the first one this system offers is the one, so a newer one is found
 #          without a change here. Only the newest is needed; an older one that is installed is left alone.
 #            gcc    The system g++ stays at the release default, and Red Hat ships each newer GCC beside it as
-#                   gcc-toolset-N: RHEL 10.3 has gcc-toolset-16.
+#                   gcc-toolset-N: RHEL 10.3 has gcc-toolset-16. How a toolset is run differs by release, so each
+#                   release has its own way here (toolset_run), and a release without one stops with a message:
+#                     RHEL 10  gcc-toolset-N-env <command>
+#                     RHEL 9   scl enable gcc-toolset-N -- <command> (RHEL 9 has no gcc-toolset-N-env)
 #            clang  The plain clang package is updated with each release, and older ones stay beside it as clangN:
 #                   RHEL 10.3 has clang 22, and clang15 to clang21. Red Hat's clang is set to build with one fixed
 #                   GCC Toolset's C++ library (gcc-toolset-15 on RHEL 10.3), so it is given the newest one's instead,
@@ -49,11 +52,34 @@ newest_gcc_offered() {
   return 1
 }
 
+# This Red Hat Enterprise Linux release's major version: 9, 10, ...
+readonly RHEL_MAJOR="$(rpm --eval '%{?rhel}' 2>/dev/null)"
+
+# Run a command inside GCC Toolset $1, the way this release runs a toolset: toolset_run <N> <command> [args...]
+toolset_run() {
+  n="$1"
+  shift
+  case "$RHEL_MAJOR" in
+    10) "gcc-toolset-$n-env" "$@" ;;
+    9) scl enable "gcc-toolset-$n" -- "$@" ;;
+    *) echo "no way to run a GCC Toolset is known for Red Hat Enterprise Linux '$RHEL_MAJOR'" >&2; return 1 ;;
+  esac
+}
+
+# Whether GCC Toolset $1 is installed, the way this release installs a toolset.
+toolset_installed() {
+  case "$RHEL_MAJOR" in
+    10) [ -n "$(command -v "gcc-toolset-$1-env")" ] ;;
+    9) [ -f "/opt/rh/gcc-toolset-$1/enable" ] && [ -x "/opt/rh/gcc-toolset-$1/root/usr/bin/g++" ] ;;
+    *) return 1 ;;
+  esac
+}
+
 # The newest GCC Toolset installed: its N.
 newest_gcc_installed() {
   n=$FIRST_GCC_TO_TRY
   while [ "$n" -ge "$LAST_GCC_TO_TRY" ]; do
-    if [ -n "$(command -v "gcc-toolset-$n-env")" ]; then
+    if toolset_installed "$n"; then
       echo "$n"
       return 0
     fi
@@ -118,7 +144,7 @@ case "${1:-} ${2:-}" in
     sudo dnf install -y "gcc-toolset-$offered" "gcc-toolset-$offered-gcc-c++" ;;
   "--compilers gcc")
     installed="$(newest_gcc_installed)" || { echo "no gcc-toolset is installed" >&2; exit 1; }
-    "gcc-toolset-$installed-env" sh -c 'command -v gcc && command -v g++' ;;
+    toolset_run "$installed" sh -c 'command -v gcc && command -v g++' ;;
   "--check clang")
     offered="$(newest_clang_offered)" || { echo "no clang is offered or installed" >&2; exit 1; }
     [ "$(newest_clang_installed)" = "${offered%% *}" ] ;;
@@ -132,7 +158,7 @@ case "${1:-} ${2:-}" in
     clang_commands "$installed" ;;
   "--cxx-flags clang")
     installed="$(newest_gcc_installed)" || { echo "no gcc-toolset is installed" >&2; exit 1; }
-    library="$("gcc-toolset-$installed-env" g++ -print-libgcc-file-name)"
+    library="$(toolset_run "$installed" g++ -print-libgcc-file-name)"
     echo "--gcc-install-dir=${library%/*}" ;;
   *)
     echo "usage: bash Setup/newest_compilers.sh --check|--install|--compilers gcc|clang, or --cxx-flags clang" >&2
