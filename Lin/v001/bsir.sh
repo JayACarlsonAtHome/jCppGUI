@@ -1,8 +1,7 @@
 # File: bsir.sh
 # Purpose: Bootstrap, Setup, Install and Run for jCppGUI Lin/v001.
 #
-#   1. Stop unless this is Fedora or Red Hat Enterprise Linux (dnf), Linux Mint (apt and lsb_release), or Zorin OS
-#      (apt, and ID=zorin in /etc/os-release).
+#   1. Stop unless this is Fedora or Red Hat Enterprise Linux (dnf), or Linux Mint or Zorin OS (apt and lsb_release).
 #   2. Check each component with its `check` line in Setup/recipes.conf, this OS's own line where it has one.
 #      Red Hat Enterprise Linux uses Fedora's lines where it has none of its own.
 #   3. Run the system update on every run, without asking.
@@ -46,8 +45,8 @@ elif [ -n "$(command -v dnf)" ]; then
   OS=fedora
 elif [ -n "$(command -v apt-get)" ] && [ -n "$(command -v lsb_release)" ] && [ "$(lsb_release -si)" = "Linuxmint" ]; then
   OS=linuxmint
-elif [ -n "$(command -v apt-get)" ] && [ "$(. /etc/os-release 2>/dev/null && printf '%s' "${ID:-}")" = zorin ]; then
-  # Zorin OS is its own OS, with its own lines in Setup/recipes.conf: named by its ID, never taken as Mint or Ubuntu.
+elif [ -n "$(command -v apt-get)" ] && [ -n "$(command -v lsb_release)" ] && [ "$(lsb_release -si)" = "Zorin" ]; then
+  # Zorin OS is its own OS, with its own lines in Setup/recipes.conf: named by name, never taken as Mint or Ubuntu.
   OS=zorin
 fi
 if [ -z "$OS" ]; then

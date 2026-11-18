@@ -6,7 +6,8 @@
 #                   gcc-toolset-N: RHEL 10.3 has gcc-toolset-16. How a toolset is run differs by release, so each
 #                   release has its own way here (toolset_run), and a release without one stops with a message:
 #                     RHEL 10  gcc-toolset-N-env <command>
-#                     RHEL 9   scl enable gcc-toolset-N -- <command> (RHEL 9 has no gcc-toolset-N-env)
+#                     RHEL 9   scl enable gcc-toolset-N -- <command> (RHEL 9 has no gcc-toolset-N-env); installed
+#                              when scl lists gcc-toolset-N and its g++ is there
 #            clang  The plain clang package is updated with each release, and older ones stay beside it as clangN:
 #                   RHEL 10.3 has clang 22, and clang15 to clang21. Red Hat's clang is set to build with one fixed
 #                   GCC Toolset's C++ library (gcc-toolset-15 on RHEL 10.3), so it is given the newest one's instead,
@@ -53,7 +54,7 @@ newest_gcc_offered() {
 }
 
 # This Red Hat Enterprise Linux release's major version: 9, 10, ...
-readonly RHEL_MAJOR="$(rpm --eval '%{?rhel}' 2>/dev/null)"
+readonly RHEL_MAJOR="$(rpm --eval '%{?rhel}')"
 
 # Run a command inside GCC Toolset $1, the way this release runs a toolset: toolset_run <N> <command> [args...]
 toolset_run() {
@@ -70,7 +71,7 @@ toolset_run() {
 toolset_installed() {
   case "$RHEL_MAJOR" in
     10) [ -n "$(command -v "gcc-toolset-$1-env")" ] ;;
-    9) [ -f "/opt/rh/gcc-toolset-$1/enable" ] && [ -x "/opt/rh/gcc-toolset-$1/root/usr/bin/g++" ] ;;
+    9) scl list-collections 2>&1 | grep -qx "gcc-toolset-$1" && [ -n "$(scl enable "gcc-toolset-$1" -- sh -c 'command -v g++')" ] ;;
     *) return 1 ;;
   esac
 }
