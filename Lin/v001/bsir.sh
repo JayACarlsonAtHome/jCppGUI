@@ -1,7 +1,8 @@
 # File: bsir.sh
 # Purpose: Bootstrap, Setup, Install and Run for jCppGUI Lin/v001.
 #
-#   1. Stop unless this is Fedora or Red Hat Enterprise Linux (dnf), or Linux Mint (apt and lsb_release).
+#   1. Stop unless this is Fedora or Red Hat Enterprise Linux (dnf), Linux Mint (apt and lsb_release), or Zorin OS
+#      (apt, and ID=zorin in /etc/os-release).
 #   2. Check each component with its `check` line in Setup/recipes.conf, this OS's own line where it has one.
 #      Red Hat Enterprise Linux uses Fedora's lines where it has none of its own.
 #   3. Run the system update on every run, without asking.
@@ -9,7 +10,7 @@
 #   5. Offer what is optional the same way. Declining it, or failing to install it, gives a warning and the build still goes on.
 #   6. Build and test with one compiler and then the other, never at the same time, with this machine's pinned compilers
 #      (<base>/Compiler_Pins/compilers.pin.jtext, shared with jac313, Qlite, jText and jText_GUI). A machine with no
-#      pin is pinned to this OS's compilers from Setup/recipes.conf (Linux Mint: g++-15 and clang++-21; Red Hat
+#      pin is pinned to this OS's compilers from Setup/recipes.conf (Linux Mint and Zorin OS: g++-15 and clang++-21; Red Hat
 #      Enterprise Linux: the newest GCC Toolset and the newest Clang, from Setup/newest_compilers.sh).
 #   7. Open the demo, if there is a Wayland session (skip with --no-demo).
 #
@@ -37,7 +38,7 @@ for arg in "$@"; do
   esac
 done
 
-# --- 1. Fedora, Red Hat Enterprise Linux or Linux Mint ---
+# --- 1. Fedora, Red Hat Enterprise Linux, Linux Mint or Zorin OS ---
 OS=""
 if [ -n "$(command -v dnf)" ] && [ -n "$(rpm --eval '%{?rhel}')" ]; then
   OS=rhel
@@ -45,9 +46,12 @@ elif [ -n "$(command -v dnf)" ]; then
   OS=fedora
 elif [ -n "$(command -v apt-get)" ] && [ -n "$(command -v lsb_release)" ] && [ "$(lsb_release -si)" = "Linuxmint" ]; then
   OS=linuxmint
+elif [ -n "$(command -v apt-get)" ] && [ "$(. /etc/os-release 2>/dev/null && printf '%s' "${ID:-}")" = zorin ]; then
+  # Zorin OS is its own OS, with its own lines in Setup/recipes.conf: named by its ID, never taken as Mint or Ubuntu.
+  OS=zorin
 fi
 if [ -z "$OS" ]; then
-  echo "This script supports Fedora, Red Hat Enterprise Linux and Linux Mint only, and this system is none of them. Nothing was changed." >&2
+  echo "This script supports Fedora, Red Hat Enterprise Linux, Linux Mint and Zorin OS only, and this system is none of them. Nothing was changed." >&2
   echo "To build by hand, see README.md." >&2
   exit 1
 fi

@@ -13,7 +13,7 @@ See `docs/Maturity.md` for what works and what does not, and `docs/SECURITY.md` 
 ## Build
 
 Linux, with a C++23 compiler, CMake, Ninja, and the Wayland, xkbcommon, FreeType, HarfBuzz and
-fontconfig development files. `bsir.sh` also installs Vim, which works when only a terminal does, and which the file manager's Edit button falls back on, and OBS Studio, which its Record button starts. On Fedora, Red Hat Enterprise Linux or Linux Mint, from `Lin/v001`, `bash bsir.sh` checks for all of these, offers
+fontconfig development files. `bsir.sh` also installs Vim, which works when only a terminal does, and which the file manager's Edit button falls back on, and OBS Studio, which its Record button starts. On Fedora, Red Hat Enterprise Linux, Linux Mint or Zorin OS, from `Lin/v001`, `bash bsir.sh` checks for all of these, offers
 what is missing, builds, tests and opens the demo. It also offers Meld, which the Diff button opens. Meld is optional: if you decline it or it cannot be installed, a warning says Diff will use the built-in viewer, and the build goes on. It runs a system update on every run and needs sudo,
 and it stops on any other system. It has been run end to end only on Fedora 44.
 
@@ -22,7 +22,7 @@ Every build, by `bsir.sh` or by hand, uses this machine's **pinned** compilers: 
 Qlite, jText and jText_GUI build with. The presets' toolchain file, `Lin/v001/Setup/pinned_compilers.cmake`, reads it,
 and CMake refuses a build folder that was configured with another compiler. A row already there is kept, whoever wrote it.
 A machine with no row is pinned by `bsir.sh` to its OS's compilers in `Lin/v001/Setup/recipes.conf`: Fedora's `g++` and
-`clang++`, and on Linux Mint `g++-15` and `clang++-21`, because Mint's plain `g++` (13) and `clang++` (18) are too old. On
+`clang++`, and on Linux Mint and Zorin OS `g++-15` and `clang++-21`, because Mint's plain `g++` (13) and `clang++` (18) are too old. On
 Red Hat Enterprise Linux the system `g++` stays at the release default, so `bsir.sh` installs the newest GCC Toolset the
 system offers (gcc-toolset-16 on RHEL 10.3) and the newest Clang (22 on RHEL 10.3), and pins them;
 `Lin/v001/Setup/newest_compilers.sh` finds both. There Clang is given the pinned GCC's C++ library, where Red Hat's own
