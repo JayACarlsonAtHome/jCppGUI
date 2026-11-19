@@ -251,7 +251,7 @@ void test_failing_c_calls(jgui_test::Checker& check) {
 
 // --- The buffer file's system calls ---
 
-constexpr unsigned int noexec_flags = MFD_CLOEXEC | MFD_NOEXEC_SEAL;
+constexpr unsigned int noexec_flags = MFD_CLOEXEC | jgui::detail::memfd_noexec_seal;
 
 // A kernel too old for MFD_NOEXEC_SEAL refuses it with EINVAL.
 struct OldKernel {
@@ -268,6 +268,7 @@ struct OldKernel {
     }
     [[nodiscard]] static int reserve(int fd, ::off_t bytes) noexcept { return jgui::detail::BufferFileCalls::reserve(fd, bytes); }
     [[nodiscard]] static int add_seals(int fd, int seals) noexcept { return jgui::detail::BufferFileCalls::add_seals(fd, seals); }
+    [[nodiscard]] static int set_mode(int fd, ::mode_t mode) noexcept { return jgui::detail::BufferFileCalls::set_mode(fd, mode); }
 };
 
 template <int First, int Second>
@@ -279,6 +280,7 @@ struct NoMemfd {
     }
     [[nodiscard]] static int reserve(int, ::off_t) noexcept { return 0; }
     [[nodiscard]] static int add_seals(int, int) noexcept { return 0; }
+    [[nodiscard]] static int set_mode(int, ::mode_t) noexcept { return 0; }
 };
 
 struct ReserveInterrupted {
@@ -286,12 +288,14 @@ struct ReserveInterrupted {
     [[nodiscard]] static int memfd_create(const char* name, unsigned int flags) noexcept { return ::memfd_create(name, flags); }
     [[nodiscard]] static int reserve(int fd, ::off_t bytes) noexcept { return ++calls <= 3 ? EINTR : jgui::detail::BufferFileCalls::reserve(fd, bytes); }
     [[nodiscard]] static int add_seals(int fd, int seals) noexcept { return jgui::detail::BufferFileCalls::add_seals(fd, seals); }
+    [[nodiscard]] static int set_mode(int fd, ::mode_t mode) noexcept { return jgui::detail::BufferFileCalls::set_mode(fd, mode); }
 };
 
 struct NoSpace {
     [[nodiscard]] static int memfd_create(const char* name, unsigned int flags) noexcept { return ::memfd_create(name, flags); }
     [[nodiscard]] static int reserve(int, ::off_t) noexcept { return ENOSPC; }
     [[nodiscard]] static int add_seals(int fd, int seals) noexcept { return jgui::detail::BufferFileCalls::add_seals(fd, seals); }
+    [[nodiscard]] static int set_mode(int fd, ::mode_t mode) noexcept { return jgui::detail::BufferFileCalls::set_mode(fd, mode); }
 };
 
 struct NoSeals {
@@ -301,17 +305,32 @@ struct NoSeals {
         errno = EPERM;
         return -1;
     }
+    [[nodiscard]] static int set_mode(int fd, ::mode_t mode) noexcept { return jgui::detail::BufferFileCalls::set_mode(fd, mode); }
+};
+
+// An old kernel, and the mode cannot be changed.
+struct OldKernelNoMode {
+    [[nodiscard]] static int memfd_create(const char* name, unsigned int flags) noexcept { return OldKernel::memfd_create(name, flags); }
+    [[nodiscard]] static int reserve(int fd, ::off_t bytes) noexcept { return jgui::detail::BufferFileCalls::reserve(fd, bytes); }
+    [[nodiscard]] static int add_seals(int fd, int seals) noexcept { return jgui::detail::BufferFileCalls::add_seals(fd, seals); }
+    [[nodiscard]] static int set_mode(int, ::mode_t) noexcept {
+        errno = EPERM;
+        return -1;
+    }
 };
 
 void test_buffer_file_calls(jgui_test::Checker& check) {
     const auto old_kernel = jgui::detail::create_buffer_file<OldKernel>(4096);
     check(old_kernel.has_value() && OldKernel::calls == 2, "EINVAL falls back to a second call");
-    check((OldKernel::last_flags & MFD_ALLOW_SEALING) != 0 && (OldKernel::last_flags & MFD_CLOEXEC) != 0 && (OldKernel::last_flags & MFD_NOEXEC_SEAL) == 0, "with flags an old kernel knows");
+    check((OldKernel::last_flags & MFD_ALLOW_SEALING) != 0 && (OldKernel::last_flags & MFD_CLOEXEC) != 0 && (OldKernel::last_flags & jgui::detail::memfd_noexec_seal) == 0, "with flags an old kernel knows");
     if (old_kernel) {
         const int seals = ::fcntl(old_kernel->get(), F_GET_SEALS);
         check(seals >= 0 && (seals & F_SEAL_SHRINK) != 0 && (seals & F_SEAL_GROW) != 0 && (seals & F_SEAL_SEAL) != 0, "and the file is still sealed");
         check(::ftruncate(old_kernel->get(), 0) != 0, "so it cannot be cut short");
+        struct ::stat status {};
+        check(::fstat(old_kernel->get(), &status) == 0 && (status.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0, "and it is not executable");
     }
+    check(!jgui::detail::create_buffer_file<OldKernelNoMode>(4096).has_value(), "an old kernel's file whose exec bits cannot be taken away is an Error");
     using Both = NoMemfd<EINVAL, EMFILE>;
     const auto both = jgui::detail::create_buffer_file<Both>(4096);
     check(!both.has_value() && both.error().code == ErrorCode::System && Both::calls == 2, "both calls failing is an Error");
@@ -384,6 +403,7 @@ struct CountsInterrupts {
         return result;
     }
     [[nodiscard]] static int add_seals(int fd, int seals) noexcept { return jgui::detail::BufferFileCalls::add_seals(fd, seals); }
+    [[nodiscard]] static int set_mode(int fd, ::mode_t mode) noexcept { return jgui::detail::BufferFileCalls::set_mode(fd, mode); }
 };
 
 void test_real_signals(jgui_test::Checker& check) {

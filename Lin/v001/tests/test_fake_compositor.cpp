@@ -2399,11 +2399,13 @@ struct ViewerRefused {
     static constexpr ViewerFile viewer_file = Kind;
     ViewerState state{};
     bool clicked{};
+    // The start of what the status line says, drawn alone and compared. Each one ends before a space or at the end, because a letter
+    // followed by more than a space can be drawn differently: with DejaVu Sans, the colon after "directory" changes the y.
     [[nodiscard]] static constexpr std::string_view says() {
         if (Kind == ViewerFile::Missing) return "cannot look at";
         if (Kind == ViewerFile::Malformed) return "jText line 3: a line stands outside any block";
         if (Kind == ViewerFile::Symlink) return "refused";
-        if (Kind == ViewerFile::NoBase) return "the viewer has no base directory";
+        if (Kind == ViewerFile::NoBase) return "the viewer has no base directory:";
         return "the path is not text that can be shown";
     }
     [[nodiscard]] ViewerReference::LoadedFile file() const {

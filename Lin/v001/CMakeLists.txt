@@ -45,6 +45,31 @@ option(JGUI_FUZZ "Build the libFuzzer harnesses with ASan and UBSan, instead of 
 option(JGUI_WARNINGS_ONLY "Optimize, without the hardening flags that stop warnings firing. Never ship this." OFF)
 option(JCPPGUI_LIVE_TESTS "Add the tests that use the real compositor, which open real windows on the desktop. No preset sets this." OFF)
 
+# --- Red Hat Enterprise Linux 9 alone: its libwayland and kernel headers are older than this code ---
+# Its libwayland 1.21 has no wl_pointer axis_relative_direction, and cuts the connection on any event of a later
+# wl_pointer. So RHEL 9 builds with libwayland 1.24.0, which Setup/rhel_wayland.sh builds into wayland_install beside the
+# repository, as bsir.sh runs it; the build links it by its full path, so the programs load it from there. Its kernel
+# headers (5.14) have no MFD_NOEXEC_SEAL, so it gets src/compat/rhel9. Every other OS uses its own libwayland, and
+# src/compat/system.
+cmake_host_system_information(RESULT JGUI_OS_ID QUERY DISTRIB_ID)
+cmake_host_system_information(RESULT JGUI_OS_VERSION QUERY DISTRIB_VERSION_ID)
+set(JGUI_RHEL9 OFF)
+if(JGUI_OS_ID STREQUAL "rhel" AND JGUI_OS_VERSION MATCHES "^9(\\.|$)")
+  set(JGUI_RHEL9 ON)
+endif()
+if(JGUI_RHEL9)
+  set(JGUI_RHEL9_WAYLAND_VERSION "1.24.0")
+  cmake_path(SET JGUI_RHEL9_WAYLAND NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/../../../wayland_install")
+  if(NOT EXISTS "${JGUI_RHEL9_WAYLAND}/lib/pkgconfig/wayland-client.pc")
+    message(FATAL_ERROR "Red Hat Enterprise Linux 9 builds with libwayland ${JGUI_RHEL9_WAYLAND_VERSION} from "
+      "${JGUI_RHEL9_WAYLAND}, and it is not there. Run bash bsir.sh, which builds it.")
+  endif()
+  list(PREPEND CMAKE_PREFIX_PATH "${JGUI_RHEL9_WAYLAND}")
+  include_directories(src/compat/rhel9)
+else()
+  include_directories(src/compat/system)
+endif()
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WAYLAND_CLIENT REQUIRED IMPORTED_TARGET wayland-client)
 pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
@@ -54,6 +79,15 @@ pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
 pkg_check_modules(WAYLAND_PROTOCOLS REQUIRED wayland-protocols)
 pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
+if(JGUI_RHEL9)
+  if(NOT WAYLAND_CLIENT_VERSION STREQUAL JGUI_RHEL9_WAYLAND_VERSION OR NOT WAYLAND_CLIENT_LINK_LIBRARIES MATCHES "^${JGUI_RHEL9_WAYLAND}/")
+    message(FATAL_ERROR "Red Hat Enterprise Linux 9 must build with libwayland ${JGUI_RHEL9_WAYLAND_VERSION} from ${JGUI_RHEL9_WAYLAND}, "
+      "and found ${WAYLAND_CLIENT_VERSION} at ${WAYLAND_CLIENT_LINK_LIBRARIES}. Run bash bsir.sh, then configure again from nothing.")
+  endif()
+  if(NOT WAYLAND_SCANNER MATCHES "^${JGUI_RHEL9_WAYLAND}/")
+    message(FATAL_ERROR "Red Hat Enterprise Linux 9 must use the wayland-scanner from ${JGUI_RHEL9_WAYLAND}, and found ${WAYLAND_SCANNER}.")
+  endif()
+endif()
 
 # --- Hardening: applies to everything, in every configuration, generated code included ---
 add_library(jgui_hardening INTERFACE)

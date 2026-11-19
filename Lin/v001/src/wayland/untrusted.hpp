@@ -5,6 +5,7 @@
 
 #include <fcntl.h>
 #include <sys/mman.h>  // for memfd_create
+#include <sys/stat.h>  // for fchmod
 #include <unistd.h>
 
 #include <algorithm>
@@ -27,6 +28,7 @@
 #include "jCppGUI/v001/events.hpp"
 #include "jCppGUI/v001/geometry.hpp"
 #include "jCppGUI/v001/text.hpp"
+#include "memfd_flags.hpp"  // src/compat/rhel9 or src/compat/system, as CMakeLists.txt chooses
 
 namespace jgui::inline v001::detail {
 
@@ -48,16 +50,23 @@ struct BufferFileCalls {
     [[nodiscard]] static int memfd_create(const char* name, unsigned int flags) noexcept { return ::memfd_create(name, flags); }
     [[nodiscard]] static int reserve(int fd, ::off_t bytes) noexcept { return ::posix_fallocate(fd, 0, bytes); }
     [[nodiscard]] static int add_seals(int fd, int seals) noexcept { return ::fcntl(fd, F_ADD_SEALS, seals); }
+    [[nodiscard]] static int set_mode(int fd, ::mode_t mode) noexcept { return ::fchmod(fd, mode); }
 };
 
 // A new file for one window buffer: not executable, with its space reserved, so a shortage is an Error
 // here and not a failure later. It is sealed at that size, so nobody can truncate it under the compositor.
 template <class Calls = BufferFileCalls>
 [[nodiscard]] std::expected<UniqueFd, Error> create_buffer_file(std::size_t bytes) {
-    UniqueFd fd{Calls::memfd_create("jcppgui-frame", MFD_CLOEXEC | MFD_NOEXEC_SEAL)};
-    // A kernel too old to know the flag refuses it. Such a file keeps its exec bit, and sealing still works.
-    if (fd.get() < 0 && errno == EINVAL) fd = UniqueFd{Calls::memfd_create("jcppgui-frame", MFD_CLOEXEC | MFD_ALLOW_SEALING)};
+    UniqueFd fd{Calls::memfd_create("jcppgui-frame", MFD_CLOEXEC | memfd_noexec_seal)};
+    // A kernel too old to know the flag (before Linux 6.3, as Red Hat Enterprise Linux 9's 5.14) refuses it. Sealing
+    // still works there.
+    const bool old_kernel = fd.get() < 0 && errno == EINVAL;
+    if (old_kernel) fd = UniqueFd{Calls::memfd_create("jcppgui-frame", MFD_CLOEXEC | MFD_ALLOW_SEALING)};
     if (fd.get() < 0) return make_error(ErrorCode::System, "memfd_create failed");
+    // Such a kernel makes the file executable. Its mode is cut to read and write for its owner, which takes the exec
+    // bits away. Only F_SEAL_EXEC, which such a kernel also lacks, could stop a holder of the file setting them again.
+    if (old_kernel && Calls::set_mode(fd.get(), S_IRUSR | S_IWUSR) != 0)
+        return make_error(ErrorCode::System, "the buffer file could not be made not executable");
     int reserve_failure = 0;
     do {
         reserve_failure = Calls::reserve(fd.get(), saturate_to<::off_t>(bytes));
