@@ -14,6 +14,8 @@
 #include <utility>
 
 #include "backend.hpp"
+#include "cell_text.hpp"
+#include "fit.hpp"
 #include "redraw_points.hpp"
 #include "text.hpp"
 #include "tree.hpp"
@@ -71,6 +73,9 @@ public:
     [[nodiscard]] constexpr Size size() const noexcept { return root_.size(); }
     // When the widgets next want to act, as of the last turn. A program with its own process_pending loop calls again by then.
     [[nodiscard]] constexpr std::optional<MonotonicTime> next_wake() const noexcept { return wake_; }
+    // How much wider the window would have to be for everything in it to show, when the last frame could not make it
+    // fit by any means, and then said so over the window. Empty when it fit.
+    [[nodiscard]] constexpr std::optional<Width> too_narrow_by() const noexcept { return too_narrow_by_; }
 
 private:
     friend struct detail::TestAccess;
@@ -242,17 +247,79 @@ private:
             Canvas canvas{pixels, *painting_, generation};
             canvas.fill_rect(whole, theme::background);
             root_.paint(canvas);
+            if (too_narrow_by_ && notice_) paint_notice(canvas, whole);
         }
         painting_->finish();
     }
 
+    // Over the middle of the top of the window, on top of everything: the screen is too small for this window.
+    constexpr void paint_notice(const Canvas& canvas, const Rect& whole) const {
+        const Size text = notice_->size();
+        const Size box{text.width() + theme::label_pad_x + theme::label_pad_x, text.height() + theme::label_pad_y + theme::label_pad_y};
+        const Width left_over = whole.width() > box.width() ? whole.width() - box.width() : Width{};
+        const Rect area{Point{left_after(whole.left() + rescaled_extent(left_over, Width{2}, Width{1})), top_after(whole.top() + theme::label_pad_y)}, box};
+        canvas.fill_rect(area, theme::background);
+        canvas.stroke_rect(area, theme::focus_edge);
+        canvas.draw_text(Point{left_after(area.left() + theme::label_pad_x), top_after(area.top() + theme::label_pad_y)}, *notice_, theme::text);
+    }
+
+    // One layout pass with this shaper and padding: how far short of room its rows were.
+    template <TextShaper Shaper>
+    [[nodiscard]] constexpr std::expected<Width, Error> lay_out_once(const Shaper& text, FitPadding padding) {
+        FitTally tally;
+        const FitText<Shaper> fitted{text, padding, tally};
+        if (auto laid_out = root_.layout(Rect{Point{}, root_.size()}, fitted); !laid_out) return std::unexpected(std::move(laid_out.error()));
+        return tally.short_by();
+    }
+
+    // Lays the tree out so that everything shows, trying in order: the window as it is; the window made wider, where
+    // the backend says there is room; tight padding; and smaller text, one pixel at a time, as small as the shaper
+    // goes. The pass that fits is the one kept. When none does, the last and smallest is kept, and the window says
+    // the screen is too small. See fit.hpp.
+    template <TextShaper Shaper>
+    [[nodiscard]] constexpr std::expected<void, Error> lay_out_to_fit(const Shaper& text) {
+        too_narrow_by_ = std::nullopt;
+        auto short_by = lay_out_once(text, normal_padding);
+        if (!short_by || *short_by == Width{}) return short_by ? std::expected<void, Error>{} : std::unexpected(std::move(short_by.error()));
+        if constexpr (requires(Size wanted) { { backend_.grow_to(wanted) } -> std::same_as<bool>; }) {
+            const Size wider{root_.size().width() + *short_by, root_.size().height()};
+            if (PixelBuffer::byte_size(wider) && backend_.grow_to(wider)) {
+                root_.set_size(wider);
+                short_by = lay_out_once(text, normal_padding);
+                if (!short_by || *short_by == Width{}) return short_by ? std::expected<void, Error>{} : std::unexpected(std::move(short_by.error()));
+            }
+        }
+        short_by = lay_out_once(text, tight_padding);
+        if (!short_by || *short_by == Width{}) return short_by ? std::expected<void, Error>{} : std::unexpected(std::move(short_by.error()));
+        if constexpr (requires(std::int32_t size) {
+                          { text.pixel_size() } -> std::same_as<std::int32_t>;
+                          text.at_pixel_size(size);
+                      }) {
+            for (std::int32_t size = text.pixel_size() - 1; size >= TextEngine::smallest_pixel_size; --size) {
+                auto smaller = text.at_pixel_size(size);
+                if (!smaller) break;
+                short_by = lay_out_once(smaller->get(), tight_padding);
+                if (!short_by || *short_by == Width{}) return short_by ? std::expected<void, Error>{} : std::unexpected(std::move(short_by.error()));
+            }
+        }
+        too_narrow_by_ = *short_by;
+        return {};
+    }
+
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> draw(const Shaper& text) {
-        const Rect whole{Point{}, root_.size()};
-        monitor_.frame_begins(redraw_reason(), whole);
+        monitor_.frame_begins(redraw_reason(), Rect{Point{}, root_.size()});
         if constexpr (Monitor::watches) root_.report_damage(monitor_);
         monitor_.phases_begin();
-        if (auto laid_out = root_.layout(whole, text); !laid_out) return std::unexpected(std::move(laid_out.error()));
+        const std::optional<Width> was_too_narrow_by = too_narrow_by_;
+        if (auto laid_out = lay_out_to_fit(text); !laid_out) return std::unexpected(std::move(laid_out.error()));
+        if (too_narrow_by_ != was_too_narrow_by) notice_.reset();
+        if (too_narrow_by_ && !notice_) {
+            auto shaped = text.shape("The screen is too small for this window. It needs " + decimal_text(whole_units_in(*too_narrow_by_, Width{1}), false) + " pixels more across.");
+            if (shaped) notice_ = std::move(*shaped);
+        }
+        // The size can have grown to fit.
+        const Rect whole{Point{}, root_.size()};
         monitor_.laid_out();
         auto frame = backend_.acquire_frame(root_.size());
         if (!frame) return std::unexpected(std::move(frame.error()));
@@ -286,6 +353,8 @@ private:
     // that reset() emptied under libstdc++ 15, and one assigned empty copies.
     std::optional<MonotonicTime> wake_{};
     std::optional<CursorShape> cursor_{};
+    std::optional<Width> too_narrow_by_{};
+    std::optional<TextRun> notice_{};
     bool have_size_{};
     bool closed_{};
     bool damaged_{};
@@ -350,6 +419,10 @@ public:
     [[nodiscard]] std::optional<MonotonicTime> next_wake() const {
         check_thread();
         return core_.next_wake();
+    }
+    [[nodiscard]] std::optional<Width> too_narrow_by() const {
+        check_thread();
+        return core_.too_narrow_by();
     }
 
 private:

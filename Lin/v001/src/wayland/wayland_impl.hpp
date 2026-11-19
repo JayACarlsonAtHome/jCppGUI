@@ -59,7 +59,7 @@ static_assert(keymap_format_none == WL_KEYBOARD_KEYMAP_FORMAT_NO_KEYMAP);
 
 constexpr std::uint32_t compositor_version = 4;  // for wl_surface.damage_buffer
 constexpr std::uint32_t shm_version = 1;
-constexpr std::uint32_t wm_base_version = 2;
+constexpr std::uint32_t wm_base_version = 4;  // for xdg_toplevel.configure_bounds: how big the window may grow to fit
 constexpr std::uint32_t seat_version = 5;  // for release requests and pointer frames
 constexpr std::uint32_t data_device_manager_version = 3;  // for wl_data_device.release, and every event is answered
 constexpr std::uint32_t cursor_shape_version = 1;  // every shape used here is in version 1
@@ -287,7 +287,7 @@ struct BasicWaylandImpl {
     void on_surface_configure(xdg_surface* surface, std::uint32_t serial) noexcept;
     void on_toplevel_configure(xdg_toplevel*, std::int32_t width, std::int32_t height, wl_array*) noexcept;
     void on_toplevel_close(xdg_toplevel*) noexcept { record(CloseEvent{}); }
-    void on_toplevel_bounds(xdg_toplevel*, std::int32_t, std::int32_t) noexcept {}
+    void on_toplevel_bounds(xdg_toplevel*, std::int32_t width, std::int32_t height) noexcept { pending_bounds = configured_bounds(width, height); }
     void on_toplevel_capabilities(xdg_toplevel*, wl_array*) noexcept {}
     void on_seat_capabilities(wl_seat* object, std::uint32_t capabilities) noexcept;
     void on_seat_name(wl_seat*, const char*) noexcept {}
@@ -350,6 +350,7 @@ struct BasicWaylandImpl {
     void make_cursor_device() noexcept;
     void forget_pointer() noexcept;
     void set_cursor_shape(CursorShape shape) noexcept;
+    [[nodiscard]] bool grow_to(Size wanted) noexcept;
     [[nodiscard]] std::optional<Error> take_failure() noexcept { return std::exchange(failure, std::nullopt); }
     [[nodiscard]] Error connection_error() const;
 
@@ -431,6 +432,12 @@ struct BasicWaylandImpl {
     PointerScrollTally scroll_tally{};
     Size chosen_size;
     Size pending_size{};
+    // From the last configure: how big the compositor says the window may be, empty when it has not said, and whether
+    // a state such as maximized holds it at the size it was given. Both arrive before the configure that applies them.
+    Size bounds{};
+    Size pending_bounds{};
+    bool size_fixed{true};
+    bool pending_size_fixed{true};
     Size geometry{};
 };
 
@@ -676,8 +683,24 @@ void BasicWaylandImpl<Api>::on_global_remove(wl_registry*, std::uint32_t name) n
 }
 
 template <class Api>
-void BasicWaylandImpl<Api>::on_toplevel_configure(xdg_toplevel*, std::int32_t width, std::int32_t height, wl_array*) noexcept {
+void BasicWaylandImpl<Api>::on_toplevel_configure(xdg_toplevel*, std::int32_t width, std::int32_t height, wl_array* states) noexcept {
     pending_size = configured_size(width, height, chosen_size);
+    // A list too long to be real, or one that cannot be read, is taken as holding the size: then the window only
+    // never grows by itself, which is always safe.
+    pending_size_fixed = true;
+    const U32Elements elements = u32_elements(states);
+    const auto copied = copy_from_c(elements.data, elements.count, max_toplevel_states);
+    if (copied) pending_size_fixed = states_fix_the_size(*copied);
+}
+
+// Only where the compositor said how much room there is, and the window is not held at a size: see may_grow_to. The
+// compositor is told the window needs at least this much, so it does not size it back down.
+template <class Api>
+bool BasicWaylandImpl<Api>::grow_to(Size wanted) noexcept {
+    if (!toplevel || !may_grow_to(wanted, bounds, size_fixed)) return false;
+    chosen_size = wanted;
+    xdg_toplevel_set_min_size(toplevel.get(), GeometryAccess::number(wanted.width()), GeometryAccess::number(wanted.height()));
+    return true;
 }
 
 template <class Api>
@@ -685,6 +708,8 @@ void BasicWaylandImpl<Api>::on_surface_configure(xdg_surface* object, std::uint3
     // The ack comes before any commit of the frame that the resize below will produce.
     xdg_surface_ack_configure(object, serial);
     if (!pending_size.empty()) chosen_size = pending_size;
+    bounds = pending_bounds;
+    size_fixed = pending_size_fixed;
     record(ResizeEvent{chosen_size});
 }
 

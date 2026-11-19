@@ -1,11 +1,12 @@
 // File: src/wayland/trampoline.hpp
-// Purpose: The one place the libwayland C boundary is crossed, and the two casts back from an untyped pointer in
+// Purpose: The one place the libwayland C boundary is crossed, and the three casts back from an untyped pointer in
 //          our code. libwayland stores an untyped pointer with each listener and hands it back to a C function,
-//          and it returns a new global untyped. Each is tied by type to the one type it can really be, and the
-//          pointer goes no further. This exception ends when our own Wayland client replaces libwayland.
+//          it returns a new global untyped, and it hands over a wl_array's elements untyped. Each is tied by type to
+//          the one type it can really be, and the pointer goes no further. This exception ends when our own Wayland client replaces libwayland.
 #pragma once
 
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
@@ -55,6 +56,17 @@ struct GlobalInterface;
 template <class Global>
 [[nodiscard]] Global* bind_global(wl_registry* registry, std::uint32_t name, std::uint32_t version) noexcept {
     return static_cast<Global*>(wl_registry_bind(registry, name, GlobalInterface<Global>::value, version));
+}
+
+// The elements of a wl_array that the protocol makes 32-bit values, as xdg_toplevel.configure's states are. Its size
+// is in bytes, and a part of an element at the end is left out. The caller copies them with copy_from_c, under a limit.
+struct U32Elements {
+    const std::uint32_t* data{};
+    std::size_t count{};
+};
+[[nodiscard]] inline U32Elements u32_elements(const wl_array* array) noexcept {
+    if (array == nullptr) return {};
+    return U32Elements{static_cast<const std::uint32_t*>(array->data), array->size / sizeof(std::uint32_t)};
 }
 
 }  // namespace jgui::inline v001::detail

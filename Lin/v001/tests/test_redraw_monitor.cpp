@@ -65,6 +65,8 @@ struct CoreWithNoMonitorMember {
     std::uint64_t frames;
     std::optional<MonotonicTime> wake;
     std::optional<CursorShape> cursor;
+    std::optional<Width> too_narrow_by;
+    std::optional<TextRun> notice;
     bool have_size;
     bool closed;
     bool damaged;

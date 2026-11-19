@@ -130,6 +130,34 @@ inline constexpr std::size_t max_window_string_bytes = 4096 - 8 - 4 - 1;
                 height > 0 ? Height{std::min(height, max_buffer_side)} : fallback.height()};
 }
 
+// The xdg_toplevel states that fix a window's size: maximized, fullscreen, and tiled on any side. A window in one of
+// these must take the size it is given, so it never grows to fit what it holds. Other states, and values no
+// compositor should send, change nothing.
+inline constexpr std::uint32_t toplevel_state_maximized = 1;
+inline constexpr std::uint32_t toplevel_state_fullscreen = 2;
+inline constexpr std::uint32_t toplevel_state_tiled_left = 5;
+inline constexpr std::uint32_t toplevel_state_tiled_bottom = 8;
+inline constexpr std::size_t max_toplevel_states = 64;
+[[nodiscard]] constexpr bool states_fix_the_size(std::span<const std::uint32_t> states) noexcept {
+    return std::ranges::any_of(states, [](std::uint32_t state) {
+        return state == toplevel_state_maximized || state == toplevel_state_fullscreen || (state >= toplevel_state_tiled_left && state <= toplevel_state_tiled_bottom);
+    });
+}
+
+// The largest size the compositor says a window should take, from xdg_toplevel.configure_bounds. Zero on either side
+// means it does not know, as the protocol says, and then there is no room to grow into. Each side is capped as a
+// configured size is.
+[[nodiscard]] constexpr Size configured_bounds(std::int32_t width, std::int32_t height) noexcept {
+    if (width <= 0 || height <= 0) return Size{};
+    return Size{Width{std::min(width, max_buffer_side)}, Height{std::min(height, max_buffer_side)}};
+}
+
+// Whether a window may make itself this size to fit what it holds: only where the compositor said how much room
+// there is, the size is within it, and the window is not held at a size.
+[[nodiscard]] constexpr bool may_grow_to(Size wanted, Size bounds, bool size_fixed) noexcept {
+    return !size_fixed && !bounds.empty() && !wanted.empty() && wanted.width() <= bounds.width() && wanted.height() <= bounds.height();
+}
+
 // What one axis of the pointer has said since the last pointer frame. Steps win over pixels, because a wheel sends both
 // for one notch. Pixels arrive in the protocol's fixed point, with 8 bits of fraction, and what is left over of a pixel
 // waits for the next frame, so slow smooth scrolling still moves. Each total stays within what one event can ask for, so

@@ -74,6 +74,26 @@ static_assert(configured_size(-1, -1, fallback) == fallback && configured_size(l
 static_assert(configured_size(800, 0, fallback) == Size{Width{800}, Height{480}} && configured_size(0, 600, fallback) == Size{Width{640}, Height{600}});
 static_assert(configured_size(800, 600, fallback) == Size{Width{800}, Height{600}});
 static_assert(configured_size(hi, hi, fallback) == Size{Width{max_buffer_side}, Height{max_buffer_side}}, "clamped to the limit");
+
+// --- Growing to fit: only into room the compositor said there is, and never while a state holds the size ---
+constexpr std::array<std::uint32_t, 0> no_states{};
+constexpr std::array<std::uint32_t, 2> activated_and_resizing{4, 3};
+constexpr std::array<std::uint32_t, 2> maximized{4, 1};
+constexpr std::array<std::uint32_t, 1> fullscreen{2};
+constexpr std::array<std::uint32_t, 1> tiled_left{5};
+constexpr std::array<std::uint32_t, 1> tiled_bottom{8};
+constexpr std::array<std::uint32_t, 3> unknown_values{0, 9, 0xFFFFFFFFU};
+static_assert(!states_fix_the_size(no_states) && !states_fix_the_size(activated_and_resizing) && !states_fix_the_size(unknown_values));
+static_assert(states_fix_the_size(maximized) && states_fix_the_size(fullscreen) && states_fix_the_size(tiled_left) && states_fix_the_size(tiled_bottom));
+static_assert(configured_bounds(0, 0).empty() && configured_bounds(1920, 0).empty() && configured_bounds(-1, 1080).empty(), "not known");
+static_assert(configured_bounds(1920, 1080) == Size{Width{1920}, Height{1080}});
+static_assert(configured_bounds(hi, hi) == Size{Width{max_buffer_side}, Height{max_buffer_side}}, "clamped to the limit");
+constexpr Size screen{Width{1920}, Height{1080}};
+static_assert(may_grow_to(Size{Width{1300}, Height{500}}, screen, false) && may_grow_to(screen, screen, false));
+static_assert(!may_grow_to(Size{Width{1921}, Height{500}}, screen, false) && !may_grow_to(Size{Width{1300}, Height{1081}}, screen, false), "beyond the room");
+static_assert(!may_grow_to(Size{Width{1300}, Height{500}}, Size{}, false), "no room said");
+static_assert(!may_grow_to(Size{Width{1300}, Height{500}}, screen, true), "held at its size");
+static_assert(!may_grow_to(Size{}, screen, false), "nothing to grow to");
 static_assert(PixelBuffer::byte_size(configured_size(hi, hi, fallback)).has_value(), "and the clamped size is accepted");
 
 static_assert(check_keymap_header(keymap_format_xkb_v1, 1).has_value());

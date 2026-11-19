@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <optional>
 #include <span>
@@ -25,7 +26,6 @@ namespace jgui::inline v001 {
 
 namespace {
 
-constexpr FT_UInt font_pixel_size = 14;
 // The one place glyphs are told how to load, for FreeType directly and for HarfBuzz's use of the same face. Fonts are
 // untrusted, so no hinting: their bytecode must not run. Both flags are needed, because FreeType ignores
 // FT_LOAD_NO_HINTING alone for a "tricky" font, and a font is taken as tricky by the family name it claims.
@@ -89,6 +89,9 @@ struct TextEngineImpl {
     std::int32_t line_height{};
     std::optional<TextEngine> monospace{};
     std::optional<Error> monospace_refusal{};
+    std::int32_t pixel_size{TextEngine::default_pixel_size};
+    // The same font at other sizes, made when asked for. A deque, so a reference to one stays good as more are added.
+    std::deque<TextEngine> sized{};
 };
 
 void TextEngineImplDeleter::operator()(TextEngineImpl* impl) const noexcept {
@@ -109,7 +112,7 @@ std::expected<void, Error> start_freetype(detail::TextEngineImpl& impl) {
 // The rest of starting an engine, whatever the font came from: every check on it, and HarfBuzz.
 std::expected<void, Error> finish_engine(detail::TextEngineImpl& impl, std::string_view name) {
     FT_Face face = impl.face.get();
-    if (!FT_IS_SCALABLE(face) || FT_Set_Pixel_Sizes(face, 0, font_pixel_size) != 0)
+    if (!FT_IS_SCALABLE(face) || FT_Set_Pixel_Sizes(face, 0, static_cast<FT_UInt>(impl.pixel_size)) != 0)
         return make_error(ErrorCode::Font, "the font cannot be scaled: " + std::string{name});
 
     const std::int64_t ascender = face->size->metrics.ascender;
@@ -154,9 +157,12 @@ std::expected<void, Error> open_found_font(detail::TextEngineImpl& impl, FcConfi
 TextEngine::TextEngine(std::unique_ptr<detail::TextEngineImpl, detail::TextEngineImplDeleter> impl) noexcept
     : impl_{std::move(impl)} {}
 
-std::expected<TextEngine, Error> TextEngine::create() {
+std::expected<TextEngine, Error> TextEngine::create() { return create_at(default_pixel_size); }
+
+std::expected<TextEngine, Error> TextEngine::create_at(std::int32_t size) {
     std::unique_ptr<detail::TextEngineImpl, detail::TextEngineImplDeleter> impl{
         std::make_unique<detail::TextEngineImpl>().release()};
+    impl->pixel_size = size;
 
     impl->config.reset(FcInitLoadConfigAndFonts());
     if (!impl->config) return make_error(ErrorCode::Font, "fontconfig could not load its configuration");
@@ -172,6 +178,7 @@ std::expected<std::reference_wrapper<const TextEngine>, Error> TextEngine::monos
             parent.monospace_refusal = Error{ErrorCode::Font, "this font engine cannot look for a monospace font"};
         } else {
             std::unique_ptr<detail::TextEngineImpl, detail::TextEngineImplDeleter> impl{std::make_unique<detail::TextEngineImpl>().release()};
+            impl->pixel_size = parent.pixel_size;
             if (auto opened = open_found_font(*impl, parent.config.get(), monospace_family); !opened) {
                 parent.monospace_refusal = std::move(opened.error());
             } else if (!advances_are_equal(impl->face.get())) {
@@ -199,6 +206,22 @@ std::expected<TextEngine, Error> TextEngine::from_font_bytes(std::span<const std
 }
 
 Height TextEngine::line_height() const noexcept { return Height{impl_->line_height}; }
+
+std::int32_t TextEngine::pixel_size() const noexcept { return impl_->pixel_size; }
+
+std::expected<std::reference_wrapper<const TextEngine>, Error> TextEngine::at_pixel_size(std::int32_t size) const {
+    detail::TextEngineImpl& here = *impl_;
+    if (size == here.pixel_size) return std::cref(*this);
+    if (size < smallest_pixel_size || size > default_pixel_size) return make_error(ErrorCode::Font, "a font size outside what a window is laid out with");
+    for (const TextEngine& engine : here.sized)
+        if (engine.pixel_size() == size) return std::cref(engine);
+    // Only an engine that found its font through fontconfig can find it again, and then it finds it the same way.
+    if (!here.config) return make_error(ErrorCode::Font, "this font engine cannot make its font at another size");
+    auto made = create_at(size);
+    if (!made) return std::unexpected(std::move(made.error()));
+    here.sized.push_back(std::move(*made));
+    return std::cref(here.sized.back());
+}
 
 std::expected<TextRun, Error> TextEngine::shape(std::string_view text) const {
     if (auto checked = detail::check_caption(text); !checked) return std::unexpected(std::move(checked.error()));

@@ -90,10 +90,20 @@ public:
         copied_serial_ = serial;
     }
 
+    // As a compositor that said how much room there is: the window may grow within set_room, and never without it.
+    [[nodiscard]] constexpr bool grow_to(Size wanted) noexcept {
+        if (!room_ || wanted.width() > room_->width() || wanted.height() > room_->height()) return false;
+        size_ = wanted;
+        grown_to_ = wanted;
+        return true;
+    }
+
     // --- For tests ---
     [[nodiscard]] constexpr std::string_view copied_text() const noexcept { return copied_text_; }
     constexpr void advance_time(std::chrono::nanoseconds by) noexcept { time_ = time_.after(by); }
     constexpr void set_display_holding(bool holding) noexcept { display_holding_ = holding; }
+    constexpr void set_room(std::optional<Size> room) noexcept { room_ = room; }
+    [[nodiscard]] constexpr std::optional<Size> grown_to() const noexcept { return grown_to_; }
     [[nodiscard]] constexpr std::uint32_t pixel(Point p) const {
         return pixels_.at(PixelBuffer::tight_index(p, size_));
     }
@@ -120,6 +130,8 @@ private:
     std::optional<ResizeEdge> resize_edge_{};
     std::optional<CursorShape> cursor_{};
     std::size_t cursor_requests_{};
+    std::optional<Size> room_{};
+    std::optional<Size> grown_to_{};
 };
 
 static_assert(Backend<HeadlessBackend>);

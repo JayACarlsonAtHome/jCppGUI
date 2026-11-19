@@ -298,6 +298,8 @@ else()
 endif()
 jgui_test(test_widgets)
 jgui_test(test_frame)
+# A window too narrow for its row of buttons, made to fit with the real font.
+jgui_test(test_fit)
 jgui_test(test_help)
 jgui_test(test_text)
 jgui_test(test_bad_text)

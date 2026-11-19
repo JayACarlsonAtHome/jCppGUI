@@ -27,7 +27,10 @@ Red Hat Enterprise Linux the system `g++` stays at the release default, so `bsir
 system offers (gcc-toolset-16 on RHEL 10.3) and the newest Clang (22 on RHEL 10.3), and pins them;
 `Lin/v001/Setup/newest_compilers.sh` finds both. There Clang is given the pinned GCC's C++ library, where Red Hat's own
 setting would give it an older one. RHEL has no OBS package, so OBS comes from Flathub, with an
-`obs` command in `~/.local/bin` that starts it. The
+`obs` command in `~/.local/bin` that starts it. Red Hat Enterprise Linux 9 alone builds with libwayland 1.24.0, because its
+own 1.21 is older than this code: `Lin/v001/Setup/rhel_wayland.sh` builds it from the release tarball, checked against a
+pinned SHA-256, into `wayland_install` beside the repository, and the programs load it from there. RHEL 9's kernel
+headers have no `MFD_NOEXEC_SEAL`, so it gets the value from `Lin/v001/src/compat/rhel9`. The
 scripts have no shebang, because a shebang cannot be a relative path. `Lin/v001/bsir.sh` alone has the executable bit,
 so from a bash shell `./bsir.sh` works as well as `bash bsir.sh`.
 
@@ -68,6 +71,11 @@ auto ui = jgui::window(jgui::window_frame(
 ```
 
 Callbacks are generic lambdas with an explicit `-> void`. `docs/Architecture.md` explains why.
+
+A window too narrow for a row of buttons is made to fit, in this order: it grows, where the compositor says there is room
+and the window is not maximized, fullscreen or tiled; the padding goes tight; the text gets smaller, down to 10 pixels; and
+when nothing fits, a notice over the window says the screen is too small and by how much. `include/jCppGUI/v001/fit.hpp`
+has the rules.
 
 ## Watching redraws
 

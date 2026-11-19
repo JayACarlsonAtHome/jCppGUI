@@ -431,7 +431,8 @@ public:
         bounds_ = area;
         const Height strip_height = text.line_height() + theme::button_pad_y + theme::button_pad_y + theme::bar_pad_y + theme::bar_pad_y;
         strip_ = area.intersect(Rect{area.origin(), Size{area.width(), strip_height}});
-        std::expected<Rect, Error> room{strip_.inset(theme::bar_pad_x, theme::bar_pad_y)};
+        const Width end_x = padding_of(text).bar_x;
+        std::expected<Rect, Error> room{strip_.inset(end_x, theme::bar_pad_y)};
         const auto place_button = [&](auto& button) {
             if (room) room = button.layout(key, *room, text);
         };
@@ -446,6 +447,9 @@ public:
         place_button(std::get<TouchButton>(children_));
         place_button(std::get<EditButton>(children_));
         if (!room) return std::unexpected(std::move(room.error()));
+        report_row(text, strip_.width() - end_x - end_x, std::get<UpButton>(children_), std::get<OpenButton>(children_), std::get<ReloadButton>(children_),
+                   std::get<CopyButton>(children_), std::get<PasteButton>(children_), std::get<DeleteButton>(children_), std::get<RenameButton>(children_),
+                   std::get<CatButton>(children_), std::get<TouchButton>(children_), std::get<EditButton>(children_));
         std::expected<Rect, Error> below{Rect{Point{area.left(), top_after(strip_.bottom())}, Size{area.width(), area.height() - strip_.height()}}};
         const auto place_below = [&](auto& part) {
             if (below) below = part.layout(key, *below, text);

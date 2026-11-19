@@ -54,6 +54,9 @@ public:
     void begin_move(Serial serial) noexcept;
     void begin_resize(Serial serial, ResizeEdge edge) noexcept;
     void set_cursor(CursorShape shape) noexcept;
+    // Makes the window this size, to fit what it holds, when the compositor has said there is room for it and the
+    // window is not maximized, fullscreen or tiled. False, and nothing changes, otherwise.
+    [[nodiscard]] bool grow_to(Size wanted) noexcept;
     // Offers this text as the clipboard, until something else takes the clipboard. With a compositor that has no clipboard it does nothing.
     void copy_text(Serial serial, const SafeClipboardText& text);
 

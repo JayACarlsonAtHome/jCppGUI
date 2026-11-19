@@ -246,8 +246,19 @@ concept HasMonospaceFace = TextShaper<S> && requires(const S& shaper) {
 
 namespace detail {
 
+// The pixel size a shaper draws at, for a shaper that says, and 0 for one that does not. A caption shaped at one size
+// is shaped again at another, as when a window too small for its contents is laid out with smaller text.
+template <TextShaper Shaper>
+[[nodiscard]] constexpr std::int32_t font_key(const Shaper& shaper) noexcept {
+    if constexpr (requires { { shaper.pixel_size() } -> std::same_as<std::int32_t>; }) {
+        return shaper.pixel_size();
+    } else {
+        return 0;
+    }
+}
+
 // A widget's text, and what shaping it gave: a run, or a refusal of this text. A refusal is kept for the widget to
-// show, and the widget draws no text. It is not tried again until the text changes.
+// show, and the widget draws no text. It is not tried again until the text, or the size it is shaped at, changes.
 class ShapedCaption {
 public:
     // A column's title is inside a template argument: see text_copied_by_character.
@@ -266,7 +277,11 @@ public:
     // An Error here is one that is not about this text, and it ends the run as any other failure does.
     template <TextShaper Shaper>
     [[nodiscard]] constexpr std::expected<void, Error> shape_with(const Shaper& shaper) {
-        if (run_ || refusal_) return {};
+        const std::int32_t key = font_key(shaper);
+        if ((run_ || refusal_) && key == shaped_at_) return {};
+        run_.reset();
+        refusal_.reset();
+        shaped_at_ = key;
         auto shaped = shaper.shape(text_);
         if (shaped) {
             run_ = std::move(*shaped);
@@ -287,6 +302,7 @@ private:
     std::string text_{};
     std::optional<TextRun> run_{};
     std::optional<Error> refusal_{};
+    std::int32_t shaped_at_{};
 };
 
 // Rounds 26.6 fixed point up to whole pixels, and clamps it to int32_t.
@@ -314,6 +330,17 @@ public:
 
     [[nodiscard]] Height line_height() const noexcept;
 
+    // The size its glyphs are drawn at, in pixels: default_pixel_size, unless it came from at_pixel_size.
+    [[nodiscard]] std::int32_t pixel_size() const noexcept;
+
+    // The same font at another size, from smallest_pixel_size to default_pixel_size, made the first time it is asked
+    // for and kept while this engine lives. A window too small for its contents is laid out with these. An engine made
+    // from bytes, or a monospace face, has no way to find its font again and refuses.
+    [[nodiscard]] std::expected<std::reference_wrapper<const TextEngine>, Error> at_pixel_size(std::int32_t size) const;
+
+    static constexpr std::int32_t default_pixel_size = 14;
+    static constexpr std::int32_t smallest_pixel_size = 10;
+
     // The default monospace font, found the first time this is asked and put through every check create does. A program that never asks pays nothing.
     // A font fontconfig gives whose letters are not all one width, as it gives when there is no monospace font, is refused. A refusal is kept and given again, with no second search, and an engine
     // made from bytes, or one that is itself a monospace face, has no way to look and always refuses.
@@ -321,6 +348,7 @@ public:
 
 private:
     explicit TextEngine(std::unique_ptr<detail::TextEngineImpl, detail::TextEngineImplDeleter> impl) noexcept;
+    [[nodiscard]] static std::expected<TextEngine, Error> create_at(std::int32_t size);
 
     std::unique_ptr<detail::TextEngineImpl, detail::TextEngineImplDeleter> impl_;
 };

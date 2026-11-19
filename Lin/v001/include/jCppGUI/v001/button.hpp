@@ -8,6 +8,7 @@
 #include <string_view>
 #include <utility>
 
+#include "fit.hpp"
 #include "widget.hpp"
 
 namespace jgui::inline v001 {
@@ -35,6 +36,8 @@ public:
         caption_.replace(caption);
         damaged_ = true;
     }
+    // How wide the last layout wanted it, whether or not it was given that much: what a row adds up to see if it fits.
+    [[nodiscard]] constexpr Width wanted_width() const noexcept { return wanted_width_; }
     // Why the caption cannot be drawn, when a shaper refused it. Empty otherwise.
     [[nodiscard]] constexpr const std::optional<Error>& text_error() const noexcept { return caption_.refusal(); }
 
@@ -42,9 +45,10 @@ public:
     constexpr std::expected<Rect, Error> layout(const TreeKey&, Rect area, const Shaper& text) {
         if (auto shaped = caption_.shape_with(text); !shaped) return std::unexpected(std::move(shaped.error()));
         const Size wanted = caption_.size_with(text);
-        const Width wanted_width = wanted.width() + theme::button_pad_x + theme::button_pad_x;
+        pad_x_ = padding_of(text).button_x;
+        wanted_width_ = wanted.width() + pad_x_ + pad_x_;
         const Height wanted_height = wanted.height() + theme::button_pad_y + theme::button_pad_y;
-        bounds_ = area.intersect(Rect{area.origin(), Size{wanted_width, wanted_height}});
+        bounds_ = area.intersect(Rect{area.origin(), Size{wanted_width_, wanted_height}});
         return Rect{Point{left_after(bounds_.right()), area.top()}, Size{area.width() - bounds_.width(), area.height()}};
     }
 
@@ -59,7 +63,7 @@ public:
         local.fill_rect(bounds_, fill);
         local.stroke_rect(bounds_, focused_ ? theme::focus_edge : theme::button_edge);
         if (caption_.run()) {
-            const Point at{left_after(bounds_.left() + theme::button_pad_x), top_after(bounds_.top() + theme::button_pad_y)};
+            const Point at{left_after(bounds_.left() + pad_x_), top_after(bounds_.top() + theme::button_pad_y)};
             local.draw_text(at, *caption_.run(), theme::text);
         }
     }
@@ -147,6 +151,8 @@ private:
     detail::ShapedCaption caption_;
     OnClick on_click_;
     Rect bounds_{};
+    Width pad_x_{theme::button_pad_x};
+    Width wanted_width_{};
     bool hovered_{};
     bool pressed_{};
     bool focused_{};
