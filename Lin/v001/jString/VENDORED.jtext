@@ -23,7 +23,7 @@
 
 1. #|# 2|canonical_dir|jString/Lin/v001
 
-1. #|# 3|canonical_commit|f85c3e7d5070
+1. #|# 3|canonical_commit|6d62f847dc13
 
 1. #|# 4|canonical_dirty|No
 
@@ -31,13 +31,13 @@
 
 1. #|# 6|transform|jcppgui-prefix
 
-1. #|# 7|ported|2026-11-20
+1. #|# 7|ported|2026-11-21
 
 1. #|# 8|baseline|No
 
 1. #|# 9|local|README.md,VENDORED.jtext
 
-1. #|# 10|exclude|build,build-*,bsir.sh,Setup,CMakeLists.txt,CMakePresets.json,compile_fail,check_source_rules.sh
+1. #|# 10|exclude|build,build-*,bsir.sh,Setup,CMakeLists.txt,CMakePresets.json,compile_fail,check_source_rules.sh,bench
 
 1. #|# 11|notes|jString's headers and its run-time tests. Its compile-fail cases need its own runner, and stay in jString.
 
@@ -58,23 +58,23 @@
 
 
 === Data ===
-1. #|# 1|include/jCppGUI/jString/v001/encoding.hpp|include/jString/v001/encoding.hpp|5c4033ec186b24b5a49e3e9195c89948332ae44e750f90ed8fe2ca7dc71c7a46|0d59780116d29cfc3345785a41196c28e516f146d74e19d41c962d463b0b11ed
+1. #|# 1|include/jCppGUI/jString/v001/encoding.hpp|include/jString/v001/encoding.hpp|992f76b79a3c707969a62a165fe12276b56a0272ceb4bc35babbe185bfc79ba6|ef593b43974816ef3616ff195d46aad7710d594337fe6a6c6ca84558326ea082
 
 1. #|# 2|include/jCppGUI/jString/v001/jstring.hpp|include/jString/v001/jstring.hpp|3fda3687c50a48731eeeefbbd15479223e331ef96459a3b495356c59d97f435f|850df238bcafd6b7dca09ef738657a77ef91a1fdfeb68c88a23c070ecccfa33a
 
-1. #|# 3|include/jCppGUI/jString/v001/string.hpp|include/jString/v001/string.hpp|b50d8d83577c8e1fc27a19a4e761c94c627ff6c0adf19874225b9e7e8154d94f|3eed6f8a52abad5ae3605e8df368ffcd56c4c96c3cf4f483d47e9a08c64189af
+1. #|# 3|include/jCppGUI/jString/v001/string.hpp|include/jString/v001/string.hpp|b7ef3890be25b33adc97aa0e7cc633d288be60d50e13ce26d5dfdc78adde8f14|feada8ca07cf73b7df4922b4cde2ea4296b6c5dce46782c9774bfdff1297ea7b
 
-1. #|# 4|include/jCppGUI/jString/v001/string_view.hpp|include/jString/v001/string_view.hpp|cb636cdd57b09e3b44559b1f404c44b26543f09f60ae2dca64bf8155d581bcc5|9d84cf31ad9e5daef403240f8062e22250f8732bec04a11c501ba2ae9a97205c
+1. #|# 4|include/jCppGUI/jString/v001/string_view.hpp|include/jString/v001/string_view.hpp|39de32bfd4a9c798e386b9114c46440e17a9258bbe77ad670738801810058e6a|dfa4867082692e3075ca2bd74f9a7145b31aaa318dfb89958f99a6d3e9c043a6
 
 1. #|# 5|tests/check.hpp|tests/check.hpp|a7470097fefec4afc1d9c9c0da81d5c44abad68f5f243f1332003ce9451f161b|a7470097fefec4afc1d9c9c0da81d5c44abad68f5f243f1332003ce9451f161b
 
-1. #|# 6|tests/test_constexpr.cpp|tests/test_constexpr.cpp|9bb60fb0847287491384a9392e1daa2c19d065bde90bcba1250ed4769dea5be2|0b8a38de5a3565285c6e14c56d0cf9973d62df6749044d300e88860fa7629b8a
+1. #|# 6|tests/test_constexpr.cpp|tests/test_constexpr.cpp|6a5d4a2cd2480eeabd21e93c335add06dbcb90e0981bd51c5f6c51b79353d208|8bcbbdc51f3f96e2d241c02b4f1b9cf1d30e3b47e10c0c9eead9ad88b416c5f6
 
 1. #|# 7|tests/test_error_in_expected.cpp|tests/test_error_in_expected.cpp|2a0938a7d03560df37d7985d47bcd0cc3e6ed821a375312357b081d2b6989f1f|5bd6c7b4460c404fc506786a58e68ae990bb52f973608664db781dbfc2bac110
 
-1. #|# 8|tests/test_string.cpp|tests/test_string.cpp|07064fbf3592e9d4e67e5b43e1e0a24e57fae6873a7a46f2f3ea540b546b2726|46dc7d15a7a6687792e1aa163386fa1401312e3eb85aeec628e3c92aba7f53b5
+1. #|# 8|tests/test_string.cpp|tests/test_string.cpp|2d07a9f683f32a75568dd0f74d3622a8a4106001e138e5d179a7f4f77102a4c6|6fd10c29949ff799ed3ba1b0fa0ec29c63324ef56df498ffcd04f1e0a54c629d
 
-1. #|# 9|tests/test_utf8.cpp|tests/test_utf8.cpp|542e8274b266bd8e7b79a2187756646de2ad08105afbb0d9373e08d1c71a2d1d|62655176f7758c07bb0c37dc386c85aa9ffd2d392df43213847142dcf118a2d0
+1. #|# 9|tests/test_utf8.cpp|tests/test_utf8.cpp|68023c93c2e53a1d20f9dbd08521f0e0eeaaf9ed698fa0c13e0edabe11ccc2e3|f615c44e1997aa71109a4d6f8617734f3539830dc6f43f1f4214073d4e2339e5
 
 === End Data ===
 === End Section ===

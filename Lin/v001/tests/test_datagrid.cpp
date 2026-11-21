@@ -484,8 +484,12 @@ static_assert(a_tenth_key_does_nothing());
     const std::array bad_column{GridSortKey{3, false}};
     const std::array twice{GridSortKey{1, false}, GridSortKey{1, true}};
     const std::array<GridSortKey, 10> too_many{};
-    if (!refused(rig.grid().set_sort_keys(bad_column)) || !refused(rig.grid().set_sort_keys(twice)) || !refused(rig.grid().set_sort_keys(too_many))) return false;
-    if (!rig.sorted_by({GridSortKey{1, true}, GridSortKey{0, false}})) return false;
+    // Each bad set of keys is refused, and the sort is as it was. (One check: clang++ proves the refusals alone while
+    // compiling, and calls their return false code that is never run.)
+    if (!refused(rig.grid().set_sort_keys(bad_column)) || !refused(rig.grid().set_sort_keys(twice)) || !refused(rig.grid().set_sort_keys(too_many)) ||
+        !rig.sorted_by({GridSortKey{1, true}, GridSortKey{0, false}})) {
+        return false;
+    }
     if (!rig.grid().set_sort_keys({}) || !rig.grid().sort_keys().empty() || rig.grid().display_order()[0] != 0 || rig.grid().display_order()[1] != 1) return false;
     // New rows clear the sort, and keep the current column.
     rig.click(70, 4);
@@ -1139,10 +1143,13 @@ static_assert(a_refused_letter_is_only_a_blank_button(), "and a font failing goe
     SmallGrid& grid = rig.grid();
     const std::uint64_t frames = rig.frames();
     const auto refused = [](const std::expected<void, Error>& answer) { return !answer && answer.error().code == ErrorCode::SizeLimit; };
-    if (!refused(grid.set_column_font(3, ColumnFont::Monospace)) || !refused(grid.set_column_align(3, ColumnAlign::AtRight)) || !refused(grid.set_column_title(3, CheckedText{"x"}))) return false;
-    if (!refused(grid.set_column_font(std::numeric_limits<std::size_t>::max(), ColumnFont::Regular))) return false;
+    // Every change to a column that is not there is refused, and nothing is drawn again. (One answer: clang++ proves the
+    // refusals alone while compiling, and calls a return false after them code that is never run.)
+    const bool all_refused = refused(grid.set_column_font(3, ColumnFont::Monospace)) && refused(grid.set_column_align(3, ColumnAlign::AtRight)) &&
+                             refused(grid.set_column_title(3, CheckedText{"x"})) &&
+                             refused(grid.set_column_font(std::numeric_limits<std::size_t>::max(), ColumnFont::Regular));
     rig.settle();
-    return rig.frames() == frames;
+    return all_refused && rig.frames() == frames;
 }
 static_assert(a_column_that_is_not_there_is_refused());
 

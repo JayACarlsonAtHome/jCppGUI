@@ -259,6 +259,8 @@ template <TextShaper Shaper>
 
 // A widget's text, and what shaping it gave: a run, or a refusal of this text. A refusal is kept for the widget to
 // show, and the widget draws no text. It is not tried again until the text, or the size it is shaped at, changes.
+// Only the refusal's code is kept, never its message: no caller reads the message, and an Error's text would make
+// every widget that has a caption 136 bytes bigger.
 class ShapedCaption {
 public:
     // A column's title is inside a template argument: see text_copied_by_character.
@@ -266,7 +268,9 @@ public:
 
     [[nodiscard]] constexpr std::string_view text() const noexcept { return text_; }
     [[nodiscard]] constexpr const std::optional<TextRun>& run() const noexcept { return run_; }
-    [[nodiscard]] constexpr const std::optional<Error>& refusal() const noexcept { return refusal_; }
+    // By reference: a copy of an empty optional, made while compiling, copies a value that was never set, which
+    // clang++ 21 refuses.
+    [[nodiscard]] constexpr const std::optional<ErrorCode>& refusal() const noexcept { return refusal_; }
 
     constexpr void replace(CheckedText text) {
         text_ = text.view();
@@ -288,7 +292,7 @@ public:
             return {};
         }
         if (!refuses_the_text(shaped.error().code)) return std::unexpected(std::move(shaped.error()));
-        refusal_ = std::move(shaped.error());
+        refusal_ = shaped.error().code;
         return {};
     }
 
@@ -301,7 +305,7 @@ public:
 private:
     std::string text_{};
     std::optional<TextRun> run_{};
-    std::optional<Error> refusal_{};
+    std::optional<ErrorCode> refusal_{};
     std::int32_t shaped_at_{};
 };
 

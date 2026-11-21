@@ -26,7 +26,7 @@ public:
     [[nodiscard]] constexpr Rect bounds() const noexcept { return bounds_; }
     [[nodiscard]] constexpr std::string_view text() const noexcept { return caption_.text(); }
     // Why this text cannot be drawn, when a shaper refused it. Empty otherwise.
-    [[nodiscard]] constexpr const std::optional<Error>& text_error() const noexcept { return caption_.refusal(); }
+    [[nodiscard]] constexpr const std::optional<ErrorCode>& text_error() const noexcept { return caption_.refusal(); }
 
     // The new text is checked here. A refused one leaves the old text in place, with nothing to redraw.
     [[nodiscard]] constexpr std::expected<void, Error> set_text(std::string_view text) {

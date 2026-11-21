@@ -28,7 +28,7 @@ public:
     [[nodiscard]] constexpr Rect bounds() const noexcept { return label_.bounds(); }
     [[nodiscard]] constexpr std::string_view text() const noexcept { return label_.text(); }
     [[nodiscard]] constexpr bool just_copied() const noexcept { return copied_; }
-    [[nodiscard]] constexpr const std::optional<Error>& text_error() const noexcept { return label_.text_error(); }
+    [[nodiscard]] constexpr const std::optional<ErrorCode>& text_error() const noexcept { return label_.text_error(); }
 
     [[nodiscard]] constexpr std::expected<void, Error> set_text(std::string_view text) {
         auto changed = label_.set_text(text);

@@ -78,7 +78,7 @@ void test_shaping_refusal(Checker& check) {
     const PickyShaper shaper;
     check(core.process_pending(shaper).has_value() && core.frames() == 1, "a refusal while shaping does not end the frame");
     auto& line = core.ui().get<Shown>();
-    check(line.text_error() && line.text_error()->code == ErrorCode::GlyphTooLarge, "the refusal can be read from the widget");
+    check(line.text_error() == ErrorCode::GlyphTooLarge, "the refusal can be read from the widget");
     check(ink_in(jgui_test::backend(core), line.bounds()) == 0, "that widget draws no text");
     check(ink_in(jgui_test::backend(core), core.ui().get<Other>().bounds()) > 0, "and the one beside it draws its own");
     check(core.ui().get<Other2>().text_error().has_value() && ink_in(jgui_test::backend(core), core.ui().get<Other2>().bounds()) > 0, "a button with no caption still draws itself");

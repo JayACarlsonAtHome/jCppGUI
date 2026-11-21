@@ -879,10 +879,13 @@ consteval bool label_refuses_bad_text_when_it_is_set() {
     auto ui = window(label<ClickTag>("good"));
     if (!jgui_test::layout(ui, text_area, BlockShaper{}).has_value() || jgui_test::damaged(ui)) return false;
     auto& line = ui.get<ClickTag>();
+    // Both bad texts are refused, each for its own reason. (One check: clang++ proves the first alone while compiling,
+    // and calls its return false code that is never run.)
     const auto invalid = line.set_text("\xC0\x80");
-    if (invalid.has_value() || invalid.error().code != ErrorCode::InvalidUtf8) return false;
     const auto over = line.set_text(std::string(max_caption_bytes + 1, 'x'));
-    if (over.has_value() || over.error().code != ErrorCode::TextTooLong) return false;
+    if (invalid.has_value() || invalid.error().code != ErrorCode::InvalidUtf8 || over.has_value() || over.error().code != ErrorCode::TextTooLong) {
+        return false;
+    }
     if (line.text() != "good" || jgui_test::damaged(ui)) return false;
     if (!line.set_text("fine").has_value() || !jgui_test::damaged(ui)) return false;
     return jgui_test::layout(ui, text_area, BlockShaper{}).has_value() && line.text() == "fine";
@@ -893,7 +896,7 @@ consteval bool shaping_refusal_stays_with_the_widget() {
     auto ui = window(label<ClickTag>("expands"), label<OtherTag>("after"));
     const auto left = jgui_test::layout(ui, text_area, PickyShaper{});
     auto& refused = ui.get<ClickTag>();
-    if (!left.has_value() || !refused.text_error() || refused.text_error()->code != ErrorCode::GlyphTooLarge) return false;
+    if (!left.has_value() || refused.text_error() != ErrorCode::GlyphTooLarge) return false;
     // It keeps its row, and the next widget goes below it as it would have.
     if (refused.bounds().height() != Height{16} || ui.get<OtherTag>().bounds().top() != Top{16} || ui.get<OtherTag>().text_error()) return false;
     // New text clears the refusal.
@@ -906,7 +909,7 @@ consteval bool button_shaping_refusal_stays_with_it() {
     auto ui = window(button<ClickTag>("expands", [](auto&) -> void {}));
     if (!jgui_test::layout(ui, text_area, PickyShaper{}).has_value()) return false;
     const auto& refused = ui.get<ClickTag>();
-    return refused.text_error() && refused.text_error()->code == ErrorCode::GlyphTooLarge &&
+    return refused.text_error() == ErrorCode::GlyphTooLarge &&
            refused.bounds().width() == theme::button_pad_x + theme::button_pad_x;
 }
 static_assert(button_shaping_refusal_stays_with_it());

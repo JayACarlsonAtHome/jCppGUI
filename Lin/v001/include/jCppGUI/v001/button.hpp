@@ -39,7 +39,7 @@ public:
     // How wide the last layout wanted it, whether or not it was given that much: what a row adds up to see if it fits.
     [[nodiscard]] constexpr Width wanted_width() const noexcept { return wanted_width_; }
     // Why the caption cannot be drawn, when a shaper refused it. Empty otherwise.
-    [[nodiscard]] constexpr const std::optional<Error>& text_error() const noexcept { return caption_.refusal(); }
+    [[nodiscard]] constexpr const std::optional<ErrorCode>& text_error() const noexcept { return caption_.refusal(); }
 
     template <TextShaper Shaper>
     constexpr std::expected<Rect, Error> layout(const TreeKey&, Rect area, const Shaper& text) {
