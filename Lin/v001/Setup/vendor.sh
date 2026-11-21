@@ -8,9 +8,10 @@
 #   bash Setup/vendor.sh sync <manifest>             dry run: what a sync would write and delete
 #   bash Setup/vendor.sh sync <manifest> --write     the forward-port: copy, transform, write a fresh manifest
 #
-# The manifest's source rows name the canonical repo and directory (relative to the projects dir, the folder that
-# holds the git checkouts: the parent of jCppGUI's own), the transform, and the local and exclude lists. A first
-# sync starts from a manifest that has only those rows.
+# Where each vendored folder's source is comes from CANONICAL_DIRS below, relative to the projects dir (the folder that
+# holds the git checkouts: the parent of jCppGUI's own). The manifest's source rows hold the transform and the local
+# and exclude lists, and record the canonical repo, directory and commit that the last sync copied from. A first sync
+# starts from a manifest that has only the transform, local and exclude rows.
 #
 # The transform jcppgui-prefix, for library jString (namespace jstr), in .h .hpp .cpp .inc .cppm files:
 #   jstr::  ->  jgui::jstr::      where the character before jstr is not a letter, digit, _ or :
@@ -23,6 +24,13 @@ VERSION_DIR="$(cd "$(dirname "$0")/.." && pwd)" || exit 2
 GIT_ROOT="$(git -C "$VERSION_DIR" rev-parse --show-toplevel)" || exit 2
 PROJECTS_DIR="$(dirname "$GIT_ROOT")"
 NULL_VALUE=$'\x1f'
+
+# Where the source of each vendored folder is: its canonical directory, relative to the projects dir, keyed by the
+# vendored folder's name in jCppGUI. This is the one place that names it: a canonical repo that is renamed or moved is
+# changed here, and the next sync writes the new name into the manifest. The vendored folder keeps its name.
+declare -rA CANONICAL_DIRS=(
+  [jString]=jac331/Lin/v001
+)
 
 say() { printf 'vendor: %s\n' "$*"; }
 die() { printf 'vendor: %s\n' "$*" >&2; exit 2; }
@@ -92,6 +100,12 @@ transform_file() {
   esac
 }
 
+# The canonical directory of the vendored folder that holds manifest $1, from CANONICAL_DIRS; empty when it has none.
+canonical_dir_of() {
+  local name; name="$(basename "$(dirname "$1")")"
+  printf '%s\n' "${CANONICAL_DIRS[$name]:-}"
+}
+
 # --- sync ---
 sync_manifest() {
   local manifest="$1" write="$2"
@@ -99,13 +113,14 @@ sync_manifest() {
   manifest="$(realpath "$manifest")"
   local root; root="$(dirname "$manifest")"
   local repo dir transform local_list exclude notes
-  repo="$(source_value "$manifest" canonical_repo)"
-  dir="$(source_value "$manifest" canonical_dir)"
+  dir="$(canonical_dir_of "$manifest")"
+  [ -n "$dir" ] || die "$manifest: its folder is not in CANONICAL_DIRS at the top of vendor.sh"
+  repo="${dir%%/*}"
   transform="$(source_value "$manifest" transform)"
   local_list="$(source_value "$manifest" local)"
   exclude="$(source_value "$manifest" exclude)"
   notes="$(source_value "$manifest" notes)"
-  [ -n "$repo" ] && [ -n "$dir" ] && [ -n "$transform" ] || die "$manifest: canonical_repo, canonical_dir and transform are needed"
+  [ -n "$transform" ] || die "$manifest: transform is needed"
   local canonical="$PROJECTS_DIR/$dir"
   [ -d "$canonical" ] || die "canonical $canonical is not there"
   local canonical_git; canonical_git="$(git -C "$canonical" rev-parse --show-toplevel)" || die "$canonical is not in a git checkout"
@@ -207,8 +222,12 @@ check_manifest() {
   local root; root="$(dirname "$manifest")"
   local copy="${root#"$GIT_ROOT"/}"
   local repo dir local_list exclude commit warnings=0
-  repo="$(source_value "$manifest" canonical_repo)"
-  dir="$(source_value "$manifest" canonical_dir)"
+  dir="$(canonical_dir_of "$manifest")"
+  if [ -z "$dir" ]; then
+    echo "vendor-check: WARN $copy: its folder is not in CANONICAL_DIRS at the top of vendor.sh"
+    return 1
+  fi
+  repo="${dir%%/*}"
   local_list="$(source_value "$manifest" local)"
   exclude="$(source_value "$manifest" exclude)"
   commit="$(source_value "$manifest" canonical_commit)"
