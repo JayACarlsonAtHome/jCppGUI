@@ -205,17 +205,17 @@ public:
         if (say_if_busy()) return;
         auto first_text = source_.read_text(first);
         if (!first_text) {
-            say(std::exchange(diff_lead_, {}) + "Nothing to diff: " + first_text.error().message);
+            say(std::exchange(diff_lead_, {}) + "Nothing to diff: " + first_text.error().text());
             return;
         }
         auto second_text = source_.read_text(second);
         if (!second_text) {
-            say(std::exchange(diff_lead_, {}) + "Nothing to diff: " + second_text.error().message);
+            say(std::exchange(diff_lead_, {}) + "Nothing to diff: " + second_text.error().text());
             return;
         }
         auto started = LineDiffer::start(std::move(*first_text), std::move(*second_text));
         if (!started) {
-            say(std::exchange(diff_lead_, {}) + "Nothing to diff: " + started.error().message);
+            say(std::exchange(diff_lead_, {}) + "Nothing to diff: " + started.error().text());
             return;
         }
         differ_.emplace(std::move(*started));
@@ -242,7 +242,7 @@ public:
                 say("Opened Meld on " + display_name(first) + " and " + display_name(second));
                 return;
             }
-            did_not_start = std::move(started.error().message);
+            did_not_start = started.error().text();
         }
         if (diff_kind_of(left.front().kind) == DiffKind::Folder) {
             notice_ = folders_need_meld(did_not_start);
@@ -275,7 +275,7 @@ public:
     constexpr void ask_picture() {
         auto folder = source_.picture_folder();
         if (!folder) {
-            say("No screenshot was saved: " + folder.error().message);
+            say("No screenshot was saved: " + folder.error().text());
             return;
         }
         name_question_ = NameQuestion{NameAsk::ScreenShot, std::move(*folder), {}};
@@ -310,11 +310,11 @@ public:
     constexpr void open_in_terminal(TerminalTool tool, std::span<const std::string> paths) {
         const auto command = terminal_tool_command(tool, paths, source_.editor());
         if (!command) {
-            say(command.error().message);
+            say(command.error().message.units());
             return;
         }
         if (auto opened = source_.run_in_terminal(parent_of_path(paths.front()), *command); !opened) {
-            say(opened.error().message);
+            say(opened.error().message.units());
             return;
         }
         const std::string names = paths.size() == 1 ? std::string{last_name_of(paths.front())} : detail::count_with_plural(paths.size(), "file");
@@ -327,7 +327,7 @@ public:
         if (const auto program = source_.default_program(path); program) {
             auto started = start_for(path, *program);
             if (started) return;
-            reason = "Its default program did not start: " + started.error().message;
+            reason = "Its default program did not start: " + started.error().text();
         }
         const auto installed = [&](std::string_view name) { return source_.program_installed(std::string{name}); };
         open_question_ = OpenQuestion{path, programs_for(family_of_name(last_name_of(path)), most_open_choices, installed), std::move(reason)};
@@ -341,12 +341,12 @@ public:
         }
         const auto pictures = source_.picture_folder();
         if (!pictures) {
-            say("Nothing is recording: " + pictures.error().message);
+            say("Nothing is recording: " + pictures.error().text());
             return;
         }
         const ProgramCommand command = recording_command();
         if (auto started = source_.start_program(parent_of_path(*pictures), command.words); !started) {
-            say("Nothing is recording: " + started.error().message);
+            say("Nothing is recording: " + started.error().text());
             return;
         }
         say("OBS started, to record. Stop it in OBS's window");
@@ -538,7 +538,7 @@ public:
         if (!job_) return;
         auto stepped = job_->step();
         if (!stepped) {
-            end_job("Stopped: " + stepped.error().message + ". " + how_many_done() + "What was copied so far is in " + job_into_ + ". ");
+            end_job("Stopped: " + stepped.error().text() + ". " + how_many_done() + "What was copied so far is in " + job_into_ + ". ");
             return;
         }
         if (*stepped) {
@@ -582,11 +582,11 @@ private:
         const PictureTarget target = *std::exchange(picture_target_, std::nullopt);
         const auto png = png_of(picture);
         if (!png) {
-            say("No screenshot was saved: " + png.error().message);
+            say("No screenshot was saved: " + png.error().text());
             return;
         }
         const auto saved = source_.save_picture(target.folder, target.name, *png);
-        say(saved ? "Saved a screenshot of this window to " + *saved : "No screenshot was saved: " + saved.error().message);
+        say(saved ? "Saved a screenshot of this window to " + *saved : "No screenshot was saved: " + saved.error().text());
     }
 
     // What can be refused from the paths alone is refused before anything is made. A name taken in the folder is found by the source when that one's turn comes, and it stops there,
@@ -595,7 +595,7 @@ private:
         if (say_if_busy()) return;
         for (const std::string& path : from) {
             if (auto checked = check_transfer(path, into); !checked) {
-                say(checked.error().message);
+                say(checked.error().message.units());
                 return;
             }
         }
@@ -615,7 +615,7 @@ private:
         due_line_.reset();
         auto started = source_.start_copy(pending_.front(), into);
         if (!started) {
-            say(started.error().message);
+            say(started.error().message.units());
             return;
         }
         job_.emplace(std::move(*started));
@@ -642,7 +642,7 @@ private:
         auto started = source_.start_count(delete_paths_[delete_next_]);
         if (!started) {
             delete_paths_.clear();
-            say("Nothing was deleted: " + started.error().message);
+            say("Nothing was deleted: " + started.error().text());
             return;
         }
         count_job_.emplace(std::move(*started));
@@ -654,7 +654,7 @@ private:
         if (!stepped) {
             count_job_.reset();
             delete_paths_.clear();
-            say("Nothing was deleted: " + stepped.error().message);
+            say("Nothing was deleted: " + stepped.error().text());
             return;
         }
         if (!*stepped) {
@@ -683,7 +683,7 @@ private:
     constexpr void step_trash(U& ui, const TimersDue& timers) {
         auto moved = source_.move_to_trash(delete_paths_[delete_next_]);
         if (!moved) {
-            end_delete("Stopped: " + moved.error().message + ". ");
+            end_delete("Stopped: " + moved.error().text() + ". ");
             return;
         }
         ++delete_next_;
@@ -740,7 +740,7 @@ private:
                 match_job_.emplace(std::move(*started));
                 return;
             }
-            note_match(match_pairs_[match_next_].first, started.error().message);
+            note_match(match_pairs_[match_next_].first, started.error().text());
             ++match_next_;
         }
         end_match(false);
@@ -751,7 +751,7 @@ private:
         if (!match_job_) return;
         auto stepped = match_job_->step();
         if (!stepped || *stepped) {
-            if (!stepped) note_match(match_pairs_[match_next_].first, stepped.error().message);
+            if (!stepped) note_match(match_pairs_[match_next_].first, stepped.error().text());
             close_match_job();
             ++match_next_;
             start_next_match();
@@ -800,7 +800,7 @@ private:
         }
         auto started = source_.start_copy(pending_[next_], job_into_);
         if (!started) {
-            end_job("Stopped: " + started.error().message + ". " + how_many_done() + "What was copied so far is in " + job_into_ + ". ");
+            end_job("Stopped: " + started.error().text() + ". " + how_many_done() + "What was copied so far is in " + job_into_ + ". ");
             return;
         }
         job_.emplace(std::move(*started));

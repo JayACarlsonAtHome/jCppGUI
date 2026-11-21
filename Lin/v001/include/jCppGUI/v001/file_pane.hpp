@@ -237,7 +237,7 @@ public:
         }
         auto listing = source_.read(path);
         if (!listing) {
-            say(listing.error().message);
+            say(listing.error().message.units());
             return;
         }
         folder_ = std::move(path);
@@ -593,7 +593,7 @@ private:
         }
         auto listing = source_.read(path);
         if (!listing) {
-            say(listing.error().message);
+            say(listing.error().message.units());
             return;
         }
         if (listing->entries.size() > max_grid_rows - rows().size()) {
@@ -681,7 +681,7 @@ private:
         if (folder_.empty()) return false;
         auto top = source_.read(folder_);
         if (!top) {
-            say(top.error().message);
+            say(top.error().message.units());
             return false;
         }
         KeptState kept;

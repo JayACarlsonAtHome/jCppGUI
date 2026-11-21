@@ -48,7 +48,7 @@ inline constexpr ClientEnd ends_with_some_error{false, jgui::ErrorCode::System, 
         return false;
     }
     if (expected.any_error) return true;
-    if (error.code != expected.code || !error.message.contains(expected.text)) {
+    if (error.code != expected.code || !error.message.units().contains(expected.text)) {
         std::cerr << "the client failed in another way than expected: " << error.message << '\n';
         return false;
     }

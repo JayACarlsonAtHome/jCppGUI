@@ -420,7 +420,7 @@ public:
     [[nodiscard]] constexpr std::optional<Error> error() const {
         std::optional<Error> first_error = first_.error();
         std::optional<Error> second_error = second_.error();
-        if (first_error && second_error) return Error{first_error->code, first_error->message + "; " + second_error->message};
+        if (first_error && second_error) return Error{first_error->code, first_error->text() + "; " + second_error->text()};
         return first_error ? first_error : second_error;
     }
 

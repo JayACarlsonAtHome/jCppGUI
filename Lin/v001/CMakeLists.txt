@@ -70,6 +70,10 @@ else()
   include_directories(src/compat/system)
 endif()
 
+# --- jString: vendored from the jString repo (jString/VENDORED.jtext), the way jac313 keeps jText. Never edited here:
+#     change jString, commit it, then bash Setup/vendor.sh sync jString/VENDORED.jtext --write. Header-only. ---
+include_directories(jString/include)
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WAYLAND_CLIENT REQUIRED IMPORTED_TARGET wayland-client)
 pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
@@ -267,6 +271,16 @@ target_link_libraries(jcppgui-files PRIVATE jgui_wayland jgui_text jgui_program 
 # --- Tests ---
 enable_testing()
 
+# jString's own run-time tests, built here under jCppGUI's warnings and hardening, so the copy is tested as it is used.
+foreach(name test_utf8 test_string test_constexpr test_error_in_expected)
+  add_executable(jstring_${name} jString/tests/${name}.cpp)
+  target_include_directories(jstring_${name} PRIVATE jString/tests)
+  target_link_libraries(jstring_${name} PRIVATE jgui_hardening jgui_warnings)
+  add_test(NAME jstring_${name} COMMAND jstring_${name})
+  set_tests_properties(jstring_${name} PROPERTIES TIMEOUT 60)
+endforeach()
+add_test(NAME jstring_vendored_copy COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/Setup/vendor.sh check)
+
 function(jgui_test_program name)
   add_executable(${name} tests/${name}.cpp)
   target_include_directories(${name} PRIVATE tests demo)
@@ -462,6 +476,7 @@ function(jgui_compile_fail name regex)
     "-DFLAGS=-std=c++23 ${JGUI_WARNING_STRING} -fsyntax-only"
     -DINCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/include
     -DSRC_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/src
+    -DJSTRING_INCLUDE=${CMAKE_CURRENT_SOURCE_DIR}/jString/include
     -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/compile_fail/${name}.cpp)
   add_test(NAME compile_ok_${name} COMMAND ${CMAKE_COMMAND} ${common} -DEXPECT=ok -P ${script})
   add_test(NAME compile_fail_${name} COMMAND ${CMAKE_COMMAND} ${common} -DEXPECT=fail "-DREGEX=${regex}" -P ${script})

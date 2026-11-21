@@ -197,11 +197,11 @@ struct LoadedSection {
 
 template <class Grid>
 [[nodiscard]] constexpr LoadedSection<typename Grid::row_type> load_section(const std::expected<jgui::JTextFile, jgui::Error>& file, std::string_view name) {
-    if (!file) return {.status = file.error().message};
+    if (!file) return {.status = file.error().text()};
     const auto section = jgui::get_section(*file, name);
-    if (!section) return {.status = section.error().message};
+    if (!section) return {.status = section.error().text()};
     auto typed = jgui::get_rows_for_grid<Grid>(*section);
-    if (!typed) return {.status = typed.error().message};
+    if (!typed) return {.status = typed.error().text()};
     const std::string status = section_status(name, typed->rows.size(), typed->left_out);
     return {.rows = std::move(typed->rows), .status = status, .usable = true};
 }
@@ -312,7 +312,7 @@ public:
         });
         u.template get<EveryFontButton>().set_caption(every_one ? all_regular_caption : all_monospace_caption);
         // status_text gives text that passes, so this is not refused.
-        if (refused) static_cast<void>(u.template get<StatusLine>().set_text(status_text("Monospace was refused: " + refused->message).view()));
+        if (refused) static_cast<void>(u.template get<StatusLine>().set_text(status_text("Monospace was refused: " + refused->text()).view()));
     }
 };
 

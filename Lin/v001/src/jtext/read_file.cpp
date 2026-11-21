@@ -46,7 +46,7 @@ namespace {
     }
 
     std::string text(saturate_to<std::size_t>(opened.st_size), '\0');
-    if (auto read = detail::read_at<char>(file.get(), std::span<char>{text}, 0); !read) return make_error(ErrorCode::System, "cannot read " + path + ": " + read.error().message);
+    if (auto read = detail::read_at<char>(file.get(), std::span<char>{text}, 0); !read) return make_error(ErrorCode::System, "cannot read " + path + ": " + read.error().text());
     return text;
 }
 

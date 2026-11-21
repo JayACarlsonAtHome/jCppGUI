@@ -176,12 +176,12 @@ struct LocalMatchJob::Impl {
         }
         auto names_a = names_in(a.get());
         if (!names_a) {
-            note(std::move(where), "Cannot read it in " + first_path + ": " + names_a.error().message);
+            note(std::move(where), "Cannot read it in " + first_path + ": " + names_a.error().text());
             return;
         }
         auto names_b = names_in(b.get());
         if (!names_b) {
-            note(std::move(where), "Cannot read it in " + second_path + ": " + names_b.error().message);
+            note(std::move(where), "Cannot read it in " + second_path + ": " + names_b.error().text());
             return;
         }
         levels.push_back(MatchLevel{std::move(a), std::move(b), std::move(*names_a), std::move(*names_b), 0, 0, std::move(where)});
@@ -214,12 +214,12 @@ struct LocalMatchJob::Impl {
         if (length != 0) {
             const std::span<char> chunk = std::span<char>{buffer}.first(length);
             if (auto read = detail::read_at<char>(open.first.get(), chunk, open.done); !read) {
-                give_up_on_files("Cannot read it in " + first_path + ": " + read.error().message);
+                give_up_on_files("Cannot read it in " + first_path + ": " + read.error().text());
                 return;
             }
             open.first_sum.update(chunk);
             if (auto read = detail::read_at<char>(open.second.get(), chunk, open.done); !read) {
-                give_up_on_files("Cannot read it in " + second_path + ": " + read.error().message);
+                give_up_on_files("Cannot read it in " + second_path + ": " + read.error().text());
                 return;
             }
             open.second_sum.update(chunk);

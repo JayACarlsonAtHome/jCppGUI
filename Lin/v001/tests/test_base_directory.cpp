@@ -27,7 +27,7 @@ using std::filesystem::path;
 }
 [[nodiscard]] constexpr bool refuses(std::string_view executable, std::string_view reason) {
     const auto found = application_base_from(executable);
-    return !found.has_value() && found.error().message.contains(reason);
+    return !found.has_value() && found.error().message.units().contains(reason);
 }
 
 constexpr std::string_view relative = "relative";
@@ -101,7 +101,7 @@ static_assert(refuses("/a/v001 (deleted)/app", none_above));
     if (sink.file_name() != jgui::default_redraw_file_name) return 1;
     const auto saved = sink.save("x\n");
     if (expect == "base") return base && *base == value && saved ? 0 : 1;
-    return !base && base.error().message.contains(value) && !saved && saved.error().message.contains("no base directory") && saved.error().message.contains(value) ? 0 : 1;
+    return !base && base.error().message.units().contains(value) && !saved && saved.error().message.contains("no base directory") && saved.error().message.units().contains(value) ? 0 : 1;
 }
 
 [[nodiscard]] bool holds_the_file(const path& directory) {

@@ -1,0 +1,81 @@
+//File:    VENDORED.jtext
+//Purpose: Vendored copy of jString/Lin/v001 (do not edit the copied files here;
+//         change the canonical repo, then sync). Drift is reported as warnings, never as failures.
+//         Written by `bash Setup/vendor.sh sync` (format: jac313's VENDORED_FORMAT.md).
+//
+=== jText File ===
+ 1. #?# VENDORED
+ 3. #?# Vendored copy of jString/Lin/v001
+
+
+=== Section: source ===
+
+
+=== Fields ===
+ 1. #/# id/Identity(1,1)/Not Null
+ 2. #/# key/String/Not Null
+ 3. #/# value/String
+=== End Fields ===
+
+
+=== Data ===
+1. #|# 1|canonical_repo|jString
+
+1. #|# 2|canonical_dir|jString/Lin/v001
+
+1. #|# 3|canonical_commit|f85c3e7d5070
+
+1. #|# 4|canonical_dirty|No
+
+1. #|# 5|canonical_version|
+
+1. #|# 6|transform|jcppgui-prefix
+
+1. #|# 7|ported|2026-11-20
+
+1. #|# 8|baseline|No
+
+1. #|# 9|local|README.md,VENDORED.jtext
+
+1. #|# 10|exclude|build,build-*,bsir.sh,Setup,CMakeLists.txt,CMakePresets.json,compile_fail,check_source_rules.sh
+
+1. #|# 11|notes|jString's headers and its run-time tests. Its compile-fail cases need its own runner, and stay in jString.
+
+=== End Data ===
+=== End Section ===
+
+
+=== Section: files ===
+
+
+=== Fields ===
+ 1. #/# id/Identity(1,1)/Not Null
+ 2. #/# path/String/Not Null             # vendored file, relative to the manifest dir
+ 3. #/# canonical_path/String/Not Null   # canonical file, relative to canonical_dir
+ 4. #/# canonical_sha256/String/Not Null # canonical file content when copied
+ 5. #/# vendored_sha256/String/Not Null  # vendored file content as written
+=== End Fields ===
+
+
+=== Data ===
+1. #|# 1|include/jCppGUI/jString/v001/encoding.hpp|include/jString/v001/encoding.hpp|5c4033ec186b24b5a49e3e9195c89948332ae44e750f90ed8fe2ca7dc71c7a46|0d59780116d29cfc3345785a41196c28e516f146d74e19d41c962d463b0b11ed
+
+1. #|# 2|include/jCppGUI/jString/v001/jstring.hpp|include/jString/v001/jstring.hpp|3fda3687c50a48731eeeefbbd15479223e331ef96459a3b495356c59d97f435f|850df238bcafd6b7dca09ef738657a77ef91a1fdfeb68c88a23c070ecccfa33a
+
+1. #|# 3|include/jCppGUI/jString/v001/string.hpp|include/jString/v001/string.hpp|b50d8d83577c8e1fc27a19a4e761c94c627ff6c0adf19874225b9e7e8154d94f|3eed6f8a52abad5ae3605e8df368ffcd56c4c96c3cf4f483d47e9a08c64189af
+
+1. #|# 4|include/jCppGUI/jString/v001/string_view.hpp|include/jString/v001/string_view.hpp|cb636cdd57b09e3b44559b1f404c44b26543f09f60ae2dca64bf8155d581bcc5|9d84cf31ad9e5daef403240f8062e22250f8732bec04a11c501ba2ae9a97205c
+
+1. #|# 5|tests/check.hpp|tests/check.hpp|a7470097fefec4afc1d9c9c0da81d5c44abad68f5f243f1332003ce9451f161b|a7470097fefec4afc1d9c9c0da81d5c44abad68f5f243f1332003ce9451f161b
+
+1. #|# 6|tests/test_constexpr.cpp|tests/test_constexpr.cpp|9bb60fb0847287491384a9392e1daa2c19d065bde90bcba1250ed4769dea5be2|0b8a38de5a3565285c6e14c56d0cf9973d62df6749044d300e88860fa7629b8a
+
+1. #|# 7|tests/test_error_in_expected.cpp|tests/test_error_in_expected.cpp|2a0938a7d03560df37d7985d47bcd0cc3e6ed821a375312357b081d2b6989f1f|5bd6c7b4460c404fc506786a58e68ae990bb52f973608664db781dbfc2bac110
+
+1. #|# 8|tests/test_string.cpp|tests/test_string.cpp|07064fbf3592e9d4e67e5b43e1e0a24e57fae6873a7a46f2f3ea540b546b2726|46dc7d15a7a6687792e1aa163386fa1401312e3eb85aeec628e3c92aba7f53b5
+
+1. #|# 9|tests/test_utf8.cpp|tests/test_utf8.cpp|542e8274b266bd8e7b79a2187756646de2ad08105afbb0d9373e08d1c71a2d1d|62655176f7758c07bb0c37dc386c85aa9ffd2d392df43213847142dcf118a2d0
+
+=== End Data ===
+=== End Section ===
+=== End File ===

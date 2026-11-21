@@ -157,8 +157,8 @@ struct LocalCopyJob::Impl {
         const std::size_t length = std::min(buffer.size(), saturate_to<std::size_t>(open.size - open.done));
         if (length == 0) return begin_check();
         const std::span<char> chunk = std::span<char>{buffer}.first(length);
-        if (auto read = detail::read_at<char>(open.source.get(), chunk, open.done); !read) return std::unexpected(Error{ErrorCode::System, "cannot read " + name_for_message(open.name) + ": " + read.error().message});
-        if (auto wrote = detail::write_at<char>(open.target.get(), std::span<const char>{chunk}, open.done); !wrote) return std::unexpected(Error{ErrorCode::System, "cannot write " + name_for_message(open.name) + ": " + wrote.error().message});
+        if (auto read = detail::read_at<char>(open.source.get(), chunk, open.done); !read) return std::unexpected(Error{ErrorCode::System, "cannot read " + name_for_message(open.name) + ": " + read.error().text()});
+        if (auto wrote = detail::write_at<char>(open.target.get(), std::span<const char>{chunk}, open.done); !wrote) return std::unexpected(Error{ErrorCode::System, "cannot write " + name_for_message(open.name) + ": " + wrote.error().text()});
         open.done += saturate_to<std::int64_t>(length);
         progress.bytes += length;
         // A little at a time, because one flush of a large file at the end holds up the window for seconds, and Escape with it.
@@ -194,9 +194,9 @@ struct LocalCopyJob::Impl {
         const std::size_t length = std::min(buffer.size(), saturate_to<std::size_t>(open.size - open.checked));
         if (length != 0) {
             const std::span<char> chunk = std::span<char>{buffer}.first(length);
-            if (auto read = detail::read_at<char>(open.source.get(), chunk, open.checked); !read) return std::unexpected(Error{ErrorCode::System, "cannot read back " + name_for_message(open.name) + ": " + read.error().message});
+            if (auto read = detail::read_at<char>(open.source.get(), chunk, open.checked); !read) return std::unexpected(Error{ErrorCode::System, "cannot read back " + name_for_message(open.name) + ": " + read.error().text()});
             open.original_sum.update(chunk);
-            if (auto read = detail::read_at<char>(open.read_back.get(), chunk, open.checked); !read) return std::unexpected(Error{ErrorCode::System, "cannot read back the copy of " + name_for_message(open.name) + ": " + read.error().message});
+            if (auto read = detail::read_at<char>(open.read_back.get(), chunk, open.checked); !read) return std::unexpected(Error{ErrorCode::System, "cannot read back the copy of " + name_for_message(open.name) + ": " + read.error().text()});
             open.copy_sum.update(chunk);
             open.checked += saturate_to<std::int64_t>(length);
             progress.bytes_checked += length;

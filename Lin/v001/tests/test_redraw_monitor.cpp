@@ -659,7 +659,7 @@ void check_program_carries_on(jgui_test::Checker& check, RealTimeMonitor monitor
     const bool first = app->process_pending().has_value() && app->frames() == 1;
     app->finish_monitor();
     const std::optional<Error> error = app->monitor_error();
-    const bool reported = error.has_value() && error->message.contains(expected);
+    const bool reported = error.has_value() && error->message.units().contains(expected);
     if (error && !reported) std::cerr << "the error was: " << error->message << '\n';
     jgui_test::backend(*app).inject(ResizeEvent{Size{Width{330}, Height{200}}});
     const bool second = app->process_pending().has_value() && app->frames() == 2;

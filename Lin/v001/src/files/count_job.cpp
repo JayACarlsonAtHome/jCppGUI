@@ -80,7 +80,7 @@ struct LocalCountJob::Impl {
         UniqueFd opened{::openat(folder, name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)};
         if (opened.get() < 0) return make_error(ErrorCode::System, "cannot open " + where + ": " + reason_of(errno));
         auto names = detail::names_in(opened.get());
-        if (!names) return make_error(ErrorCode::System, "cannot read " + where + ": " + names.error().message);
+        if (!names) return make_error(ErrorCode::System, "cannot read " + where + ": " + names.error().text());
         levels.push_back(WalkLevel{std::move(opened), std::move(*names), 0, std::move(where)});
         ++seen.folders;
         return {};

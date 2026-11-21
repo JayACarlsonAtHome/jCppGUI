@@ -39,7 +39,7 @@ std::expected<std::string, Error> save_local_picture(const std::string& folder, 
     if (wrote && ::fsync(file.get()) != 0) wrote = make_error(ErrorCode::System, detail::reason_of(errno));
     if (!wrote) {
         static_cast<void>(::unlinkat(holder.get(), name.c_str(), 0));
-        return make_error(ErrorCode::System, "cannot write " + name + ": " + wrote.error().message);
+        return make_error(ErrorCode::System, "cannot write " + name + ": " + wrote.error().text());
     }
     return child_of_path(folder, name);
 }

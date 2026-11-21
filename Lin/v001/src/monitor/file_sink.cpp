@@ -48,7 +48,7 @@ enum class Found : std::uint8_t { Nothing, RegularFile };
     if (::fstat(file.get(), &status) != 0) return failure("cannot check", name, errno);
     if (!S_ISREG(status.st_mode)) return make_error(ErrorCode::System, "will not use " + name + ": it is not a regular file");
     if (auto written = detail::write_at<char>(file.get(), std::span<const char>{text}, 0); !written) {
-        return make_error(ErrorCode::System, "cannot write " + name + ": " + written.error().message);
+        return make_error(ErrorCode::System, "cannot write " + name + ": " + written.error().text());
     }
     return {};
 }
@@ -68,7 +68,7 @@ FileSink::FileSink(InBaseDirectory, std::string_view file_name) : name_{file_nam
     if (base) {
         open_directory(*base);
     } else {
-        refused_ = Error{base.error().code, "there is no base directory for " + name_ + ": " + base.error().message};
+        refused_ = Error{base.error().code, "there is no base directory for " + name_ + ": " + base.error().text()};
     }
 }
 

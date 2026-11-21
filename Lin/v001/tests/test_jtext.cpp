@@ -216,11 +216,11 @@ constexpr std::string_view two_fields = " 1. /# id/Integer\n 2. /# name/String\n
 [[nodiscard]] constexpr bool refused_on(std::string_view text, std::size_t line, std::string_view why, ErrorCode code = ErrorCode::FileFormat) {
     const auto file = parse_jtext(text);
     if (file || file.error().code != code) return false;
-    return file.error().message.starts_with("jText line " + decimal_text(line, false) + ": ") && file.error().message.contains(why);
+    return file.error().message.units().starts_with("jText line " + decimal_text(line, false) + ": ") && file.error().message.units().contains(why);
 }
 [[nodiscard]] constexpr bool refused_because(std::string_view text, std::string_view why, ErrorCode code = ErrorCode::FileFormat) {
     const auto file = parse_jtext(text);
-    return !file && file.error().code == code && file.error().message.contains(why);
+    return !file && file.error().code == code && file.error().message.units().contains(why);
 }
 
 // --- What opens a file ---
@@ -323,7 +323,7 @@ static_assert([] { return refused_on(std::string{"=== jText File ===\n"} + std::
 // --- Limits ---
 [[nodiscard]] constexpr bool refused_with_limits(std::string_view text, const JTextLimits& limits, std::string_view why) {
     const auto file = parse_jtext(text, limits);
-    return !file && file.error().code == ErrorCode::SizeLimit && file.error().message.contains(why);
+    return !file && file.error().code == ErrorCode::SizeLimit && file.error().message.units().contains(why);
 }
 [[nodiscard]] constexpr JTextLimits tight_limits() {
     return JTextLimits{.file_bytes = 4096, .sections = 2, .rows_in_a_section = 2, .cells_in_the_file = 8, .name_bytes = 4};
@@ -505,7 +505,7 @@ void read_real_files(Checker& check) {
 
     const auto refused_saying = [&](const std::filesystem::path& path, std::string_view why) {
         const auto file = read_jtext_file(path.string());
-        return !file && file.error().message.contains(why) && file.error().message.contains(path.string());
+        return !file && file.error().message.units().contains(why) && file.error().message.units().contains(path.string());
     };
     check(refused_saying(top / "missing.jtext", "No such file"), "a missing file");
     check(refused_saying(top, "not a regular file"), "a directory");

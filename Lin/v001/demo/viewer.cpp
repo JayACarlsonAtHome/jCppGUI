@@ -28,7 +28,7 @@ using Path = std::expected<std::string, jgui::Error>;
 
 [[nodiscard]] Path default_path(std::string_view file_name) {
     auto base = jgui::application_base_directory();
-    if (!base) return std::unexpected(jgui::Error{base.error().code, "the viewer has no base directory: " + base.error().message});
+    if (!base) return std::unexpected(jgui::Error{base.error().code, "the viewer has no base directory: " + base.error().text()});
     return viewer::checked_path(*base + "/" + std::string{file_name});
 }
 

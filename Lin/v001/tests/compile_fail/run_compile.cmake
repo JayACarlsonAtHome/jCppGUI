@@ -7,7 +7,7 @@ if(EXPECT STREQUAL "fail")
   set(defines -DJGUI_BREAK)
 endif()
 execute_process(
-  COMMAND ${CXX} ${flag_list} -I${INCLUDE} -I${SRC_INCLUDE} ${defines} ${SOURCE}
+  COMMAND ${CXX} ${flag_list} -I${INCLUDE} -I${SRC_INCLUDE} -I${JSTRING_INCLUDE} ${defines} ${SOURCE}
   RESULT_VARIABLE result
   OUTPUT_VARIABLE output
   ERROR_VARIABLE output)

@@ -268,7 +268,7 @@ private:
             close();
             return;
         }
-        static_cast<void>(std::get<Problem>(children_).set_text(utf8_prefix(result.error().message, max_caption_bytes)));
+        static_cast<void>(std::get<Problem>(children_).set_text(utf8_prefix(result.error().message.units(), max_caption_bytes)));
         damaged_ = true;
     }
 

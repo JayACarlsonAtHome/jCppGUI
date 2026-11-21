@@ -120,7 +120,7 @@ public:
             return;
         }
         // What a source says of a name holds only one that can show, so this is not refused.
-        static_cast<void>(std::get<Problem>(children_).set_text(utf8_prefix(given.error().message, max_caption_bytes)));
+        static_cast<void>(std::get<Problem>(children_).set_text(utf8_prefix(given.error().message.units(), max_caption_bytes)));
         damaged_ = true;
     }
 

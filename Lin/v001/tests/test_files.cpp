@@ -2547,7 +2547,7 @@ void copies_real_things() {
 
     // Taken names, which nothing is allowed to replace.
     const auto again = run_copy(from, to);
-    check(!again.has_value() && again.error().message.find("already in") != std::string::npos, "a folder whose name is taken");
+    check(!again.has_value() && again.error().message.units().find("already in") != std::string::npos, "a folder whose name is taken");
     check(whole_text_of(made / "deep" / "er" / "small.txt") == "small", "and nothing changed");
     put_text(to / "same.txt", "keep me");
     put_text(top / "same.txt", "new");
@@ -2627,7 +2627,7 @@ void a_copy_that_does_not_match(const char* what, Interfere interfere, const boo
         auto stepped = job->step();
         if (!stepped) {
             failed = true;
-            message = stepped.error().message;
+            message = stepped.error().text();
         } else if (*stepped) {
             break;
         }
@@ -2846,10 +2846,10 @@ struct RealCount {
 
 [[nodiscard]] RealCount count_real(const std::filesystem::path& path) {
     auto job = start_local_count(path.string());
-    if (!job) return RealCount{std::nullopt, job.error().message};
+    if (!job) return RealCount{std::nullopt, job.error().text()};
     for (int i = 0; i < 100000; ++i) {
         auto stepped = job->step();
-        if (!stepped) return RealCount{std::nullopt, stepped.error().message};
+        if (!stepped) return RealCount{std::nullopt, stepped.error().text()};
         if (*stepped) return RealCount{job->counted(), {}};
     }
     return RealCount{std::nullopt, "it never ended"};

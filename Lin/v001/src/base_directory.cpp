@@ -15,7 +15,7 @@ std::expected<std::string, Error> application_base_directory() {
     const std::filesystem::path executable = std::filesystem::read_symlink("/proc/self/exe", failed);
     if (failed) return make_error(ErrorCode::System, "cannot read where the executable is: " + failed.message());
     const auto base = application_base_from(executable.native());
-    if (!base) return make_error(base.error().code, base.error().message + ": " + executable.native());
+    if (!base) return make_error(base.error().code, base.error().text() + ": " + executable.native());
     return std::string{*base};
 }
 

@@ -117,7 +117,7 @@ struct ChosenTrash {
     auto shared = open_shared_trash(top_folder.get(), uid);
     if (shared) return ChosenTrash{std::move(*shared), std::move(from_top)};
     auto own = open_own_folder(top_folder.get(), ".Trash-" + uid);
-    if (!own) return make_error(ErrorCode::System, "this disk has no trash that can be used, so it was left where it is (" + own.error().message + " in " + *top + ")");
+    if (!own) return make_error(ErrorCode::System, "this disk has no trash that can be used, so it was left where it is (" + own.error().text() + " in " + *top + ")");
     auto parts = open_parts(own->get());
     if (!parts) return std::unexpected(std::move(parts.error()));
     return ChosenTrash{std::move(*parts), std::move(from_top)};

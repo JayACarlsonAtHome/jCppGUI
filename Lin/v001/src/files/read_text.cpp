@@ -28,7 +28,7 @@ std::expected<std::string, Error> read_text_file(const std::string& path) {
     if (!S_ISREG(before.st_mode)) return make_error(ErrorCode::System, name + " is not a file");
     if (saturate_to<std::size_t>(before.st_size) > most_diff_file_bytes) return make_error(ErrorCode::SizeLimit, name + " is over 16 MiB, the most that can be diffed");
     std::string text(saturate_to<std::size_t>(before.st_size), '\0');
-    if (auto read = detail::read_at<char>(file.get(), std::span<char>{text}, 0); !read) return make_error(ErrorCode::System, "cannot read " + name + ": " + read.error().message);
+    if (auto read = detail::read_at<char>(file.get(), std::span<char>{text}, 0); !read) return make_error(ErrorCode::System, "cannot read " + name + ": " + read.error().text());
     struct stat after {};
     if (::fstat(file.get(), &after) != 0) return make_error(ErrorCode::System, "cannot look at " + name + ": " + detail::reason_of(errno));
     if (after.st_size != before.st_size || after.st_mtim.tv_sec != before.st_mtim.tv_sec || after.st_mtim.tv_nsec != before.st_mtim.tv_nsec) return make_error(ErrorCode::System, name + " changed while it was being read");

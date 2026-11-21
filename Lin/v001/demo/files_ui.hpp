@@ -51,7 +51,7 @@ constexpr void start_in(Pane& pane, const StartFolder& folder) {
     if (folder) {
         pane.open(*folder);
     } else {
-        pane.say(folder.error().message);
+        pane.say(folder.error().message.units());
     }
 }
 

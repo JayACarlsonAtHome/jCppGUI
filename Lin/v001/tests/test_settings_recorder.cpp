@@ -571,7 +571,7 @@ void test_refusals(jgui_test::Checker& check) {
         jgui_test::click(*app, jgui_test::centre(app->ui().get<demo::HelpButton>().bounds()));
         check(app->frames() > 1, "the program goes on");
         const auto reason = app->monitor_error();
-        check(reason && reason->message.contains(says), "and the reason can be read at exit");
+        check(reason && reason->message.units().contains(says), "and the reason can be read at exit");
     };
     {
         const TemporaryDirectory directory;

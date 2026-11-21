@@ -383,7 +383,7 @@ struct BasicWaylandImpl {
         try {
             failure = Error{code, what};
         } catch (const std::bad_alloc&) {
-            failure = Error{code, {}};
+            failure = Error{code, jstr::String<>{}};
         }
     }
 

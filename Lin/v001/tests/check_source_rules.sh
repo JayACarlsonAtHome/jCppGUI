@@ -157,7 +157,11 @@ report "font library header outside src/text" \
 
 # --- No absolute paths in the repository, and so no shebangs. Source anywhere else is refused. There is one exception, which
 #     the owner approved on 2026-11-02: the kernel's link to the running executable, as this one quoted literal, once, in this
-#     one file. It is built from parts so that this script stays clean. Everything else in that file is scanned as usual. ---
+#     one file. It is built from parts so that this script stays clean. Everything else in that file is scanned as usual.
+#     Source may also sit in a vendored copy, which the owner approved on 2026-11-20: a folder in Lin/v001 that holds a
+#     VENDORED.jtext manifest (Setup/vendor.sh), the way jac313 keeps jText. Its files are another repo's, so the text rules
+#     above do not read them; vendor-check reports one edited in place or not from canonical. They are still scanned here
+#     for absolute paths and shebangs. ---
 cd "$REPO_DIR" || exit 2
 slash=/
 excepted_file="Lin/v001/src/base_directory.cpp"
@@ -168,6 +172,15 @@ absolute_path='(^|[^[:alnum:]_.~}/-])/(home|mnt|usr|tmp|etc|opt|var|root|run|srv
 paths=""
 shebangs=""
 strays=""
+# The vendored copies: each folder in Lin/v001 that holds a VENDORED.jtext, as "Lin/v001/<folder>/".
+vendored_roots="$(printf '%s\n' "$tracked" | sed -n 's#^\(Lin/v001/[^/]*\)/VENDORED\.jtext$#\1/#p')"
+in_vendored_copy() {
+  local root
+  while IFS= read -r root; do
+    [ -n "$root" ] && [ "${1#"$root"}" != "$1" ] && return 0
+  done <<<"$vendored_roots"
+  return 1
+}
 while IFS= read -r file; do
   [ -f "$file" ] || continue
   if [ "$file" = "$excepted_file" ]; then
@@ -180,6 +193,7 @@ while IFS= read -r file; do
   [ -n "$found" ] && paths+="$found"$'\n'
   found="$(grep -nH '^#!' "$file")"
   [ -n "$found" ] && shebangs+="$found"$'\n'
+  in_vendored_copy "$file" && continue
   case "$file" in
     Lin/v001/include/* | Lin/v001/src/* | Lin/v001/tests/* | Lin/v001/demo/*) ;;
     *.h | *.hh | *.hxx | *.h++ | *.hpp | *.inl | *.ipp | *.tcc | *.tpp | *.c | *.cc | *.cxx | *.c++ | *.cpp | *.ixx | *.cppm) strays+="$file"$'\n' ;;
