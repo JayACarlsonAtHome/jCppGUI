@@ -39,7 +39,7 @@ public:
         const Width end_x = padding_of(text).bar_x;
         if (auto used = detail::layout_in_order(children_, key, bounds_.inset(end_x, theme::bar_pad_y), text); !used)
             return std::unexpected(std::move(used.error()));
-        std::apply([&](const auto&... child) { report_row(text, bounds_.width() - end_x - end_x, child...); }, children_);
+        std::apply([&](const auto&... child) noexcept { report_row(text, bounds_.width() - end_x - end_x, child...); }, children_);
         return Rect{Point{area.left(), top_after(bounds_.bottom())}, Size{area.width(), area.height() - bounds_.height()}};
     }
 

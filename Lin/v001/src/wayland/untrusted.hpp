@@ -139,7 +139,7 @@ inline constexpr std::uint32_t toplevel_state_tiled_left = 5;
 inline constexpr std::uint32_t toplevel_state_tiled_bottom = 8;
 inline constexpr std::size_t max_toplevel_states = 64;
 [[nodiscard]] constexpr bool states_fix_the_size(std::span<const std::uint32_t> states) noexcept {
-    return std::ranges::any_of(states, [](std::uint32_t state) {
+    return std::ranges::any_of(states, [](std::uint32_t state) noexcept {
         return state == toplevel_state_maximized || state == toplevel_state_fullscreen || (state >= toplevel_state_tiled_left && state <= toplevel_state_tiled_bottom);
     });
 }
